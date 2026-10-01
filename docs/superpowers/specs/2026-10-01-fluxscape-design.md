@@ -77,7 +77,10 @@ For each bar *t* and stock *i* with close C, previous close C⁻ and volume V:
 - Stocks with missing/stale data in the current bar contribute `p_i = 0`; stocks with no data for the whole window are excluded from the frame.
 
 ### 5.1 Forecast (no fitted model)
-- Propagation: `π^(k) = π_t · P'^k` for k ∈ {1, 4, 8} bars of the selected timeframe — "where the current flux pattern carries the mass next".
+π_t is by construction stationary for P'_t, so propagating it through the same matrix is a no-op (π·P'^k = π). The forecast therefore contrasts two time scales of the same flux:
+- **Slow accumulator** F_slow (half-life 20 bars) → P'_slow → π_t, the equilibrium "landscape".
+- **Fast accumulator** F_fast (half-life 3 bars) → P'_fast, the most recent flux pattern.
+- Propagation: `π^(k) = π_t · P'_fast^k` for k ∈ {1, 4, 8} bars — "where the newest flux carries the equilibrium mass next".
 - Drift: `d_i = π_t,i − π_{t−1},i`.
 - **Forecast score** used by the optimizer: `s_i = N·(π^(k)_i − π_t,i) + β·N·d_i` (β default 0.5), where k is the horizon's step count.
 
