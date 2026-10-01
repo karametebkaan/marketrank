@@ -1,0 +1,13 @@
+{
+  "initial_cash": 1000000,
+  "inception": "2025-10-01",
+  "holdings": [
+    {"ticker": "AAPL", "weight": 0.60},
+    {"ticker": "VOO",  "weight": 0.15},
+    {"ticker": "NVDA", "weight": 0.07},
+    {"ticker": "LLY",  "weight": 0.06},
+    {"ticker": "NVO",  "weight": 0.05},
+    {"ticker": "NKE",  "weight": 0.035},
+    {"ticker": "F",    "weight": 0.035}
+  ]
+}

@@ -40,6 +40,7 @@ file(GLOB FLUX_TEST_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/tests/*.cpp)
 add_executable(fluxtests ${FLUX_TEST_SOURCES})
 target_include_directories(fluxtests PRIVATE ${CMAKE_SOURCE_DIR}/tests)
 target_link_libraries(fluxtests PRIVATE fluxcore doctest::doctest)
+target_compile_definitions(fluxtests PRIVATE FLUX_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 enable_testing()
 add_test(NAME fluxtests COMMAND fluxtests)
