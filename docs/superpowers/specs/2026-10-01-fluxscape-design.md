@@ -105,7 +105,7 @@ subject to  Σ w = 1,   0 ≤ w_i ≤ cap_i,   ‖w − w₀‖₁ ≤ 2τ_H
 - `s`: forecast scores for horizon H (§5.1); cash has s = 0, zero variance.
 - `Σ`: rolling covariance of returns over W bars of H's timeframe (shrunk 50% toward diagonal for stability).
 - `w₀`: current shadow-book weights; γ: cost penalty (linked to slippage bps); τ_H: max one-way turnover per rebalance (defaults hourly 5%, daily 15%, weekly 30%).
-- `cap_i`: per-name cap (default 35% for single stocks, 100% for index funds and cash).
+- `cap_i`: per-name cap on *increases*: `cap_i = max(cap, w₀,i)` with cap default 35% for single stocks and 100% for index funds and cash. A position already above the cap (e.g. AAPL at 60%) is never force-sold because of the cap; it can only be reduced when the score justifies it, and it cannot grow.
 - Short selling and leverage are not allowed.
 
 It is a small convex problem (≤ ~40 variables) solved in C++ by **ADMM** (QP block + capped-simplex projection + L1 prox), with a convergence check. A brute-force grid solver validates it on tiny instances in tests.
@@ -124,13 +124,13 @@ $1,000,000 at inception, allocated by weight and converted to fractional shares 
 
 | Ticker | Weight | Notes |
 |---|---|---|
-| VOO | 35% | Vanguard S&P 500 ETF (look-through) |
-| AAPL | 30% | heavy position |
-| NVDA | 10% | |
-| LLY | 8% | |
-| NVO | 7% | not in S&P 500 → extra node |
-| NKE | 5% | |
-| F | 5% | |
+| AAPL | 60% | heavy position |
+| VOO | 15% | Vanguard S&P 500 ETF (look-through) |
+| NVDA | 7% | |
+| LLY | 6% | |
+| NVO | 5% | not in S&P 500 → extra node |
+| NKE | 3.5% | |
+| F | 3.5% | |
 
 ### 8.2 Books
 - **Baseline:** buy-and-hold of the initial portfolio — never trades.
