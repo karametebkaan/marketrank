@@ -113,3 +113,16 @@ TEST_CASE("retention policy file") {
   CHECK_FALSE(p.keep_days.at(Timeframe::Day).has_value());
   CHECK_THROWS_AS(RetentionPolicy::load(test::write_file(dir / "bad.json", "{")), std::runtime_error);
 }
+
+TEST_CASE("duplicate rows inside one batch resolve to the last, also after compaction") {
+  auto dir = test::temp_dir("lake_dup");
+  const TimePoint d0 = utc_seconds(2026, 9, 1, 4);
+  Lake lake(dir);
+  lake.write(Timeframe::Day, {row("AAPL", d0, 10), row("AAPL", d0, 12)}, {});
+  CHECK(lake.read(Timeframe::Day, {"AAPL"}, d0, d0)["AAPL"][0].c == 12);
+  for (int b = 0; b < 3; ++b) lake.write(Timeframe::Day, {row("F", d0 + b * 86400, 3)}, {});
+  CHECK(lake.compact(Timeframe::Day, 2) == 1);
+  auto got = lake.read(Timeframe::Day, {"AAPL"}, d0, d0);
+  REQUIRE(got["AAPL"].size() == 1);
+  CHECK(got["AAPL"][0].c == 12);
+}

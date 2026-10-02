@@ -44,6 +44,13 @@ std::vector<fs::path> parquet_files(const fs::path& dir) {
   return out;
 }
 
+bool has_parquet(const fs::path& dir) {
+  if (!fs::is_directory(dir)) return false;
+  for (const auto& e : fs::recursive_directory_iterator(dir))
+    if (e.is_regular_file() && e.path().extension() == ".parquet") return true;
+  return false;
+}
+
 int year_of(TimePoint t) { return civil_from_days(floor_div(t, 86400)).y; }
 
 // "year=2026" -> 2026; returns -1 if the name doesn't match.
@@ -164,7 +171,7 @@ Lake::Lake(fs::path root) {
   I.q("CREATE TABLE IF NOT EXISTS pending(ticker VARCHAR, t BIGINT, o DOUBLE, h DOUBLE, l DOUBLE, "
       "c DOUBLE, v DOUBLE, vw DOUBLE, seq BIGINT, tf VARCHAR, year INTEGER, month INTEGER)");
   I.q("CREATE TABLE IF NOT EXISTS pending_cov(ticker VARCHAR, tf VARCHAR, covered_from BIGINT)");
-  I.q("CREATE TABLE IF NOT EXISTS want(ticker VARCHAR)");
+  I.q("CREATE TEMP TABLE IF NOT EXISTS want(ticker VARCHAR)");
   fs::remove_all(I.root / "_staging");
   I.publish();  // republish anything a crash left in pending
 }
@@ -181,8 +188,13 @@ void Lake::write(Timeframe tf, const std::vector<LakeRow>& rows,
       I.q("UPDATE meta SET value = value + 1 WHERE key = 'seq' RETURNING value")->GetValue(0, 0).GetValue<int64_t>();
   const std::string tfs(to_string(tf));
   {
+    // Last occurrence of each (ticker, t) wins within a batch (all rows share one seq).
+    std::map<std::pair<std::string, TimePoint>, std::size_t> last;
+    for (std::size_t i = 0; i < rows.size(); ++i) last[{rows[i].ticker, rows[i].bar.t}] = i;
     duckdb::Appender app(I.con, "pending");
-    for (const auto& r : rows) {
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+      const auto& r = rows[i];
+      if (last[{r.ticker, r.bar.t}] != i) continue;
       const Civil c = civil_from_days(floor_div(r.bar.t, 86400));
       app.BeginRow();
       app.Append<duckdb::string_t>(duckdb::string_t(r.ticker.data(), static_cast<uint32_t>(r.ticker.size())));
@@ -220,7 +232,7 @@ std::map<std::string, std::vector<Bar>> Lake::read(Timeframe tf, const std::vect
   std::map<std::string, std::vector<Bar>> out;
   auto& I = *impl_;
   const fs::path dir = I.root / "bars" / tf_dir_name(tf);
-  if (tickers.empty() || start > end || parquet_files(dir).empty()) return out;
+  if (tickers.empty() || start > end || !has_parquet(dir)) return out;
   I.set_want(tickers);
   constexpr TimePoint kMin = -62135596800LL;    // 0001-01-01
   constexpr TimePoint kMax = 253402300799LL;    // 9999-12-31
@@ -232,6 +244,8 @@ std::map<std::string, std::vector<Bar>> Lake::read(Timeframe tf, const std::vect
       " AND ticker IN (SELECT ticker FROM want)"
       " QUALIFY row_number() OVER (PARTITION BY ticker, t ORDER BY seq DESC) = 1 ORDER BY ticker, t";
   auto r = I.q(sql);
+  std::vector<Bar>* cur = nullptr;
+  std::string cur_name;
   while (auto chunk = r->Fetch()) {
     chunk->Flatten();
     const std::size_t n = chunk->size();
@@ -240,7 +254,14 @@ std::map<std::string, std::vector<Bar>> Lake::read(Timeframe tf, const std::vect
     double* cols[6];
     for (int k = 0; k < 6; ++k) cols[k] = duckdb::FlatVector::GetData<double>(chunk->data[2 + k]);
     for (std::size_t i = 0; i < n; ++i)
-      out[tk[i].GetString()].push_back({t[i], cols[0][i], cols[1][i], cols[2][i], cols[3][i], cols[4][i], cols[5][i]});
+    {
+      if (!cur || tk[i].GetSize() != cur_name.size() ||
+          std::string_view(tk[i].GetData(), tk[i].GetSize()) != cur_name) {
+        cur_name = tk[i].GetString();
+        cur = &out[cur_name];
+      }
+      cur->push_back({t[i], cols[0][i], cols[1][i], cols[2][i], cols[3][i], cols[4][i], cols[5][i]});
+    }
   }
   return out;
 }
