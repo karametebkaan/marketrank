@@ -46,6 +46,7 @@ TEST_CASE("landscape build: one cell per active node, raster sized from the latt
   const Frame f = synthetic_frame();
   LandscapeParams p;
   p.max_arcs = 50;
+  p.smooth = 0;  // exactness of the IDW mesh vertices is checked without display smoothing
   LandscapeBuilder b(f.active.size(), p);
   LandscapeFrame lf = b.build(f);
   std::size_t n_active = 0;
@@ -87,7 +88,9 @@ TEST_CASE("delta raster uses the base cells") {
   LandscapeFrame lf = b.build(f);
   std::vector<double> delta(f.active.size(), 0.0);
   delta[lf.nodes.front().i] = 1.0;
-  Raster r = delta_raster(lf, delta, LandscapeParams{});
+  LandscapeParams exact;
+  exact.smooth = 0;  // unsmoothed: exact at the base cells
+  Raster r = delta_raster(lf, delta, exact);
   CHECK(r.w == lf.raster.w);
   CHECK(r.zmax > 0.0f);
   CHECK(r.zmin >= 0.0f);
@@ -240,4 +243,30 @@ TEST_CASE("territory placement is stable: identical rebuilds, and 1% hotness noi
   for (std::size_t k = 0; k < a.nodes.size(); ++k) moved += a.nodes[k].cell != d.nodes[k].cell ? 1 : 0;
   CHECK(static_cast<double>(moved) <= 0.1 * static_cast<double>(a.nodes.size()));
   CHECK_THROWS_AS(LandscapeBuilder(n, LandscapeParams{}, std::vector<std::uint32_t>(3, 0)), std::invalid_argument);
+}
+
+TEST_CASE("display smoothing: base and delta rasters are Gaussian-smoothed, node values stay exact") {
+  const Frame f = synthetic_frame();
+  LandscapeParams p0, p1;
+  p0.smooth = 0;
+  CHECK(LandscapeParams{}.smooth == 1.0);
+  const auto groups = synthetic_groups(f.active.size());
+  LandscapeBuilder b0(f.active.size(), p0, groups), b1(f.active.size(), p1, groups);
+  const LandscapeFrame a = b0.build(f), s = b1.build(f);
+  REQUIRE(a.nodes.size() == s.nodes.size());
+  for (std::size_t k = 0; k < a.nodes.size(); ++k) {
+    CHECK(a.nodes[k].cell == s.nodes[k].cell);
+    CHECK(a.nodes[k].h == s.nodes[k].h);
+    CHECK(a.nodes[k].hdisp == s.nodes[k].hdisp);
+  }
+  CHECK(s.raster.z == smooth_raster(a.raster, 1.0, p1.idw.subdivision).z);
+  CHECK(s.raster.z != a.raster.z);
+  std::vector<double> delta(f.active.size(), 0.0);
+  delta[a.nodes.front().i] = 1.0;
+  const Raster d0 = delta_raster(a, delta, p0), d1 = delta_raster(a, delta, p1);
+  CHECK(d1.z == smooth_raster(d0, 1.0, p1.idw.subdivision).z);
+  CHECK(d1.zmax < d0.zmax);
+  LandscapeParams bad;
+  bad.smooth = -1;
+  CHECK_THROWS_AS(LandscapeBuilder(f.active.size(), bad), std::invalid_argument);
 }

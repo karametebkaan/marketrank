@@ -231,3 +231,22 @@ TEST_CASE("frame store rejects zero max_frames") {
   CHECK_THROWS_AS(FrameStore(m.panel, m.secs, CoreParams::money_flow(), LandscapeParams{}, 0),
                   std::invalid_argument);
 }
+
+TEST_CASE("frame store recent() returns the cached frames ending at t, oldest first") {
+  Market m = market();
+  FrameStore fs(m.panel, m.secs, CoreParams::money_flow(), LandscapeParams{}, 10);
+  CHECK(fs.recent(std::nullopt, 3).empty());
+  fs.start();
+  wait_ready(fs);
+  const auto times = fs.times();
+  auto last3 = fs.recent(std::nullopt, 3);
+  REQUIRE(last3.size() == 3);
+  CHECK(last3[0]->t == times[7]);
+  CHECK(last3[2]->t == times[9]);
+  auto early = fs.recent(times[1], 5);
+  REQUIRE(early.size() == 2);
+  CHECK(early[0]->t == times[0]);
+  CHECK(early[1]->t == times[1]);
+  CHECK(fs.recent(m.panel.times.front(), 5).empty());
+  CHECK(fs.recent(std::nullopt, 0).empty());
+}

@@ -15,6 +15,7 @@
 #include "graph/hotness.hpp"
 #include "graph/pressure.hpp"
 #include "graph/transition.hpp"
+#include "server/top_list.hpp"
 
 namespace fx {
 using nlohmann::json;
@@ -72,7 +73,8 @@ json status_json(const FrameStore& s, const std::string& label) {
           {"ready", st.ready},       {"error", st.error},     {"generation", st.generation},
           {"params", describe(s.core_params())},
           {"height", std::string(to_string(s.landscape_params().height))},
-          {"label", label},          {"nodes", s.nodes().size()}};
+          {"label", label},          {"nodes", s.nodes().size()},
+          {"smooth", s.landscape_params().smooth}};
 }
 
 }  // namespace
@@ -178,6 +180,43 @@ void FluxServer::routes() {
                {"params", describe(store_.core_params())}, {"compute_ms", f->compute_ms}});
   });
 
+  svr_.Get("/api/top", [this](const httplib::Request& req, httplib::Response& res) {
+    std::optional<TimePoint> t;
+    long long n = 10, bars = 30;
+    auto int_param = [&](const char* key, long long lo, long long hi, long long& out) {
+      if (!req.has_param(key)) return;
+      const std::string v = req.get_param_value(key);
+      std::size_t used = 0;
+      const long long x = std::stoll(v, &used);
+      if (used != v.size() || x < lo || x > hi) throw std::invalid_argument(std::string(key) + " out of range");
+      out = x;
+    };
+    try {
+      int_param("n", 1, 50, n);
+      int_param("bars", 1, 300, bars);
+      if (req.has_param("t")) {
+        long long tv = 0;
+        int_param("t", std::numeric_limits<long long>::min(), std::numeric_limits<long long>::max(), tv);
+        t = tv;
+      }
+    } catch (const std::exception&) {
+      return send_json(res, 400, {{"error", "bad n, bars or t (n in [1, 50], bars in [1, 300])"}});
+    }
+    if (!store_.status().ready) return send_json(res, 503, {{"error", "landscapes are still being computed"}});
+    const auto frames = store_.recent(t, static_cast<std::size_t>(std::max<long long>(bars, 2)));
+    if (frames.empty()) return send_json(res, 404, {{"error", "no such frame"}});
+    const auto& nodes = store_.nodes();
+    json rows = json::array();
+    for (const auto& r : top_hot(frames, static_cast<std::size_t>(n), static_cast<std::size_t>(bars))) {
+      json series = json::array();
+      for (double v : r.series) series.push_back(num(v));
+      rows.push_back({{"rank", r.rank}, {"i", r.i}, {"ticker", nodes[r.i].ticker}, {"sector", nodes[r.i].sector},
+                      {"h", num(r.h)}, {"hdisp", num(r.hdisp)}, {"pi", num(r.pi)}, {"score", num(r.score)},
+                      {"prev_rank", r.prev_rank ? json(*r.prev_rank) : json(nullptr)}, {"series", series}});
+    }
+    send_json(res, 200, {{"t", frames.back()->t}, {"rows", rows}});
+  });
+
   svr_.Get("/api/frame/grid", [this](const httplib::Request& req, httplib::Response& res) {
     std::shared_ptr<const LandscapeFrame> f;
     try {
@@ -218,6 +257,7 @@ void FluxServer::routes() {
       if (b.contains("idw_power")) lp.idw.power = get_num(b, "idw_power", 0.0, 8.0, true);
       if (b.contains("idw_radius")) lp.idw.radius_cells = static_cast<int>(get_int(b, "idw_radius", 0, 16));
       if (b.contains("subdivision")) lp.idw.subdivision = static_cast<int>(get_int(b, "subdivision", 1, 8));
+      if (b.contains("smooth")) lp.smooth = get_num(b, "smooth", 0.0, 4.0);
       p.validate();
       const std::uint64_t gen = store_.set_params(p, lp);
       {

@@ -4,7 +4,7 @@ const Q = new URLSearchParams(location.search);
 const S = {
   status: null, times: [], frame: null, raster: null, shock: null, shockRaster: null, shockVmax: 1,
   baseVmax: 1, deck: null, playing: false, loadedKey: '', loadedGen: null, selftest: Q.has('selftest'),
-  frameSeq: 0, shockSeq: 0, idx: null, idxKey: '', colCache: null, arcsInit: false, selftestDone: false,
+  frameSeq: 0, shockSeq: 0, topSeq: 0, topPrev: new Map(), highlight: null, idx: null, idxKey: '', colCache: null, arcsInit: false, selftestDone: false,
 };
 const $ = (id) => document.getElementById(id);
 const MID = [247, 247, 247], POS = [178, 24, 43], NEG = [33, 102, 172];
@@ -156,6 +156,13 @@ function render() {
       outlineWidth: 3, outlineColor: [255, 255, 255, 230], fontSettings: { sdf: true }, parameters: onTop,
     }),
   );
+  const hi = S.highlight === null ? undefined : byI.get(S.highlight);
+  if (hi) {
+    layers.push(new deck.ScatterplotLayer({
+      id: 'highlight', data: [hi], getPosition: (n) => pos(n, 0.5), getRadius: 1.2 * ring0 + 0.4, radiusUnits: 'common',
+      stroked: true, filled: false, getLineColor: [255, 210, 0, 255], getLineWidth: 4, lineWidthUnits: 'pixels', parameters: onTop,
+    }));
+  }
   S.deck.setProps({ layers });
 }
 
@@ -205,6 +212,61 @@ function updateShockEnabled() {
   $('shockHint').hidden = ok;
 }
 
+// ---- Heartbeat table: hottest 10 by exact (unsmoothed) model h ----
+const SVGNS = 'http://www.w3.org/2000/svg';
+function sparkline(series) {
+  const W = 72, H = 18, pad = 2;
+  const svg = document.createElementNS(SVGNS, 'svg');
+  svg.setAttribute('width', W); svg.setAttribute('height', H); svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  const pts = series.map((v, k) => [k, v]).filter((p) => p[1] !== null && Number.isFinite(p[1]));
+  if (!pts.length) return svg;
+  let lo = Infinity, hi = -Infinity;
+  pts.forEach((p) => { lo = Math.min(lo, p[1]); hi = Math.max(hi, p[1]); });
+  const n = Math.max(1, series.length - 1), range = hi - lo || 1;
+  const xy = (p) => [pad + (W - 2 * pad) * p[0] / n, H - pad - (H - 2 * pad) * (hi === lo ? 0.5 : (p[1] - lo) / range)];
+  const line = document.createElementNS(SVGNS, 'polyline');
+  line.setAttribute('points', pts.map((p) => xy(p).map((c) => c.toFixed(1)).join(',')).join(' '));
+  line.setAttribute('fill', 'none'); line.setAttribute('stroke', '#b2182b'); line.setAttribute('stroke-width', '1.2');
+  svg.appendChild(line);
+  const [cx, cy] = xy(pts[pts.length - 1]);
+  const dot = document.createElementNS(SVGNS, 'circle');
+  dot.setAttribute('cx', cx.toFixed(1)); dot.setAttribute('cy', cy.toFixed(1)); dot.setAttribute('r', '2.2'); dot.setAttribute('fill', '#b2182b');
+  svg.appendChild(dot);
+  return svg;
+}
+
+function cell(cls, text) { const d = document.createElement('span'); d.className = cls; d.textContent = text; return d; }
+
+function renderTop(rows) {
+  const box = $('topRows');
+  const els = rows.map((r) => {
+    const row = document.createElement('div');
+    row.className = 'toprow' + (S.highlight === r.i ? ' sel' : '');
+    const mv = r.prev_rank === null ? ['new', 'new'] : r.prev_rank > r.rank ? ['▲', 'up'] : r.prev_rank < r.rank ? ['▼', 'down'] : ['•', 'same'];
+    row.title = r.prev_rank === null ? 'new in the ranking' : `previous rank ${r.prev_rank}`;
+    row.append(cell('rk', String(r.rank)), cell(`mv ${mv[1]}`, mv[0]), cell('tk', r.ticker), cell('sec', r.sector),
+      cell('hv', r.h === null ? 'n/a' : r.h.toFixed(3)), sparkline(r.series));
+    row.addEventListener('click', () => {
+      S.highlight = S.highlight === r.i ? null : r.i;
+      box.querySelectorAll('.toprow').forEach((el) => el.classList.remove('sel'));
+      if (S.highlight === r.i) row.classList.add('sel');
+      render();
+    });
+    if (S.topPrev.has(r.i) && S.topPrev.get(r.i) !== r.h) row.classList.add('beat');
+    return row;
+  });
+  box.replaceChildren(...els);
+  S.topPrev = new Map(rows.map((r) => [r.i, r.h]));
+}
+
+// Refreshes the table for frame t; stale responses (superseded by a newer frame) are dropped.
+async function loadTop(t) {
+  const seq = ++S.topSeq;
+  const r = await getJSON(`/api/top?n=10&bars=30&t=${t}`);
+  if (seq !== S.topSeq) return;
+  renderTop(r.rows);
+}
+
 function clearShock() {
   S.shock = null; S.shockRaster = null; S.shockSeq++;
   $('shockOut').textContent = '';
@@ -229,6 +291,7 @@ async function loadFrame(t) {
   if (!S.arcsInit) { S.arcsInit = true; $('arcs').value = Math.min(400, 2 * f.nodes.length, 150); setArcsLabel(); }
   $('tlabel').textContent = `${f.time}  ·  ${f.nodes.length} active stocks  ·  ${f.params}`;
   fillHoldings(f);
+  loadTop(f.t).catch((e) => { $('topRows').textContent = String(e.message || e); if (S.selftest) fail(e); });
   updateShockEnabled();
   render();
   return true;
@@ -272,6 +335,9 @@ async function applyShock() {
 
 async function onStatus(st) {
   S.status = st;
+  if (!S.smoothInit && typeof st.smooth === 'number') {
+    S.smoothInit = true; $('smooth').value = st.smooth; $('smoothLabel').textContent = $('smooth').value;
+  }
   showStatus();
   if (!st.ready) return;
   // Reload on a new generation, or (when following the latest bar) when new bars have been computed.
@@ -294,7 +360,10 @@ async function onStatus(st) {
       $('shockSizeLabel').textContent = `${$('shockSize').value}%`;
       await applyShock();
     }
-    setTimeout(() => { document.title = `fluxscape-ok:${S.frame.nodes.length}`; }, 1500);
+    setTimeout(() => {
+      if (!$('topRows').querySelector('.toprow')) fail(new Error('top table did not render'));
+      else document.title = `fluxscape-ok:${S.frame.nodes.length}`;
+    }, 1500);
   }
 }
 
@@ -321,8 +390,9 @@ function wire() {
   });
   ['hscale', 'labels'].forEach((id) => $(id).addEventListener('input', render));
   $('arcs').addEventListener('input', () => { setArcsLabel(); render(); });
+  $('smooth').addEventListener('input', () => { $('smoothLabel').textContent = $('smooth').value; });
   $('apply').addEventListener('click', async () => {
-    const body = { preset: $('preset').value, height: $('height').value, idw_power: Number($('idwPower').value), idw_radius: Number($('idwRadius').value), subdivision: Number($('subdiv').value) };
+    const body = { preset: $('preset').value, height: $('height').value, idw_power: Number($('idwPower').value), idw_radius: Number($('idwRadius').value), subdivision: Number($('subdiv').value), smooth: Number($('smooth').value) };
     if ($('href').value) body.h_ref = $('href').value;
     try { await getJSON('/api/params', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); S.deck && S.deck.finalize(); S.deck = null; } catch (e) { fail(e); }
   });

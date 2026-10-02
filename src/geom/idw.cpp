@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <stdexcept>
 
 namespace fx {
 
@@ -91,6 +92,49 @@ Raster idw_raster(const std::vector<std::int32_t>& cell, const std::vector<doubl
   r.zmin = *std::min_element(r.z.begin(), r.z.end());
   r.zmax = *std::max_element(r.z.begin(), r.z.end());
   return r;
+}
+
+Raster smooth_raster(const Raster& r, double sigma_cells, int subdivision) {
+  if (!std::isfinite(sigma_cells) || sigma_cells < 0) throw std::invalid_argument("smooth: sigma must be finite and >= 0");
+  if (sigma_cells == 0 || r.z.empty()) return r;
+  const double sigma = sigma_cells * std::max(1, subdivision);
+  const long R = static_cast<long>(std::ceil(3.0 * sigma));
+  std::vector<double> wk(static_cast<std::size_t>(2 * R + 1));
+  for (long k = -R; k <= R; ++k) wk[static_cast<std::size_t>(k + R)] = std::exp(-0.5 * double(k * k) / (sigma * sigma));
+  const long W = static_cast<long>(r.w), H = static_cast<long>(r.h);
+  std::vector<double> tmp(r.z.size());
+  // Rows pass: each output pixel is written by exactly one iteration; sums run in a fixed order.
+#pragma omp parallel for schedule(static)
+  for (long y = 0; y < H; ++y)
+    for (long x = 0; x < W; ++x) {
+      double s = 0, ws = 0;
+      for (long k = std::max(-R, -x); k <= std::min(R, W - 1 - x); ++k) {
+        const double w = wk[static_cast<std::size_t>(k + R)];
+        s += w * r.z[static_cast<std::size_t>(y * W + x + k)];
+        ws += w;
+      }
+      tmp[static_cast<std::size_t>(y * W + x)] = s / ws;
+    }
+  Raster out;
+  out.w = r.w;
+  out.h = r.h;
+  out.z.assign(r.z.size(), 0.0f);
+  // Columns pass into a separate buffer.
+#pragma omp parallel for schedule(static)
+  for (long x = 0; x < W; ++x)
+    for (long y = 0; y < H; ++y) {
+      double s = 0, ws = 0;
+      for (long k = std::max(-R, -y); k <= std::min(R, H - 1 - y); ++k) {
+        const double w = wk[static_cast<std::size_t>(k + R)];
+        s += w * tmp[static_cast<std::size_t>((y + k) * W + x)];
+        ws += w;
+      }
+      out.z[static_cast<std::size_t>(y * W + x)] = static_cast<float>(s / ws);
+    }
+  const auto [mn, mx] = std::minmax_element(out.z.begin(), out.z.end());
+  out.zmin = *mn;
+  out.zmax = *mx;
+  return out;
 }
 
 }  // namespace fx

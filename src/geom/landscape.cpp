@@ -54,7 +54,7 @@ Raster delta_raster(const LandscapeFrame& base, const std::vector<double>& delta
     cell[nd.i] = nd.cell;
     v[nd.i] = display_height(delta[nd.i], p.height);
   }
-  return idw_raster(cell, v, base.size, p.idw);
+  return smooth_raster(idw_raster(cell, v, base.size, p.idw), p.smooth, p.idw.subdivision);
 }
 
 LandscapeBuilder::LandscapeBuilder(std::size_t n, LandscapeParams params, std::vector<std::uint32_t> group)
@@ -62,6 +62,8 @@ LandscapeBuilder::LandscapeBuilder(std::size_t n, LandscapeParams params, std::v
   if (!group_.empty() && group_.size() != n) throw std::invalid_argument("LandscapeBuilder: group size mismatch");
   if (!(p_.order_smoothing >= 0.0 && p_.order_smoothing <= 1.0))
     throw std::invalid_argument("LandscapeBuilder: order_smoothing must be in [0, 1]");
+  if (!(std::isfinite(p_.smooth) && p_.smooth >= 0.0))
+    throw std::invalid_argument("LandscapeBuilder: smooth must be finite and >= 0");
 }
 
 LandscapeFrame LandscapeBuilder::build(const Frame& f) {
@@ -103,7 +105,7 @@ LandscapeFrame LandscapeBuilder::build(const Frame& f) {
                         static_cast<float>((cells[i] % cols + 0.5) / static_cast<double>(size.cols)),
                         static_cast<float>((cells[i] / cols + 0.5) / static_cast<double>(size.rows)), f.h[i], hd, f.pi[i], score[i]});
   }
-  lf.raster = idw_raster(cells, values, size, p_.idw);
+  lf.raster = smooth_raster(idw_raster(cells, values, size, p_.idw), p_.smooth, p_.idw.subdivision);
   lf.arcs = top_arcs(f.P, f.active, p_.max_arcs);
   lf.compute_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
   return lf;

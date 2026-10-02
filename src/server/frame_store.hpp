@@ -46,6 +46,8 @@ class FrameStore {
   Status status() const;
   std::vector<TimePoint> times() const;
   std::shared_ptr<const LandscapeFrame> landscape(std::optional<TimePoint> t) const;
+  // Up to k cached frames ending at t (latest when empty), oldest first; empty if t is not cached.
+  std::vector<std::shared_ptr<const LandscapeFrame>> recent(std::optional<TimePoint> t, std::size_t k) const;
   ShockResult shock(const std::vector<Shock>& shocks);
   // Callers blocked here must be released (by progress, a timeout, or stopping them) before the store
   // is destroyed: destruction does not wake waiters.

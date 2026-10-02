@@ -1,7 +1,9 @@
 #include <doctest/doctest.h>
 #include <httplib.h>
 
+#include <algorithm>
 #include <chrono>
+#include <optional>
 #include <future>
 #include <iostream>
 #include <nlohmann/json.hpp>
@@ -197,7 +199,9 @@ TEST_CASE("server: invalid params are 400 and change nothing") {
       R"({"k_out":1.5})",          R"({"k_in":"x"})",           R"({"retention":1e999})",
       R"({"lambda":1e999})",       R"({"retention":"a"})",      R"({"vol_scale":"yes"})",
       R"({"preset":"bogus"})",     R"({"height":"cubic"})",     R"({"h_ref":"nope"})",
-      R"({"retention":-5})",       R"({"lambda":-1})",          R"({"k_out":0})"};
+      R"({"retention":-5})",       R"({"lambda":-1})",          R"({"k_out":0})",
+      R"({"smooth":-1})",          R"({"smooth":5})",           R"({"smooth":NaN})",
+      R"({"smooth":"x"})",         R"({"smooth":1e999})"};
   for (const auto& b : bad) {
     INFO(b);
     CHECK(cli.Post("/api/params", b, "application/json")->status == 400);
@@ -205,7 +209,9 @@ TEST_CASE("server: invalid params are 400 and change nothing") {
   const auto after = json::parse(cli.Get("/api/status")->body);
   CHECK(after["generation"] == before["generation"]);
   CHECK(after["params"] == before["params"]);
-  CHECK(cli.Post("/api/params", R"({"subdivision":2,"idw_radius":4,"idw_power":3})", "application/json")->status == 202);
+  CHECK(before["smooth"].get<double>() == 1.0);
+  CHECK(cli.Post("/api/params", R"({"subdivision":2,"idw_radius":4,"idw_power":3,"smooth":2.5})", "application/json")->status == 202);
+  CHECK(json::parse(cli.Get("/api/status")->body)["smooth"].get<double>() == 2.5);
 }
 
 TEST_CASE("server: POST guards (content type, origin, size)") {
@@ -224,4 +230,58 @@ TEST_CASE("server: POST guards (content type, origin, size)") {
   auto r = cli.Post("/api/params", big, "application/json");
   REQUIRE(r);
   CHECK(r->status == 413);
+}
+
+TEST_CASE("server: /api/top ranks exact h, with prev_rank and aligned series") {
+  {
+    Fixture f(false);
+    httplib::Client cli("127.0.0.1", f.port);
+    CHECK(cli.Get("/api/top")->status == 503);
+  }
+  Fixture f;
+  httplib::Client cli("127.0.0.1", f.port);
+  for (const char* q : {"n=0", "n=51", "bars=0", "bars=301", "n=abc", "bars=1.5", "t=xyz"}) {
+    INFO(q);
+    CHECK(cli.Get(std::string("/api/top?") + q)->status == 400);
+  }
+  CHECK(cli.Get("/api/top?t=1")->status == 404);
+  auto times = json::parse(cli.Get("/api/times")->body);
+  REQUIRE(times.size() == 10);
+  auto r = cli.Get("/api/top?n=10&bars=30");
+  REQUIRE(r->status == 200);
+  auto top = json::parse(r->body);
+  CHECK(top["t"] == times.back());
+  // Reference ranking from the frame's exact node h (h descending, ties by lower i).
+  auto ranking = [&](const json& t) {
+    auto fr = json::parse(cli.Get("/api/frame?t=" + std::to_string(t.get<long long>()))->body);
+    std::vector<std::pair<double, std::size_t>> v;
+    for (const auto& n : fr["nodes"])
+      if (n[6].is_number()) v.push_back({n[6].get<double>(), n[0].get<std::size_t>()});
+    std::sort(v.begin(), v.end(), [](auto a, auto b) { return a.first > b.first || (a.first == b.first && a.second < b.second); });
+    return v;
+  };
+  const auto cur = ranking(times.back()), prev = ranking(times[times.size() - 2]);
+  const auto& rows = top["rows"];
+  REQUIRE(rows.size() == std::min<std::size_t>(10, cur.size()));
+  for (std::size_t k = 0; k < rows.size(); ++k) {
+    const auto& row = rows[k];
+    CHECK(row["rank"] == k + 1);
+    CHECK(row["i"] == cur[k].second);
+    CHECK(row["h"].get<double>() == cur[k].first);
+    CHECK(row["ticker"] == f.store->nodes()[cur[k].second].ticker);
+    CHECK(row["sector"] == f.store->nodes()[cur[k].second].sector);
+    std::optional<std::size_t> pr;
+    for (std::size_t q = 0; q < prev.size(); ++q)
+      if (prev[q].second == cur[k].second) pr = q + 1;
+    if (pr) CHECK(row["prev_rank"] == *pr);
+    else CHECK(row["prev_rank"].is_null());
+    REQUIRE(row["series"].size() == 30);
+    for (std::size_t q = 0; q < 20; ++q) CHECK(row["series"][q].is_null());  // only 10 bars are cached
+    CHECK(row["series"][29].get<double>() == row["h"].get<double>());
+  }
+  auto early = json::parse(cli.Get("/api/top?n=3&bars=2&t=" + std::to_string(times[0].get<long long>()))->body);
+  REQUIRE(early["rows"].size() == 3);
+  CHECK(early["rows"][0]["prev_rank"].is_null());  // no earlier cached bar
+  CHECK(early["rows"][0]["series"].size() == 2);
+  CHECK(early["rows"][0]["series"][0].is_null());
 }

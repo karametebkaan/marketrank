@@ -2,6 +2,8 @@
 
 #include <omp.h>
 
+#include <algorithm>
+#include <iterator>
 #include <map>
 #include <stdexcept>
 #include <string>
@@ -153,6 +155,18 @@ std::shared_ptr<const LandscapeFrame> FrameStore::landscape(std::optional<TimePo
   if (!t) return frames_.rbegin()->second;
   auto it = frames_.find(*t);
   return it == frames_.end() ? nullptr : it->second;
+}
+
+std::vector<std::shared_ptr<const LandscapeFrame>> FrameStore::recent(std::optional<TimePoint> t,
+                                                                      std::size_t k) const {
+  std::lock_guard<std::mutex> lk(m_);
+  std::vector<std::shared_ptr<const LandscapeFrame>> out;
+  if (frames_.empty() || k == 0) return out;
+  auto it = t ? frames_.find(*t) : std::prev(frames_.end());
+  if (it == frames_.end()) return out;
+  for (++it; out.size() < k && it != frames_.begin();) out.push_back((--it)->second);
+  std::reverse(out.begin(), out.end());
+  return out;
 }
 
 FrameStore::ShockResult FrameStore::shock(const std::vector<Shock>& shocks) {

@@ -20,6 +20,7 @@ double display_height(double h, HeightMode m);
 struct LandscapeParams {
   IdwParams idw{1, 2.0, 3};  // subdivision 1: raster = lattice mesh vertices
   HeightMode height = HeightMode::SignedLog;
+  double smooth = 1.0;            // display smoothing: Gaussian sigma in lattice cells after IDW (0 = off)
   double order_smoothing = 0.5;  // weight on the previous frame's hotness when ranking nodes inside a territory
   std::size_t max_arcs = 2000;
 };
