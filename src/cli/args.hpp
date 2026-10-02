@@ -31,7 +31,7 @@ struct CliArgs {
   bool refetch_full = false;  // alpaca only: refetch every ticker's full stored history once
   std::vector<std::pair<std::string, double>> shocks;  // --shock TICKER:SIZE, repeatable
   bool serve = false;
-  int port = 8080;
+  int port = 8765;
   std::string host = "127.0.0.1";
   std::filesystem::path web = "web";
   bool help = false;

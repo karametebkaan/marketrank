@@ -271,7 +271,7 @@ int run_rank(const fx::CliArgs& args, const fx::Panel& panel, const fx::Universe
   std::stable_sort(valleys.begin(), valleys.end(), [&](auto a, auto b) { return f.h[a] < f.h[b]; });
   const auto& score = f.forecasts.front().score;
   const std::size_t top = std::min(args.top, hills.size());
-  if (inactive > 0) std::printf("%zu inactive (no data)\n\n", inactive);
+  if (inactive > 0) std::printf("%zu inactive (stale or below liquidity floor)\n\n", inactive);
   std::printf("HILLS (money accumulating)            hotness         pi     score+%d\n",
               f.forecasts.front().k);
   for (std::size_t r = 0; r < top; ++r)

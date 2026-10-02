@@ -131,7 +131,7 @@ std::string cli_usage() {
          "                 [--lambda X] [--min-dollar-volume X] [--max-volume-ratio X]\n"
          "                 [--vol-scale] [--vol-window N]\n"
          "                 [--shock TICKER:SIZE ...]   (extra SIZE% return at normal volume on the last bar)\n"
-         "                 [--serve [--port N] [--host H] [--web DIR]]   (REST + SSE server; money-flow preset unless --legacy)\n"
+         "                 [--serve [--port N (8765)] [--host H] [--web DIR]]   (REST + SSE server; money-flow preset unless --legacy)\n"
          "                 [--migrate-cache [DIR]] [--maintain]\n"
          "                 [--sync-sectors]   (fetch SEC EDGAR SIC sectors for the universe snapshot into\n"
          "                                   data/sectors/sec_sic.csv; needs SEC_USER_AGENT in .env, no Alpaca keys;\n"

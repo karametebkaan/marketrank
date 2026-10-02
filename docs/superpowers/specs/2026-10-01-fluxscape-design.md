@@ -260,7 +260,7 @@ data/       universe/, cache/ (ignored), ledger/, portfolio.json
 Changing a parameter re-runs only the affected stage and those after it. Replay speed is clamped so that the frame interval ≥ max(user Δt, 1.5 × measured compute time), so larger graphs automatically slow playback rather than queuing frames.
 
 ### 9.2b Serve mode (milestone 2)
-`fluxscape --serve [--port 8080] [--web web] [--mode replay|alpaca|synthetic] [model flags]`. The default preset is **money-flow** unless `--legacy`, `--money-flow` or explicit model flags change it.
+`fluxscape --serve [--port 8765] [--web web] [--mode replay|alpaca|synthetic] [model flags]`. The default preset is **money-flow** unless `--legacy`, `--money-flow` or explicit model flags change it.
 - A background thread computes core frames and landscape frames for the data window and keeps up to 300 landscapes in memory for the scrubber.
 - Before the last bar it keeps a copy of the pipeline, so shocks at the latest bar cost about two frames.
 - A parameter change cancels the computation and restarts it.

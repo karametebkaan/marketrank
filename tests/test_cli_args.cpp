@@ -161,6 +161,9 @@ TEST_CASE("serve flags default to the money-flow preset") {
   CHECK(a.params.h_ref == HotRef::Size);
   CliArgs b = parse_cli({"--serve", "--h-ref", "netflow"});
   CHECK(b.params.h_ref == HotRef::NetFlow);
+  CHECK(b.port == 8765);  // 8080 is taken by Kinetica on the dev machine
+  CHECK(b.host == "127.0.0.1");
+  CHECK(cli_usage().find("--port N (8765)") != std::string::npos);
   CliArgs c = parse_cli({"--serve", "--legacy"});
   CHECK(c.params.transition.lift == LiftMode::Off);
   CHECK(c.params.h_ref == HotRef::Uniform);

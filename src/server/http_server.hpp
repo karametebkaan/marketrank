@@ -15,7 +15,7 @@ namespace fx {
 
 struct ServerOptions {
   std::string host = "127.0.0.1";
-  int port = 8080;
+  int port = 8765;
   std::filesystem::path web_root = "web";
 };
 

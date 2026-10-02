@@ -47,7 +47,7 @@ not observed order flow.
 ## Landscape UI
 
 ```bash
-./build/fluxscape --serve --mode replay            # http://127.0.0.1:8080 (money-flow preset)
+./build/fluxscape --serve --mode replay            # http://127.0.0.1:8765 (money-flow preset)
 ./build/fluxscape --serve --mode synthetic --port 9000
 scripts/ui_smoke.sh                                # headless-Chrome smoke test + screenshot
 ```

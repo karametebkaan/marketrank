@@ -2,8 +2,8 @@
 'use strict';
 const Q = new URLSearchParams(location.search);
 const S = {
-  status: null, times: [], frame: null, raster: null, shock: null, shockRaster: null, shockScale: 1, shockVmax: 1,
-  heightBase: 1, deck: null, playing: false, loadedKey: '', loadedGen: null, selftest: Q.has('selftest'),
+  status: null, times: [], frame: null, raster: null, shock: null, shockRaster: null, shockVmax: 1,
+  baseVmax: 1, deck: null, playing: false, loadedKey: '', loadedGen: null, selftest: Q.has('selftest'),
   frameSeq: 0, shockSeq: 0, idx: null, idxKey: '', colCache: null, arcsInit: false, selftestDone: false,
 };
 const $ = (id) => document.getElementById(id);
@@ -22,6 +22,16 @@ async function getFloat32(url) {
 }
 
 function span(L) { return Math.max(L.cols, L.rows); }
+
+// Robust scale: P90 of |v| (finite values only), floored at 1e-9. Colours saturate beyond ±vmax, so a few
+// outliers can no longer wash out the rest of the map.
+function p90abs(values) {
+  const a = values.filter(Number.isFinite).map(Math.abs).sort((x, y) => x - y);
+  return Math.max(a.length ? a[Math.min(a.length - 1, Math.floor(0.9 * a.length))] : 0, 1e-9);
+}
+
+// Height of a raster value: z·scale, soft-clipped with tanh at ±clip so outliers become plateaus, not needles.
+function heightOf(v, scale, clip) { return clip * Math.tanh((v * scale) / clip); }
 
 // Triangle topology of a w×h vertex grid is fixed: build it once per (w, h).
 function gridIndices(w, h) {
@@ -56,13 +66,13 @@ function vertexColors(z, vmax) {
 }
 
 // Triangulated surface: one vertex per raster sample, Gouraud-coloured by z (per-vertex COLOR_0, consumed by
-// SimpleMeshLayer as the `colors` attribute; no texture). Heights are z·scale clamped to ±clamp.
-function buildTerrain(z, meta, lattice, scale, vmax, clamp) {
+// SimpleMeshLayer as the `colors` attribute; no texture). Heights are heightOf(z, scale, clip).
+function buildTerrain(z, meta, lattice, scale, vmax, clip) {
   const { w, h } = meta, sx = lattice.cols / w, sy = lattice.rows / h;
   const pos = new Float32Array(w * h * 3), nrm = new Float32Array(w * h * 3);
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-    const k = y * w + x, v = z[k] * scale;
-    pos[3 * k] = (x + 0.5) * sx; pos[3 * k + 1] = (y + 0.5) * sy; pos[3 * k + 2] = v > clamp ? clamp : (v < -clamp ? -clamp : v);
+    const k = y * w + x;
+    pos[3 * k] = (x + 0.5) * sx; pos[3 * k + 1] = (y + 0.5) * sy; pos[3 * k + 2] = heightOf(z[k], scale, clip);
   }
   const zz = (k) => pos[3 * k + 2];
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
@@ -97,12 +107,11 @@ function render() {
   const L = f.lattice, shock = !!S.shock;
   const meta = shock ? S.shock.raster : f.raster, z = shock ? S.shockRaster : S.raster;
   const hs = parseFloat($('hscale').value);
-  const scale = (shock ? S.shockScale : S.heightBase) * hs;
-  const vmax = shock ? S.shockVmax : Math.max(Math.abs(meta.zmin), Math.abs(meta.zmax), 1e-9);
-  const clamp = shock ? 0.35 * span(L) * hs : Infinity;
+  const vmax = shock ? S.shockVmax : S.baseVmax;
+  const scale = 0.25 * span(L) / vmax * hs, clip = 0.4 * span(L);
   const nodes = f.nodes.map((n) => {
     const col = n[3] % L.cols, row = Math.floor(n[3] / L.cols), s = sample(z, meta, L, col, row);
-    const zt = Math.max(-clamp, Math.min(clamp, s.v * scale));
+    const zt = heightOf(s.v, scale, clip);
     return { i: n[0], ticker: n[1], sector: n[2], x: s.x, y: s.y, zt, v: s.v, h: n[6], pi: n[8], score: n[9] };
   });
   const byI = new Map(nodes.map((n) => [n.i, n]));
@@ -115,7 +124,7 @@ function render() {
   const holdings = (f.portfolio || []).filter((p) => p.i !== null && byI.has(p.i)).map((p) => ({ ...byI.get(p.i), weight: p.weight }));
   const layers = [
     new deck.SimpleMeshLayer({
-      id: 'terrain', data: [{}], mesh: buildTerrain(z, meta, L, scale, vmax, clamp),
+      id: 'terrain', data: [{}], mesh: buildTerrain(z, meta, L, scale, vmax, clip),
       getPosition: [0, 0, 0], getColor: [255, 255, 255], material: { ambient: 0.55, diffuse: 0.55, shininess: 12, specularColor: [30, 30, 30] },
     }),
     new deck.ScatterplotLayer({
@@ -126,10 +135,6 @@ function render() {
       id: 'arcs', data: arcs, getSourcePosition: (a) => pos(a.s), getTargetPosition: (a) => pos(a.t),
       getWidth: (a) => 0.5 + 1.5 * a.w / wmax, widthUnits: 'pixels', getSourceColor: [255, 140, 0, 80], getTargetColor: [255, 215, 0, 80],
     }),
-    new deck.ScatterplotLayer({
-      id: 'portfolio', data: holdings, getPosition: (n) => pos(n, 0.4), getRadius: (n) => 0.35 + 1.5 * n.weight, radiusUnits: 'common',
-      stroked: true, filled: false, getLineColor: [0, 150, 80], getLineWidth: 3, lineWidthUnits: 'pixels',
-    }),
   ];
   if ($('labels').checked) {
     layers.push(new deck.TextLayer({
@@ -137,6 +142,20 @@ function render() {
       getColor: [25, 25, 25], getTextAnchor: 'middle', getAlignmentBaseline: 'bottom', billboard: true,
     }));
   }
+  // Portfolio rings and tickers last, without depth testing, so they stay visible at any lattice size.
+  const onTop = { depthCompare: 'always', depthWriteEnabled: false };
+  const ring0 = Math.max(0.6, 0.012 * span(L));
+  layers.push(
+    new deck.ScatterplotLayer({
+      id: 'portfolio', data: holdings, getPosition: (n) => pos(n, 0.4), getRadius: (n) => ring0 + 1.5 * n.weight, radiusUnits: 'common',
+      stroked: true, filled: false, getLineColor: [0, 230, 90, 255], getLineWidth: 3, lineWidthUnits: 'pixels', parameters: onTop,
+    }),
+    new deck.TextLayer({
+      id: 'portfolio-labels', data: holdings, getPosition: (n) => pos(n, 0.9), getText: (n) => n.ticker, getSize: 14,
+      getColor: [0, 110, 45], fontWeight: 'bold', getTextAnchor: 'middle', getAlignmentBaseline: 'bottom', billboard: true,
+      outlineWidth: 3, outlineColor: [255, 255, 255, 230], fontSettings: { sdf: true }, parameters: onTop,
+    }),
+  );
   S.deck.setProps({ layers });
 }
 
@@ -200,13 +219,14 @@ async function loadFrame(t) {
   if (seq !== S.frameSeq) return false;
   if (S.shock) clearShock();
   S.frame = f; S.raster = z;
+  // Base colour/height scale: P90 of |z| over the occupied vertices (stock cells).
+  S.baseVmax = p90abs(f.nodes.map((n) => sample(z, f.raster, f.lattice, n[3] % f.lattice.cols, Math.floor(n[3] / f.lattice.cols)).v));
+  showStatus();
   if (!S.deck) {
-    const zmax = Math.max(Math.abs(f.raster.zmin), Math.abs(f.raster.zmax), 1e-9);
-    S.heightBase = 0.2 * span(f.lattice) / zmax;
     initDeck(f.lattice);
     fillTickers(f.nodes);
   }
-  if (!S.arcsInit) { S.arcsInit = true; $('arcs').value = Math.min(400, 2 * f.nodes.length); setArcsLabel(); }
+  if (!S.arcsInit) { S.arcsInit = true; $('arcs').value = Math.min(400, 2 * f.nodes.length, 150); setArcsLabel(); }
   $('tlabel').textContent = `${f.time}  ·  ${f.nodes.length} active stocks  ·  ${f.params}`;
   fillHoldings(f);
   updateShockEnabled();
@@ -225,7 +245,8 @@ async function refreshTimes() {
 function showStatus() {
   const st = S.status;
   if (!st) return;
-  const tag = S.shock ? `  ·  Δh ${S.shock.shocked.map((x) => x.ticker).join(',')}` : '';
+  const tag = (S.shock ? `  ·  Δh ${S.shock.shocked.map((x) => x.ticker).join(',')}` : '') +
+    (S.frame ? `  ·  colour ±${(S.shock ? S.shockVmax : S.baseVmax).toPrecision(3)} (P90)` : '');
   $('status').textContent = st.error ? `error: ${st.error}` : `${st.label} · ${st.ready ? 'ready' : `computing ${st.computed}/${st.total}`} · ${st.nodes} stocks${tag}`;
 }
 
@@ -237,13 +258,10 @@ async function applyShock() {
   const r = await getJSON('/api/shock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const z = await getFloat32('/api/shock/grid');
   if (seq !== S.shockSeq) return;
-  // Height and colour scale P: 95th percentile of |Δh| over active, non-shocked stocks (the shocked stock saturates).
+  // Height and colour scale: P90 of |Δh| over active, non-shocked stocks (the shocked stock saturates).
   const L = S.frame.lattice, shocked = new Set(tickers);
-  const mags = S.frame.nodes.filter((n) => !shocked.has(n[1]))
-    .map((n) => Math.abs(sample(z, r.raster, L, n[3] % L.cols, Math.floor(n[3] / L.cols)).v))
-    .filter(Number.isFinite).sort((a, b) => a - b);
-  const p95 = Math.max(mags.length ? mags[Math.min(mags.length - 1, Math.floor(0.95 * mags.length))] : 0, 1e-9);
-  S.shockVmax = p95; S.shockScale = 0.2 * span(L) / p95;
+  S.shockVmax = p90abs(S.frame.nodes.filter((n) => !shocked.has(n[1]))
+    .map((n) => sample(z, r.raster, L, n[3] % L.cols, Math.floor(n[3] / L.cols)).v));
   S.shockRaster = z; S.shock = r;
   const fmt = (x) => `${x.ticker.padEnd(6)} ${x.dh >= 0 ? '+' : ''}${x.dh.toFixed(4)}`;
   $('shockOut').textContent = `Δh landscape · L1 Δπ ${r.l1_dpi.toExponential(2)}\n` +
