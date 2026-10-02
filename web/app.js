@@ -4,7 +4,7 @@ const Q = new URLSearchParams(location.search);
 const S = {
   status: null, times: [], frame: null, raster: null, shock: null, shockRaster: null, shockVmax: 1,
   baseVmax: 1, deck: null, playing: false, loadedKey: '', loadedGen: null, selftest: Q.has('selftest'),
-  recompGen: null, frameSeq: 0, shockSeq: 0, topSeq: 0, topPrev: new Map(), highlight: null, idx: null, idxKey: '', colCache: null, selftestDone: false,
+  recompGen: null, frameSeq: 0, shockSeq: 0, topSeq: 0, topPrev: new Map(), sel: [], view: 'sections', idx: null, idxKey: '', colCache: null, selftestDone: false,
 };
 const $ = (id) => document.getElementById(id);
 const MID = [247, 247, 247], POS = [178, 24, 43], NEG = [33, 102, 172];
@@ -141,13 +141,18 @@ function render() {
       getLineWidth: 2, lineWidthUnits: 'pixels', pickable: true,
     }),
   );
-  const hi = S.highlight === null ? undefined : byI.get(S.highlight);
-  if (hi) {
+  // Selected tickers: rings in their legend colours. The newest one steers the section cuts.
+  const hexRgb = (h) => [1, 3, 5].map((k) => parseInt(h.slice(k, k + 2), 16));
+  const byTicker = new Map(nodes.map((n) => [n.ticker, n]));
+  const selNodes = S.sel.map((x) => ({ n: byTicker.get(x.ticker), c: hexRgb(x.color) })).filter((x) => x.n);
+  if (selNodes.length) {
     layers.push(new deck.ScatterplotLayer({
-      id: 'highlight', data: [hi], getPosition: (n) => pos(n, 0.6), getRadius: 11, radiusUnits: 'pixels', billboard: true,
-      stroked: true, filled: false, getLineColor: [255, 210, 0, 255], getLineWidth: 3, lineWidthUnits: 'pixels',
+      id: 'highlight', data: selNodes, getPosition: (d) => pos(d.n, 0.6), getRadius: 12, radiusUnits: 'pixels', billboard: true,
+      stroked: true, filled: false, getLineColor: (d) => [...d.c, 255], getLineWidth: 3, lineWidthUnits: 'pixels', parameters: onTop,
     }));
   }
+  const newest = S.sel.length ? byTicker.get(S.sel[S.sel.length - 1].ticker) : undefined;
+  const hi = newest;
   if (S.view === 'sections') {
     if (!S.sec || S.sec.col >= L.cols || S.sec.row >= L.rows) S.sec = { col: Math.floor(L.cols / 2), row: Math.floor(L.rows / 2) };
     if (hi) S.sec = { col: hi.i === S.secFor ? S.sec.col : Math.floor(hi.x), row: hi.i === S.secFor ? S.sec.row : Math.floor(hi.y) };
@@ -294,10 +299,10 @@ function scheduleLabels() {
 // a crosshair). The landscape lives in its own clipped viewport box; the cards sit beside it, never over it.
 const VIEWS = {
   '3d': { ortho: false, rotationX: 45, rotationOrbit: -25, rotate: true, fit: 1.6 },
-  top: { ortho: true, rotationX: 90, rotationOrbit: 0, rotate: false, fit: 1.08 },
-  front: { ortho: true, rotationX: 0, rotationOrbit: 0, rotate: false, fit: 1.08 },
-  side: { ortho: true, rotationX: 0, rotationOrbit: 90, rotate: false, fit: 1.08 },
-  sections: { ortho: true, rotationX: 90, rotationOrbit: 0, rotate: false, fit: 1.08 },
+  top: { ortho: true, rotationX: 90, rotationOrbit: 0, rotate: false, fit: 1.25 },
+  front: { ortho: true, rotationX: 0, rotationOrbit: 0, rotate: false, fit: 1.25 },
+  side: { ortho: true, rotationX: 0, rotationOrbit: 90, rotate: false, fit: 1.25 },
+  sections: { ortho: true, rotationX: 90, rotationOrbit: 0, rotate: false, fit: 1.25 },
 };
 function viewProps(mode, lattice) {
   const v = VIEWS[mode], el = $('canvas');
@@ -340,7 +345,7 @@ function initDeck(lattice) {
   const el = $('canvas');
   S.deck = new deck.Deck({
     parent: el,
-    ...viewProps(S.view || '3d', lattice),
+    ...viewProps(S.view || 'sections', lattice),
     onViewStateChange: () => { scheduleLabels(); },
     onClick: (info) => moveCut(info),
     onDrag: (info) => moveCut(info),
@@ -410,7 +415,7 @@ function fillHoldings(f) {
     const v = n ? n[11] : null;
     if (k) box.appendChild(document.createTextNode('\n'));
     const tk = Object.assign(document.createElement('span'), { className: 'tk', textContent: p.ticker, title: `${p.ticker}: path over the last ${PATH_BARS} bars` });
-    tk.addEventListener('click', () => { openPath(p.ticker).catch(fail); });
+    tk.addEventListener('click', () => toggleSel(p.ticker));
     box.append(tk, document.createTextNode(`${' '.repeat(Math.max(0, 6 - p.ticker.length))} ${(100 * p.weight).toFixed(1).padStart(5)}%  π·N `));
     const el = document.createElement('span');
     if (v !== null && v !== undefined) el.className = v >= 1 ? 'pos' : 'neg';
@@ -469,24 +474,22 @@ function renderTop(rows) {
   const box = $('topRows');
   const els = rows.map((r) => {
     const row = document.createElement('div');
-    row.className = 'toprow' + (S.highlight === r.i ? ' sel' : '');
+    row.className = 'toprow';
+    row.dataset.ticker = r.ticker;
     const mv = r.prev_rank === null ? ['new', 'new'] : r.prev_rank > r.rank ? ['▲', 'up'] : r.prev_rank < r.rank ? ['▼', 'down'] : ['•', 'same'];
     row.title = `${r.prev_rank === null ? 'new in the ranking' : `previous rank ${r.prev_rank}`} · MarketRank π·N ${fmt(r.mr, 4)} · heartbeat Δlog π ${fmtSigned(r.pulse, 5)} · h ${fmt(r.h, 4)}`;
     const v = topValue(r);
     const pl = r.pulse === null || r.pulse === undefined ? 'same' : r.pulse > 0 ? 'up' : r.pulse < 0 ? 'down' : 'same';
     row.append(cell('rk', String(r.rank)), cell(`mv ${mv[1]}`, mv[0]), cell('tk', r.ticker), Object.assign(cell('sec', sectorAbbr(r.sector)), { title: r.sector }),
       cell('hv', fmt(v, 3)), cell(`pl ${pl}`, fmtSigned(r.pulse, 4)), sparkline(r.series));
-    row.addEventListener('click', () => {
-      S.highlight = S.highlight === r.i ? null : r.i;
-      box.querySelectorAll('.toprow').forEach((el) => el.classList.remove('sel'));
-      if (S.highlight === r.i) row.classList.add('sel');
-      render();
-      if (S.highlight === r.i) openPath(r.ticker).catch(fail); else closePath();
-    });
+    row.addEventListener('click', () => toggleSel(r.ticker));
     if (S.topPrev.has(r.i) && S.topPrev.get(r.i) !== v) row.classList.add('beat');
     return row;
   });
   box.replaceChildren(...els);
+  // By default the path chart shows the rank-1 stock (once; afterwards the selection is the user's).
+  if (!S.autoSel && rows.length) { S.autoSel = true; if (!S.sel.length) toggleSel(rows[0].ticker); }
+  markSelRows();
   S.topPrev = new Map(rows.map((r) => [r.i, topValue(r)]));
 }
 
@@ -525,7 +528,8 @@ async function loadFrame(t) {
   }
   fillHoldings(f);
   loadTop(f.t).catch((e) => { $('topRows').textContent = String(e.message || e); if (S.selftest) fail(e); });
-  if (S.pathTicker) openPath(S.pathTicker).catch(fail);
+  if (S.sel.length) refreshPaths().catch(fail);
+  markSelRows();
   updateShockEnabled();
   render();
   return true;
@@ -611,7 +615,7 @@ async function onStatus(st) {
       $('shockSizeLabel').textContent = `${$('shockSize').value}%`;
       await applyShock();
     }
-    if (Q.has('path')) await openPath(Q.get('path'));
+    if (Q.has('path')) { S.autoSel = true; for (const t of Q.get('path').split(',')) toggleSel(t); }  // ?path=A,B,C selects tickers
     if (Q.has('view')) setView(Q.get('view'));  // ?view=3d|top|front|side|sections  // ?path=TICKER opens the path panel in the self-test
     setTimeout(() => {
       if (!$('topRows').querySelector('.toprow')) fail(new Error('top table did not render'));
@@ -660,108 +664,198 @@ function groupColor(g) {
   const hue = (g * 137.508) % 360;
   return `hsl(${hue.toFixed(0)}, 55%, 55%)`;
 }
-async function openPath(ticker) {
-  const seq = S.pathSeq = (S.pathSeq || 0) + 1;
-  S.pathTicker = ticker;
-  // The whole history up to the latest bar; the displayed bar is a cursor on it (so Play sweeps across the year).
-  const key = `${ticker}|${S.loadedGen}|${S.times.length}`;
-  let r = S.pathCache && S.pathCache.key === key ? S.pathCache.r : null;
-  if (!r) {
-    r = await getJSON(`/api/path?ticker=${encodeURIComponent(ticker)}&bars=${PATH_BARS}`);
-    if (seq !== S.pathSeq || S.pathTicker !== ticker) return;
-    S.pathCache = { key, r };
+// Selected tickers (multi-select from the top-10 table and the portfolio list), each with its own colour. Their
+// paths share one chart; the map rings them in the same colours.
+const SEL_COLORS = ['#ff4d6d', '#5b8cff', '#12a150', '#ff9f1c', '#9b5de5', '#00a8e8', '#f15bb5', '#8d6e63'];
+const SEL_MAX = SEL_COLORS.length;
+function selColor(ticker) {
+  const k = S.sel.findIndex((x) => x.ticker === ticker);
+  return k < 0 ? null : S.sel[k].color;
+}
+function toggleSel(ticker) {
+  const k = S.sel.findIndex((x) => x.ticker === ticker);
+  if (k >= 0) S.sel.splice(k, 1);
+  else {
+    if (S.sel.length >= SEL_MAX) S.sel.shift();
+    const used = new Set(S.sel.map((x) => x.color));
+    S.sel.push({ ticker, color: SEL_COLORS.find((c) => !used.has(c)) || SEL_COLORS[0] });
+    S.secFor = null;  // the section cuts jump to the newest selection
   }
-  drawPath(r);
+  markSelRows();
+  render();
+  refreshPaths().catch(fail);
+}
+function clearSel() { S.sel = []; markSelRows(); render(); refreshPaths().catch(fail); }
+function markSelRows() {
+  document.querySelectorAll('.toprow').forEach((el) => {
+    const c = selColor(el.dataset.ticker);
+    el.classList.toggle('sel', !!c);
+    el.style.boxShadow = c ? `inset 3px 0 0 ${c}` : '';
+  });
+  document.querySelectorAll('#holdings .tk').forEach((el) => {
+    const c = selColor(el.textContent);
+    el.style.color = c || '';
+    el.style.borderBottomColor = c || '';
+  });
+}
+async function openPath(ticker) { if (!selColor(ticker)) toggleSel(ticker); else await refreshPaths(); }
+// Fetches (cached per ticker and generation) and draws the paths of every selected ticker.
+async function refreshPaths() {
+  const seq = S.pathSeq = (S.pathSeq || 0) + 1;
+  if (!S.sel.length) { $('path').hidden = true; S.pathGeom = null; return; }
+  S.pathCacheMap = S.pathCacheMap || new Map();
+  const gen = `${S.loadedGen}|${S.times.length}`;
+  const out = await Promise.all(S.sel.map(async (x) => {
+    const key = `${x.ticker}|${gen}`;
+    let r = S.pathCacheMap.get(key);
+    if (!r) { r = await getJSON(`/api/path?ticker=${encodeURIComponent(x.ticker)}&bars=${PATH_BARS}`); S.pathCacheMap.set(key, r); }
+    return { ...x, r };
+  }));
+  if (seq !== S.pathSeq) return;
+  if (S.pathCacheMap.size > 64) S.pathCacheMap = new Map([...S.pathCacheMap].filter(([k]) => k.endsWith(`|${gen}`)));
+  drawPaths(out);
   $('path').hidden = false;
 }
-function closePath() { S.pathTicker = null; S.pathSeq = (S.pathSeq || 0) + 1; $('path').hidden = true; }
-function drawPath(r) {
+function drawPaths(series) {
   const svg = $('pathSvg');
   svg.replaceChildren();
-  const W = 360, H = 250, padL = 40, padR = 10, padT = 10, stripH = 8, padB = 30 + stripH;
-  const P = r.points, days = P.length;
-  $('pathTitle').textContent = `${r.ticker} · ${sectorAbbr(r.sector)} · ${days} bars`;
-  const act = P.filter((p) => p.level !== null);
-  if (act.length < 2) {
+  const n = series.length, single = n === 1;
+  const stripH = single ? 8 : Math.max(3, Math.min(6, Math.floor(24 / n)));
+  const padL = 40, padR = 10, padT = 10, padB = 30 + (stripH + 1) * n, W = 360, H = 212 + padB;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  // Common time axis: the longest series (all come from the same cached frames).
+  const P0 = series.reduce((a, x) => (x.r.points.length > a.length ? x.r.points : a), []);
+  const days = P0.length, times = P0.map((p) => p.t), tIndex = new Map(times.map((t, k) => [t, k]));
+  // Legend chips: ticker in its colour; click one to remove it.
+  $('pathLegend').replaceChildren(...series.map((x) => {
+    const chip = Object.assign(document.createElement('button'), { className: 'chip', title: `remove ${x.ticker}` });
+    chip.style.setProperty('--c', x.color);
+    chip.append(Object.assign(document.createElement('span'), { className: 'dot' }), document.createTextNode(`${x.ticker} · ${sectorAbbr(x.r.sector)} ×`));
+    chip.addEventListener('click', () => toggleSel(x.ticker));
+    return chip;
+  }));
+  $('pathTitle').textContent = `${single ? series[0].ticker : `${n} stocks`} · ${days} bars`;
+  const all = series.flatMap((x) => x.r.points.filter((p) => p.level !== null).map((p) => p.level));
+  if (all.length < 2 || days < 2) {
     svg.append(svgEl('text', { x: W / 2, y: H / 2, 'text-anchor': 'middle' }, 'not enough active bars'));
     $('pathNote').textContent = '';
+    S.pathGeom = null;
     return;
   }
-  // Level log(π / size share) over time; 0 = exactly what its size predicts. The y range always includes 0.
-  const lo = Math.min(0, ...act.map((p) => p.level)), hi = Math.max(0, ...act.map((p) => p.level));
+  const lo = Math.min(0, ...all), hi = Math.max(0, ...all);
   const padY = 0.08 * Math.max(hi - lo, 1e-6), y0v = lo - padY, y1v = hi + padY;
   const bottom = H - padB;
-  const X = (k) => padL + (days === 1 ? 0 : k / (days - 1)) * (W - padL - padR);
+  const X = (k) => padL + k / (days - 1) * (W - padL - padR);
   const Y = (v) => padT + (y1v - v) / (y1v - y0v) * (bottom - padT);
   const zy = Y(0);
-  svg.append(
-    svgEl('rect', { x: padL, y: padT, width: W - padL - padR, height: bottom - padT, fill: '#fbfbfc', stroke: '#e6e8ee' }),
-    svgEl('defs', {}),
-  );
-  const defs = svg.lastChild;
-  defs.innerHTML = `<clipPath id="pcAbove"><rect x="${padL}" y="${padT}" width="${W - padL - padR}" height="${Math.max(0, zy - padT)}"/></clipPath>` +
+  S.pathGeom = { padL, padR, W, days, times };
+  svg.append(svgEl('rect', { x: padL, y: padT, width: W - padL - padR, height: bottom - padT, fill: '#fbfbfc', stroke: '#e6e8ee' }), svgEl('defs', {}));
+  svg.lastChild.innerHTML = `<clipPath id="pcAbove"><rect x="${padL}" y="${padT}" width="${W - padL - padR}" height="${Math.max(0, zy - padT)}"/></clipPath>` +
     `<clipPath id="pcBelow"><rect x="${padL}" y="${zy}" width="${W - padL - padR}" height="${Math.max(0, bottom - zy)}"/></clipPath>`;
-  // Gridlines with labels: 0, the range ends.
   for (const v of [y1v - padY, 0, y0v + padY]) {
     svg.append(svgEl('line', { x1: padL, y1: Y(v), x2: W - padR, y2: Y(v), stroke: v === 0 ? '#b8bcc6' : '#eceef2', 'stroke-dasharray': v === 0 ? '' : '3 3' }),
       svgEl('text', { x: padL - 4, y: Y(v) + 3, 'text-anchor': 'end' }, `${v > 0 ? '+' : ''}${v.toFixed(2)}`));
   }
-  // Line and area, broken where the stock was inactive.
-  const runs = [];
-  let cur = [];
-  P.forEach((p, k) => { if (p.level === null) { if (cur.length) runs.push(cur); cur = []; } else cur.push([X(k), Y(p.level)]); });
-  if (cur.length) runs.push(cur);
-  for (const run of runs) {
-    const line = run.map(([x, y], j) => `${j ? 'L' : 'M'}${x.toFixed(1)},${y.toFixed(1)}`).join('');
-    const area = `${line}L${run[run.length - 1][0].toFixed(1)},${zy.toFixed(1)}L${run[0][0].toFixed(1)},${zy.toFixed(1)}Z`;
-    svg.append(svgEl('path', { d: area, fill: 'rgba(200, 29, 58, .18)', 'clip-path': 'url(#pcAbove)' }),
-      svgEl('path', { d: area, fill: 'rgba(36, 99, 196, .18)', 'clip-path': 'url(#pcBelow)' }),
-      svgEl('path', { d: line, fill: 'none', stroke: '#141821', 'stroke-width': 1.6, 'stroke-linejoin': 'round' }));
-  }
-  // Hover targets: one invisible column per bar with the exact values.
-  const cw = (W - padL - padR) / Math.max(1, days - 1);
-  P.forEach((p, k) => {
+  const ci = S.frame && tIndex.has(S.frame.t) ? tIndex.get(S.frame.t) : -1;  // the displayed bar
+  const sw = (W - padL - padR) / days;
+  series.forEach((x, si) => {
+    const P = x.r.points;
+    const runs = [];
+    let cur = [];
+    P.forEach((p) => {
+      const k = tIndex.get(p.t);
+      if (p.level === null || k === undefined) { if (cur.length) runs.push(cur); cur = []; } else cur.push([X(k), Y(p.level)]);
+    });
+    if (cur.length) runs.push(cur);
+    for (const run of runs) {
+      const line = run.map(([px, py], j) => `${j ? 'L' : 'M'}${px.toFixed(1)},${py.toFixed(1)}`).join('');
+      if (single) {
+        const area = `${line}L${run[run.length - 1][0].toFixed(1)},${zy.toFixed(1)}L${run[0][0].toFixed(1)},${zy.toFixed(1)}Z`;
+        svg.append(svgEl('path', { d: area, fill: 'rgba(200, 29, 58, .18)', 'clip-path': 'url(#pcAbove)' }),
+          svgEl('path', { d: area, fill: 'rgba(36, 99, 196, .18)', 'clip-path': 'url(#pcBelow)' }));
+      }
+      svg.append(svgEl('path', { d: line, fill: 'none', stroke: single ? '#141821' : x.color, 'stroke-width': single ? 1.6 : 1.4, 'stroke-linejoin': 'round' }));
+    }
+    // Community strip of this series, aligned with the time axis (a colour tab marks the series).
+    const y = bottom + 3 + si * (stripH + 1);
+    if (!single) svg.append(svgEl('rect', { x: padL - 6, y, width: 4, height: stripH, fill: x.color }));
+    P.forEach((p) => {
+      const k = tIndex.get(p.t);
+      if (k === undefined) return;
+      const rc = svgEl('rect', { x: padL + k * sw, y, width: sw + 0.3, height: stripH, fill: groupColor(p.group) });
+      rc.append(svgEl('title', {}, `${x.ticker} · ${p.time.slice(0, 10)} · community ${p.group === null || p.group < 0 ? 'none' : p.group}`));
+      svg.append(rc);
+    });
+  });
+  // Hover targets: one column per bar listing every series' value.
+  const cw = (W - padL - padR) / (days - 1);
+  times.forEach((t, k) => {
     const hit = svgEl('rect', { x: X(k) - cw / 2, y: padT, width: cw, height: bottom - padT, fill: 'transparent' });
-    hit.append(svgEl('title', {}, `${p.time.slice(0, 10)} · level ${p.level === null ? 'n/a' : fmtSigned(p.level, 3)} · π·N ${fmt(p.mr, 3)} · Δ5 log π·N ${fmtSigned(p.momentum, 4)}`));
+    const lines = series.map((x) => {
+      const p = x.r.points.find((q) => q.t === t);
+      return `${x.ticker}: level ${p && p.level !== null ? fmtSigned(p.level, 3) : 'n/a'} · π·N ${p ? fmt(p.mr, 3) : 'n/a'}`;
+    });
+    hit.append(svgEl('title', {}, `${P0[k].time.slice(0, 10)}\n${lines.join('\n')}`));
     svg.append(hit);
   });
-  const ci = S.frame ? P.findIndex((p) => p.t === S.frame.t) : -1;  // the displayed bar
   if (ci >= 0) {
-    svg.append(svgEl('line', { x1: X(ci), y1: padT, x2: X(ci), y2: bottom, stroke: '#ff4d6d', 'stroke-width': 1.2, 'stroke-dasharray': '3 2' }));
-    if (P[ci].level !== null) svg.append(svgEl('circle', { cx: X(ci), cy: Y(P[ci].level), r: 4, fill: '#ff4d6d', stroke: '#fff', 'stroke-width': 1.5 }));
+    svg.append(svgEl('line', { x1: X(ci), y1: padT, x2: X(ci), y2: bottom, stroke: '#ff4d6d', 'stroke-width': 1.4, 'stroke-dasharray': '3 2' }));
+    for (const x of series) {
+      const p = x.r.points.find((q) => q.t === times[ci]);
+      if (p && p.level !== null) svg.append(svgEl('circle', { cx: X(ci), cy: Y(p.level), r: 4, fill: single ? '#ff4d6d' : x.color, stroke: '#fff', 'stroke-width': 1.5 }));
+    }
   }
-  const last = P[days - 1];
-  if (last.level !== null) svg.append(svgEl('circle', { cx: X(days - 1), cy: Y(last.level), r: 4.5, fill: 'rgb(0, 200, 80)', stroke: '#fff', 'stroke-width': 1.5 }));
-  // Community strip, aligned with the time axis.
-  const sw = (W - padL - padR) / days;
-  P.forEach((p, k) => {
-    const rc = svgEl('rect', { x: padL + k * sw, y: bottom + 3, width: sw + 0.3, height: stripH, fill: groupColor(p.group) });
-    rc.append(svgEl('title', {}, `${p.time.slice(0, 10)} · community ${p.group === null || p.group < 0 ? 'none' : p.group}`));
-    svg.append(rc);
-  });
-  // Month ticks.
   const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   let lastX = -1e9;
-  P.forEach((p, k) => {
-    if (k === 0 || p.time.slice(5, 7) === P[k - 1].time.slice(5, 7)) return;
+  const axisY = bottom + 3 + n * (stripH + 1) + 12;
+  P0.forEach((p, k) => {
+    if (k === 0 || p.time.slice(5, 7) === P0[k - 1].time.slice(5, 7)) return;
     svg.append(svgEl('line', { x1: X(k), y1: bottom, x2: X(k), y2: bottom + 3, stroke: '#b8bcc6' }));
     if (X(k) - lastX < 26) return;
     lastX = X(k);
     const m = Number(p.time.slice(5, 7)) - 1;
-    svg.append(svgEl('text', { x: X(k), y: bottom + stripH + 16, 'text-anchor': 'middle' }, m === 0 ? p.time.slice(0, 4) : MON[m]));
+    svg.append(svgEl('text', { x: X(k), y: axisY, 'text-anchor': 'middle' }, m === 0 ? p.time.slice(0, 4) : MON[m]));
   });
   svg.append(
     svgEl('text', { x: 10, y: (padT + bottom) / 2, 'text-anchor': 'middle', transform: `rotate(-90 10 ${(padT + bottom) / 2})` }, 'log(π / size share)'),
     svgEl('text', { x: padL + 4, y: padT + 11, class: 'q' }, 'more money than size predicts'),
     svgEl('text', { x: padL + 4, y: bottom - 4, class: 'q' }, 'less'),
   );
-  let changes = 0;
-  for (let k = 1; k < days; k++) if (P[k].group !== P[k - 1].group) changes++;
-  const at = ci >= 0 ? P[ci] : last;
-  $('pathNote').textContent = `${at.time.slice(0, 10)}: level ${at.level === null ? 'n/a' : fmtSigned(at.level, 3)} · π·N ${fmt(at.mr, 3)} · 5-bar Δlog π·N ${fmtSigned(at.momentum, 4)} · community changed ${changes}× in ${days} bars · drag the chart to move through time`;
+  const tAt = ci >= 0 ? times[ci] : times[days - 1];
+  const notes = series.map((x) => {
+    const P = x.r.points, p = P.find((q) => q.t === tAt);
+    let changes = 0;
+    for (let k = 1; k < P.length; k++) if (P[k].group !== P[k - 1].group) changes++;
+    return `${x.ticker} ${p && p.level !== null ? fmtSigned(p.level, 2) : 'n/a'} (π·N ${p ? fmt(p.mr, 1) : 'n/a'}, ${changes} community changes)`;
+  });
+  $('pathNote').textContent = `${new Date(tAt * 1000).toISOString().slice(0, 10)} · ${notes.join(' · ')} · drag the chart to move through time`;
 }
+// Dragging on the path chart scrubs the displayed bar (landscape, table and cursor follow).
+function pathScrub(e) {
+  const g = S.pathGeom, svg = $('pathSvg');
+  if (!g || !g.days || !svg.getScreenCTM()) return;
+  const pt = new DOMPoint(e.clientX, e.clientY).matrixTransform(svg.getScreenCTM().inverse());
+  const k = Math.max(0, Math.min(g.days - 1, Math.round((pt.x - g.padL) / (g.W - g.padL - g.padR) * (g.days - 1))));
+  const idx = S.times.indexOf(g.times[k]);
+  if (idx < 0 || Number($('scrub').value) === idx) return;
+  stopPlay();
+  $('follow').checked = false;
+  $('scrub').value = idx;
+  clearShock();
+  $('shockApply').disabled = true;
+  loadFrame(S.times[idx]).catch(fail);
+}
+function closePath() { clearSel(); }
 
 function wire() {
+  const ps = $('pathSvg');
+  ps.style.cursor = 'ew-resize';
+  ps.style.touchAction = 'none';
+  ps.addEventListener('pointerdown', (e) => { ps.setPointerCapture(e.pointerId); S.pathDrag = true; pathScrub(e); });
+  ps.addEventListener('pointermove', (e) => { if (S.pathDrag) pathScrub(e); });
+  const endDrag = (e) => { S.pathDrag = false; if (ps.hasPointerCapture(e.pointerId)) ps.releasePointerCapture(e.pointerId); };
+  ps.addEventListener('pointerup', endDrag);
+  ps.addEventListener('pointercancel', endDrag);
   document.querySelectorAll('#viewbar [data-view]').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
   $('viewReset').addEventListener('click', () => setView(S.view || '3d'));
   // Arrow keys step the section cuts (Shift: 5 cells); ignored while typing in a field.
@@ -781,7 +875,6 @@ function wire() {
   });
   $('pathClose').addEventListener('click', () => {
     closePath();
-    if (S.highlight !== null) { S.highlight = null; document.querySelectorAll('.toprow').forEach((el) => el.classList.remove('sel')); render(); }
   });
   // Scrubbing exits shock mode (as Reset does): the shock belongs to the latest bar only.
   $('scrub').addEventListener('input', () => { $('follow').checked = false; clearShock(); render(); $('shockApply').disabled = true; loadFrame(S.times[Number($('scrub').value)]).catch(fail); });

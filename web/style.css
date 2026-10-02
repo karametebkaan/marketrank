@@ -110,4 +110,10 @@ html, body { height: 100%; margin: 0; font: 13px/1.45 var(--sans); color: var(--
   #app { grid-template-columns: 1fr; grid-template-rows: auto auto; }
   #panel { border-right: 0; border-bottom: 1px solid var(--pline); }
 }
-#viewport:has(#sections:not([hidden])) #legend { bottom: auto; left: auto; top: 12px; right: 12px; }
+#pathLegend { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 6px; }
+#pathLegend:empty { display: none; }
+#pathLegend .chip { display: inline-flex; align-items: center; gap: 5px; border: 1px solid rgba(20,24,33,.1); background: #fff;
+  border-radius: 999px; padding: 2px 9px 2px 6px; font: 600 11px var(--display); color: var(--ink); cursor: pointer; }
+#pathLegend .chip:hover { border-color: var(--c); }
+#pathLegend .chip .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--c); }
+#top h3::after { content: ' · click rows to compare'; text-transform: none; letter-spacing: 0; font-family: var(--sans); font-weight: 400; color: #a0a6b2; }
