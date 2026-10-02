@@ -7,7 +7,11 @@ Output: DIR/13f/holdings_<YYYYQn>.csv with columns cik,cusip,issuer,shares,value
 
 VALUE units: the SEC reported VALUE in thousands of dollars for filings made before
 2023-01-03 and in whole dollars from 2023-01-03 on (by FILING_DATE). Pre-cutover
-values are multiplied by 1000 so value_usd is always dollars.
+values are multiplied by 1000 so value_usd is always dollars. Some filers ignore the rule
+(dollars before the cutover, thousands after it), so each quarter file is then normalised per
+manager and row against the CUSIP's consensus price (median value/shares over >= 5 holders):
+a manager whose price sits at a power of ten >= 100x off (within a factor 3) has its values
+rescaled by that power; then a single row whose value is that much too large is rescaled. Shares are never changed (see normalise_value_units).
 
 Filters: 13F-HR / 13F-HR/A only; per (CIK, period) the latest RESTATEMENT replaces
 earlier filings and later NEW HOLDINGS amendments add rows; info-table rows need
@@ -19,8 +23,10 @@ import csv
 import io
 import os
 import itertools
+import math
 import re
 import sqlite3
+import statistics
 import sys
 import time
 import urllib.request
@@ -309,6 +315,85 @@ def _write_rows(rows, path):
             w.writerow([r[1], r[2], r[3], r[4], r[5]])
 
 
+UNIT_MIN_HOLDERS = 5
+_LN10 = math.log(10.0)
+
+
+def _unit_rows(path):
+    with open(path, newline="", encoding="utf-8") as f:
+        for r in csv.DictReader(f):
+            sh, val = _num(r["shares"]), _num(r["value_usd"])
+            yield r, sh, val
+
+
+def _decades(dev):
+    """Power of ten a log-price deviation sits at: k with |k| >= 2 and dev within a factor 3 of 10^k, else 0."""
+    k = int(round(dev / _LN10))
+    return k if abs(k) >= 2 and abs(dev - k * _LN10) < math.log(3.0) else 0
+
+
+def _rescale(val, k):
+    if k > 0:
+        v = Decimal(val) / (10 ** k)
+        return int(v) if v == v.to_integral_value() else v
+    return val * 10 ** (-k)
+
+
+def normalise_value_units(path):
+    """Fix VALUE unit errors against the per-CUSIP consensus price, in place. Idempotent.
+
+    Consensus: median log(value/shares) over >= 5 holders of the CUSIP. A manager whose median
+    deviation is at a power of ten 10^k (|k| >= 2, within a factor 3) has every value rescaled by
+    10^-k (dollars-vs-thousands filers); then any single row whose value is still too large by such
+    a power is rescaled on its own. A row whose value is too small for its shares is ambiguous (a
+    SHARES error inflates shares) and is left as is, counted in rows_inconsistent (only when the
+    file is rewritten). Shares are never changed. Three streaming passes; memory O(rows' log prices)."""
+    px = {}
+    for r, sh, val in _unit_rows(path):
+        if sh > 0 and val > 0:
+            px.setdefault(r["cusip"], []).append(math.log(float(val) / float(sh)))
+    med = {c: statistics.median(v) for c, v in px.items() if len(v) >= UNIT_MIN_HOLDERS}
+    del px
+    devs = {}
+    for r, sh, val in _unit_rows(path):
+        m = med.get(r["cusip"])
+        if m is not None and sh > 0 and val > 0:
+            devs.setdefault(r["cik"], []).append(math.log(float(val) / float(sh)) - m)
+    scale = {}
+    st = {"managers_down": 0, "managers_up": 0, "rows_rescaled": 0, "rows_inconsistent": 0}
+    for cik, d in devs.items():
+        k = _decades(statistics.median(d))
+        if k:
+            scale[cik] = k
+            st["managers_down" if k > 0 else "managers_up"] += 1
+    rows_fix = 0
+    for cik, d in devs.items():
+        k = scale.get(cik, 0)
+        rows_fix += sum(1 for x in d if _decades(x - k * _LN10) > 0)
+    del devs
+    if not scale and not rows_fix:
+        return st
+    tmp = path + ".tmp"
+
+    def rows():
+        for r, sh, val in _unit_rows(path):
+            k = scale.get(r["cik"], 0)
+            if k:
+                val = _rescale(val, k)
+            m = med.get(r["cusip"])
+            if m is not None and sh > 0 and val > 0:
+                kr = _decades(math.log(float(val) / float(sh)) - m)
+                if kr > 0:  # value too large for its shares: a VALUE unit error, rescaled
+                    val = _rescale(val, kr)
+                    st["rows_rescaled"] += 1
+                elif kr < 0:  # value too small for its shares: maybe a SHARES error; left as is
+                    st["rows_inconsistent"] += 1
+            yield (None, r["cik"], r["cusip"], r["issuer"], sh, val)
+    _write_rows(rows(), tmp)
+    os.replace(tmp, path)
+    return st
+
+
 def _cik_key(r):
     return (int(r[1]) if str(r[1]).isdigit() else 0, r[1], r[2])
 
@@ -400,7 +485,11 @@ def run(data_dir, q_from, q_to, index_url, client, stats=None):
                         sh += _num(a)
                         val += _num(b)
                     yield (q, cik, cusip, issuer, sh, val)
-            _write_rows(grouped(), os.path.join(base, "holdings_%s.csv" % q))
+            out = os.path.join(base, "holdings_%s.csv" % q)
+            _write_rows(grouped(), out)
+            st = normalise_value_units(out)
+            for k, v in (st or {}).items():
+                stats[k] = stats.get(k, 0) + v
     finally:
         db.close()
     return quarters
@@ -427,6 +516,9 @@ def main(argv=None, env_path=None):
               file=sys.stderr)
     if stats.get("empty_cusip"):
         print("warning: skipped %d rows with empty CUSIP" % stats["empty_cusip"], file=sys.stderr)
+    if stats.get("managers_down") or stats.get("managers_up") or stats.get("rows_rescaled"):
+        print("value units: rescaled %d manager-quarters down, %d up, and %d single rows"
+              % (stats.get("managers_down", 0), stats.get("managers_up", 0), stats.get("rows_rescaled", 0)))
     print("wrote %d quarters" % len(qs))
     return 0
 

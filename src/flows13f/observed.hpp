@@ -15,9 +15,12 @@ struct FlowEdge { std::uint32_t from, to; double dollars; };
 struct ObservedParams { std::size_t top_n = 2000; double prune_rel = 1e-9; };
 // nodes = indices into `tickers` of the top_n tickers by total 13F value (ascending index); edge from/to are such indices.
 // outside_* = |d| of positions outside the node set; skipped_value = value of positions with unknown price / unknown ticker.
+// inconsistent_* = positions dropped because a side's value/shares is >= 100x off the known price (a SHARES or VALUE
+// filing error that would otherwise be a phantom flow), and their 13F value (both quarters).
 struct ObservedFlows { std::string quarter; std::vector<FlowEdge> edges; std::vector<std::uint32_t> nodes;
                        double paired = 0, unpaired_in = 0, unpaired_out = 0, outside_in = 0, outside_out = 0, skipped_value = 0;
-                       std::size_t managers = 0; };
+                       double inconsistent_value = 0;
+                       std::size_t managers = 0, inconsistent_positions = 0; };
 // Node indices are positions in `tickers`; prices = mean close of quarter q per ticker (NaN = unknown -> value_usd/shares
 // fallback when finite, else the position is skipped). split_ratio(ticker) adjusts q-1 shares to q's basis (1.0 = none).
 // Pairing per manager: F_ij = out_i*in_j/sum(in)*min(1, sum(in)/sum(out)), accumulated densely over the node set

@@ -19,6 +19,7 @@ int col(const std::vector<std::string>& hdr, const std::string& name) {
   for (std::size_t i = 0; i < hdr.size(); ++i) if (hdr[i] == name) return static_cast<int>(i);
   return -1;
 }
+constexpr double kMaxPriceOff = 100.0;  // implied 13F price vs known price: beyond this the row is a filing error
 struct Pos { double prev_shares = 0, cur_shares = 0, prev_value = 0, cur_value = 0; };
 
 bool parse_num(const std::string& s, double& v) {
@@ -127,7 +128,17 @@ ObservedFlows observed_flows(const QuarterHoldings& prev, const QuarterHoldings&
       if (std::isnan(ratio_cache[node])) ratio_cache[node] = split_ratio(tickers[node]);
       const double ratio = ratio_cache[node];
       double price = prices.size() > node ? prices[node] : std::nan("");
-      if (!(std::isfinite(price) && price > 0)) {
+      if (std::isfinite(price) && price > 0) {
+        // Each side's implied price must be within 100x of the known price (q's raw basis; q-1's is price * ratio).
+        auto off = [&](double sh, double val, double expect) {
+          return sh > 0 && val > 0 && std::abs(std::log(val / sh / expect)) > std::log(kMaxPriceOff);
+        };
+        if (off(p.cur_shares, p.cur_value, price) || (ratio > 0 && off(p.prev_shares, p.prev_value, price * ratio))) {
+          ++res.inconsistent_positions;
+          res.inconsistent_value += std::abs(p.cur_value) + std::abs(p.prev_value);
+          continue;
+        }
+      } else {
         price = std::nan("");
         if (p.cur_shares > 0 && p.cur_value > 0) price = p.cur_value / p.cur_shares;
         else if (p.prev_shares > 0 && ratio > 0 && p.prev_value > 0) price = p.prev_value / (ratio * p.prev_shares);

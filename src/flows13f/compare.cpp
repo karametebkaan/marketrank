@@ -877,6 +877,8 @@ nlohmann::json run_compare_13f(const Panel& panel, const Compare13fOptions& opt,
               {"outside_in", f.outside_in},
               {"outside_out", f.outside_out},
               {"skipped_value", f.skipped_value},
+              {"inconsistent_positions", f.inconsistent_positions},
+              {"inconsistent_value", f.inconsistent_value},
               {"holdings_value_prev", prev.total_value},
               {"holdings_value_cur", cur.total_value},
               {"unmapped_value_cur", cur.dropped_value},
@@ -885,7 +887,8 @@ nlohmann::json run_compare_13f(const Panel& panel, const Compare13fOptions& opt,
               {"pi_obs_vs_adv", spearman(pi_obs, p.adv)},
               {"pi_obs_vs_13f_value", spearman(pi_obs, value)}};
     log << "  observed " << p.q << ": " << f.managers << " managers, " << m << " nodes, " << p.observed.size()
-        << " edges, paired " << money(f.paired) << ", " << pr.splits << " splits, " << pr.unconfirmed.size()
+        << " edges, paired " << money(f.paired) << ", " << f.inconsistent_positions
+        << " inconsistent positions dropped, " << pr.splits << " splits, " << pr.unconfirmed.size()
         << " unconfirmed split candidates, placebo " << (p.placebo.empty() ? "none" : p.placebo) << " ("
         << std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() << " s)\n";
   }
@@ -1005,7 +1008,8 @@ std::string compare_report_md(const nlohmann::json& r) {
        "- **Observed T_q** (13F): per manager, d = (shares_q - ratio * shares_{q-1}) * P_q; sources d < 0, sinks d > 0;\n"
        "  F_ij = out_i * in_j / sum(in) * min(1, sum(in)/sum(out)); summed over managers. Node set: the top "
     << r["observed_params"]["top_n"]
-    << " tickers by 13F value (q-1 and q), accumulated densely, no cap.\n"
+    << " tickers by 13F value (q-1 and q), accumulated densely, no cap. A position is dropped when either side's\n"
+       "  value/shares is 100x or more off the known price (a SHARES or VALUE filing error; counted per quarter).\n"
        "- **Prices and splits**: lake bars are adjustment=all. Per ticker and quarter end, f = median(13F value/shares) /\n"
        "  last adjusted close of that quarter; P_q = mean adjusted close over q's bars * f_q (q's raw basis);\n"
        "  ratio = f_{q-1} / f_q, snapped to 1 within 8% (dividend drift); a split also needs the median holder share\n"
@@ -1034,13 +1038,14 @@ std::string compare_report_md(const nlohmann::json& r) {
   for (const auto& k : r["skipped"]) s << "- skipped " << sv(k["quarter"]) << ": " << sv(k["reason"]) << "\n";
   if (!r["skipped"].empty()) s << "\n";
   s << "| quarter | bars | warm-up | placebo | managers | nodes | obs edges | paired | unpaired in | unpaired out | "
-       "splits | unconfirmed | pi_obs vs ADV | pi_obs vs 13F value |\n"
-       "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n";
+       "dropped (price 100x off) | splits | unconfirmed | pi_obs vs ADV | pi_obs vs 13F value |\n"
+       "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n";
   for (const auto& q : r["quarters"])
     s << "| " << sv(q["quarter"]) << " | " << q["bars"] << " | " << q["warmup_bars"] << " | " << sv(q["placebo_quarter"])
       << " | " << q["managers"] << " | " << q["nodes"] << " | " << q["observed_edges"] << " | "
       << money(num(q["paired"])) << " | " << money(num(q["unpaired_in"])) << " | " << money(num(q["unpaired_out"]))
-      << " | " << q["splits"] << " | " << q["split_candidates_unconfirmed"].size() << " | "
+      << " | " << q["inconsistent_positions"] << " (" << money(num(q["inconsistent_value"])) << ") | " << q["splits"]
+      << " | " << q["split_candidates_unconfirmed"].size() << " | "
       << fmt(num(q["pi_obs_vs_adv"])) << " | " << fmt(num(q["pi_obs_vs_13f_value"])) << " |\n";
   for (const auto& q : r["quarters"]) {
     const auto& c = q["split_candidates_unconfirmed"];

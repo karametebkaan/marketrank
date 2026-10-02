@@ -200,8 +200,8 @@ TEST_CASE("observed: no cap bias with 2000 small sinks") {
 }
 
 TEST_CASE("observed: prune_rel drops tiny edges") {
-  auto prev = Q("p", {{1, "A", 1000000, 1}});
-  auto cur = Q("c", {{1, "B", 999999, 1}, {1, "C", 1, 1}});
+  auto prev = Q("p", {{1, "A", 1000000, 1e7}});  // values consistent with P = 10 (the price guard)
+  auto cur = Q("c", {{1, "B", 999999, 9999990}, {1, "C", 1, 10}});
   ObservedParams pp;
   pp.prune_rel = 1e-3;
   auto f = observed_flows(prev, cur, T, P, one, pp);
@@ -262,4 +262,19 @@ TEST_CASE("observed: perf 2e6 holdings, top_n 2000") {
 #if defined(NDEBUG) && !defined(__SANITIZE_ADDRESS__) && !defined(__SANITIZE_THREAD__)
   CHECK(sec < 10.0);
 #endif
+}
+
+TEST_CASE("observed: a position whose shares are 100x+ off the price is dropped, not paired") {
+  // Manager 1 sells A (20 -> 10 shares) and buys B; its C row reports 1e9 shares worth $40 (a SHARES error: implied
+  // price 4e-8 against 10), which would otherwise be a $1e10 phantom sink. Manager 2's prev B row is 1000x off the
+  // other way (shares too small for its value). Both positions are dropped and counted.
+  auto prev = Q("p", {{1, "A", 20, 200}, {1, "C", 0, 0}, {2, "A", 10, 100}, {2, "B", 0.01, 100}});
+  auto cur = Q("c", {{1, "A", 10, 100}, {1, "B", 10, 100}, {1, "C", 1e9, 40}, {2, "A", 0, 0}, {2, "B", 20, 200}});
+  auto f = observed_flows(prev, cur, T, P, one);
+  CHECK(f.inconsistent_positions == 2);
+  CHECK(f.inconsistent_value == doctest::Approx(340));
+  CHECK(edge(f, 0, 1) == doctest::Approx(100));  // manager 1: A -> B, 100
+  CHECK(edge(f, 0, 2) == 0.0);
+  CHECK(f.paired == doctest::Approx(100));
+  CHECK(f.unpaired_out == doctest::Approx(100));  // manager 2 sold A, B dropped
 }

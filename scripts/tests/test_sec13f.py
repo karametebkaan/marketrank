@@ -384,6 +384,56 @@ class Sec13fTests(unittest.TestCase):
         self.assertEqual(cov["A"]["amendment_type"], "")
         sec13f.apply_amendments(subs, cov)  # must not raise
 
+    def test_normalise_value_units(self):
+        # 6 managers hold A (price 10) and B (price 50). Manager 7 reported dollars as thousands
+        # (x1000 too large after conversion), manager 8 reported thousands as dollars (x1000 too small),
+        # manager 10 has a single row 10^6 too large,
+        # manager 9 holds only an unseen CUSIP (no consensus: untouched). Idempotent on a second pass.
+        p = os.path.join(self.tmp.name, "h.csv")
+        rows = []
+        for m in range(1, 7):
+            rows += [("q", str(m), "A", "a", 100, 1000 + m), ("q", str(m), "B", "b", 10, 500),
+                     ("q", str(m), "D", "d", 2, 40)]
+        rows += [("q", "7", "A", "a", 100, 1000000), ("q", "7", "B", "b", 10, 500000)]
+        rows += [("q", "8", "A", "a", 100, 1), ("q", "8", "C", "c", 3, 7)]
+        rows += [("q", "9", "Z", "z", 5, 5000000)]
+        # manager 10: one row 10^6 too large (row-level fix), the others fine
+        rows += [("q", "10", "A", "a", 100, 1000000000), ("q", "10", "B", "b", 10, 500),
+                 ("q", "10", "D", "d", 2, 40)]
+        # manager 11: one row whose SHARES are 10^6 too large; its value is not touched
+        rows += [("q", "11", "A", "a", 100000000, 1000), ("q", "11", "B", "b", 10, 500),
+                 ("q", "11", "D", "d", 2, 40)]
+        sec13f.write_quarter(rows, p)
+        st = sec13f.normalise_value_units(p)
+        self.assertEqual(st, {"managers_down": 1, "managers_up": 1, "rows_rescaled": 1, "rows_inconsistent": 1})
+        with open(p) as f:
+            got = {(r["cik"], r["cusip"]): r["value_usd"] for r in csv.DictReader(f)}
+        self.assertEqual(got[("7", "A")], "1000")
+        self.assertEqual(got[("7", "B")], "500")
+        self.assertEqual(got[("8", "A")], "1000")
+        self.assertEqual(got[("8", "C")], "7000")
+        self.assertEqual(got[("1", "A")], "1001")
+        self.assertEqual(got[("9", "Z")], "5000000")
+        self.assertEqual(got[("10", "A")], "1000")
+        self.assertEqual(got[("10", "B")], "500")
+        self.assertEqual(got[("11", "A")], "1000")
+        self.assertEqual(sec13f.normalise_value_units(p),
+                         {"managers_down": 0, "managers_up": 0, "rows_rescaled": 0, "rows_inconsistent": 0})
+
+    def test_run_normalises_units(self):
+        with mock.patch.object(sec13f, "normalise_value_units", return_value={}) as nv:
+            data = os.path.join(self.tmp.name, "data")
+            os.makedirs(os.path.join(data, "13f", "raw"))
+            with open(self.zip, "rb") as f:
+                blob = f.read()
+            index = '<a href="/d/01jan2024-29feb2024_form13f.zip">z</a>'
+
+            def get(url, ua):
+                return (200, index.encode() if url.endswith("index") else blob, 0)
+            client = sec13f.SecClient("ua", min_interval=0, get=get, sleep=lambda s: None)
+            qs = sec13f.run(data, None, None, "https://x/index", client)
+            self.assertEqual(nv.call_count, len(qs))
+
     def test_gitignore_pycache(self):
         root = os.path.join(os.path.dirname(__file__), "..", "..", ".gitignore")
         self.assertIn("__pycache__/", self._read(root).split())

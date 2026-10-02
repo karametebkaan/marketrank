@@ -432,6 +432,7 @@ TEST_CASE("13f compare: run_compare_13f end to end on synthetic holdings") {
   const auto& q = r["quarters"][0];
   CHECK(q["quarter"] == "2025Q4");
   CHECK(q["managers"] == 4);
+  CHECK(q["inconsistent_positions"] == 0);
   CHECK(q["warmup_bars"] == 122);
   CHECK(q["placebo_quarter"] == "2026Q1");
   CHECK(q.contains("pi_obs_vs_adv"));
