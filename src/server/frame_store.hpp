@@ -1,0 +1,75 @@
+#pragma once
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <optional>
+#include <string>
+#include <thread>
+#include <vector>
+
+#include "geom/landscape.hpp"
+#include "market/panel.hpp"
+#include "market/universe.hpp"
+#include "pipeline/core_pipeline.hpp"
+#include "pipeline/shock.hpp"
+
+namespace fx {
+
+class FrameStore {
+ public:
+  struct Status {
+    std::size_t computed = 0, total = 0;
+    bool running = false, ready = false;
+    std::string error;
+    std::uint64_t generation = 0;
+  };
+  struct ShockResult {
+    TimePoint t = 0;
+    ShockDelta delta;
+    Raster raster;
+    std::shared_ptr<const LandscapeFrame> base;
+  };
+
+  FrameStore(Panel panel, std::vector<Security> nodes, CoreParams core, LandscapeParams land,
+             std::size_t max_frames = 300);
+  ~FrameStore();
+  FrameStore(const FrameStore&) = delete;
+  FrameStore& operator=(const FrameStore&) = delete;
+
+  void start();
+  void set_params(CoreParams core, LandscapeParams land);
+  Status status() const;
+  std::vector<TimePoint> times() const;
+  std::shared_ptr<const LandscapeFrame> landscape(std::optional<TimePoint> t) const;
+  ShockResult shock(const std::vector<Shock>& shocks);
+  std::uint64_t wait_for_change(std::uint64_t seen, std::chrono::milliseconds timeout) const;
+  const Panel& panel() const { return panel_; }
+  const std::vector<Security>& nodes() const { return nodes_; }
+  CoreParams core_params() const;
+  LandscapeParams landscape_params() const;
+
+ private:
+  void stop_worker();
+  void run(std::uint64_t gen, CoreParams core, LandscapeParams land);
+  void bump();  // version++ and notify (call with m_ held)
+
+  const Panel panel_;
+  const std::vector<Security> nodes_;
+  const std::size_t max_frames_;
+  mutable std::mutex m_;
+  mutable std::condition_variable cv_;
+  std::thread worker_;
+  std::atomic<std::uint64_t> gen_{0};
+  std::uint64_t version_ = 0;
+  CoreParams core_;
+  LandscapeParams land_;
+  Status status_;
+  std::map<TimePoint, std::shared_ptr<const LandscapeFrame>> frames_;
+  std::optional<CorePipeline> pre_last_;
+  std::shared_ptr<const Frame> last_core_;
+};
+
+}  // namespace fx
