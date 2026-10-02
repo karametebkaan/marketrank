@@ -65,6 +65,13 @@ struct LandscapeFrame {
   bool reclustered = false;     // flux mode: this frame re-clustered
 };
 
+// Whether two parameter sets place stocks identically. The display parameters (smooth, height and idw: power,
+// radius, subdivision) only change how a frame is drawn; everything else (territory, ranking, clustering, arcs,
+// warm-up) is placement.
+bool same_placement(const LandscapeParams& a, const LandscapeParams& b);
+// The frame redrawn with display parameters p: hdisp recomputed from h, the raster rebuilt from (cell, hdisp).
+LandscapeFrame restyle(const LandscapeFrame& f, const LandscapeParams& p);
+
 std::vector<LandscapeArc> top_arcs(const Csr& P, const std::vector<bool>& active, std::size_t max_arcs);
 Raster delta_raster(const LandscapeFrame& base, const std::vector<double>& delta, const LandscapeParams& p);
 

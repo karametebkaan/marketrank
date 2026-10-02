@@ -49,12 +49,28 @@ void FrameStore::stop_worker() {
 }
 
 std::uint64_t FrameStore::launch_locked(std::optional<CoreParams> core, std::optional<LandscapeParams> land,
-                               int threads) {
+                                        int threads, bool restyle_only) {
   std::lock_guard<std::mutex> lk(m_);
   if (core) core_ = std::move(*core);
   if (land) land_ = *land;
   omp_threads_ = threads;
   const std::uint64_t gen = ++gen_;
+  if (restyle_only) {  // keep the frames and the shock state; redraw the frames in the worker
+    status_ = Status{};
+    status_.total = frames_.size();
+    status_.running = true;
+    status_.generation = gen;
+    bump();
+    try {
+      worker_ = std::thread([this, gen, l = land_, threads] { run_restyle(gen, l, threads); });
+    } catch (const std::exception& e) {
+      status_.running = false;
+      status_.error = std::string("thread launch failed: ") + e.what();
+      bump();
+    }
+    return gen;
+  }
+  complete_ = false;
   frames_.clear();
   pre_last_.reset();
   last_core_.reset();
@@ -85,7 +101,45 @@ std::uint64_t FrameStore::set_params(CoreParams core, LandscapeParams land) {
   const int threads = omp_get_max_threads();
   std::lock_guard<std::mutex> ck(control_m_);
   stop_worker();
-  return launch_locked(std::move(core), land, threads);
+  bool restyle_only = false;
+  {
+    std::lock_guard<std::mutex> lk(m_);
+    restyle_only = complete_ && core == core_ && same_placement(land, land_);
+  }
+  return launch_locked(std::move(core), land, threads, restyle_only);
+}
+
+void FrameStore::run_restyle(std::uint64_t gen, LandscapeParams land, int threads) {
+  try {
+    omp_set_num_threads(threads);
+    std::vector<std::shared_ptr<const LandscapeFrame>> todo;
+    {
+      std::lock_guard<std::mutex> lk(m_);
+      if (gen_.load() != gen) return;
+      status_.threads = omp_get_max_threads();
+      for (const auto& [t, f] : frames_) todo.push_back(f);
+    }
+    for (const auto& f : todo) {
+      if (gen_.load() != gen) return;
+      auto nf = std::make_shared<const LandscapeFrame>(restyle(*f, land));
+      std::lock_guard<std::mutex> lk(m_);
+      if (gen_.load() != gen) return;
+      frames_[nf->t] = nf;
+      ++status_.computed;
+      bump();
+    }
+    std::lock_guard<std::mutex> lk(m_);
+    if (gen_.load() != gen) return;
+    status_.running = false;
+    status_.ready = true;
+    bump();
+  } catch (const std::exception& e) {
+    std::lock_guard<std::mutex> lk(m_);
+    if (gen_.load() != gen) return;
+    status_.running = false;
+    status_.error = e.what();
+    bump();
+  }
 }
 
 void FrameStore::run(std::uint64_t gen, CoreParams core, LandscapeParams land, int threads) {
@@ -111,6 +165,7 @@ void FrameStore::run(std::uint64_t gen, CoreParams core, LandscapeParams land, i
         pre_last_ = pipe;  // state after bar T-2: shocks re-step bar T-1 from here
       }
       auto f = std::make_shared<Frame>(pipe.step(panel_, t));
+      ++steps_;
       std::shared_ptr<const LandscapeFrame> lf;
       if (t >= first_landscape) lf = std::make_shared<LandscapeFrame>(builder.build(*f));
       std::lock_guard<std::mutex> lk(m_);
@@ -124,6 +179,7 @@ void FrameStore::run(std::uint64_t gen, CoreParams core, LandscapeParams land, i
     if (gen_.load() != gen) return;
     status_.running = false;
     status_.ready = true;
+    complete_ = true;
     bump();
   } catch (const std::exception& e) {
     std::lock_guard<std::mutex> lk(m_);

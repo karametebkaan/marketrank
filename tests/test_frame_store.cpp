@@ -3,6 +3,7 @@
 #include <chrono>
 #include <atomic>
 #include <cmath>
+#include <map>
 #include <thread>
 #include <omp.h>
 
@@ -272,4 +273,59 @@ TEST_CASE("frame store skips the warm-up bars: no landscape and no clustering be
   wait_ready(late);
   REQUIRE(late.times().size() == 1);
   CHECK(late.times().back() == m.panel.times.back());
+}
+
+TEST_CASE("a display-only parameter change re-renders the cached frames without re-stepping the pipeline") {
+  Market m = market();
+  FrameStore fs(m.panel, m.secs, CoreParams::money_flow(), LandscapeParams{}, 10);
+  fs.start();
+  wait_ready(fs);
+  const std::size_t steps = fs.pipeline_steps();
+  CHECK(steps == m.panel.T() - 1);
+  const auto times = fs.times();
+  std::map<TimePoint, std::shared_ptr<const LandscapeFrame>> before;
+  for (auto t : times) before[t] = fs.landscape(t);
+  const auto gen0 = fs.status().generation;
+  LandscapeParams lp;
+  lp.smooth = 2.5;
+  lp.height = HeightMode::Linear;
+  lp.idw.radius_cells = 4;
+  lp.idw.power = 3;
+  const auto gen = fs.set_params(fs.core_params(), lp);
+  wait_ready(fs);
+  CHECK(gen > gen0);
+  CHECK(fs.status().generation == gen);
+  CHECK(fs.pipeline_steps() == steps);  // no core frame was recomputed
+  REQUIRE(fs.times() == times);
+  for (auto t : times) {
+    const auto a = before[t], b = fs.landscape(t);
+    REQUIRE(b);
+    CHECK(b != a);
+    REQUIRE(b->nodes.size() == a->nodes.size());
+    std::vector<std::int32_t> cell(a->n, -1);
+    std::vector<double> v(a->n, std::nan(""));
+    for (std::size_t k = 0; k < a->nodes.size(); ++k) {
+      CHECK(b->nodes[k].cell == a->nodes[k].cell);
+      CHECK(b->nodes[k].group == a->nodes[k].group);
+      CHECK(b->nodes[k].h == a->nodes[k].h);
+      CHECK(b->nodes[k].hdisp == display_height(a->nodes[k].h, HeightMode::Linear));
+      cell[b->nodes[k].i] = b->nodes[k].cell;
+      v[b->nodes[k].i] = b->nodes[k].hdisp;
+    }
+    CHECK(b->raster.z == smooth_raster(idw_raster(cell, v, b->size, lp.idw), lp.smooth, lp.idw.subdivision).z);
+  }
+  CHECK(fs.landscape_params().smooth == 2.5);
+  // shocks use the new display parameters
+  auto r = fs.shock({{fs.landscape(std::nullopt)->nodes.front().i, -10.0}});
+  CHECK(r.raster.w == fs.landscape(std::nullopt)->raster.w);
+  // a placement change (territory) re-runs the pipeline
+  LandscapeParams sector = lp;
+  sector.territory = TerritoryMode::Sector;
+  fs.set_params(fs.core_params(), sector);
+  wait_ready(fs);
+  CHECK(fs.pipeline_steps() == 2 * steps);
+  // so does a model change
+  fs.set_params(CoreParams::legacy(), sector);
+  wait_ready(fs);
+  CHECK(fs.pipeline_steps() == 3 * steps);
 }

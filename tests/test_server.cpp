@@ -353,3 +353,17 @@ TEST_CASE("server: requests with a foreign Host are refused (DNS rebinding)") {
   CHECK_FALSE(is_loopback_host("0.0.0.0"));
   CHECK_FALSE(is_loopback_host("192.168.1.5"));
 }
+
+TEST_CASE("server: a display-only POST redraws without re-running the pipeline") {
+  Fixture f;
+  httplib::Client c("127.0.0.1", f.port);
+  const auto steps = f.store->pipeline_steps();
+  const auto g0 = json::parse(c.Get("/api/status")->body)["generation"].get<std::uint64_t>();
+  CHECK(c.Post("/api/params", R"({"smooth":2,"idw_radius":0,"height":"linear","territory":"flux"})", "application/json")->status == 202);
+  for (int k = 0; k < 600 && !f.store->status().ready; ++k) std::this_thread::sleep_for(10ms);
+  const auto st = json::parse(c.Get("/api/status")->body);
+  CHECK(st["ready"] == true);
+  CHECK(st["generation"].get<std::uint64_t>() > g0);
+  CHECK(f.store->pipeline_steps() == steps);
+  CHECK(c.Get("/api/frame/grid")->status == 200);
+}

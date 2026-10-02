@@ -41,7 +41,9 @@ class FrameStore {
   FrameStore& operator=(const FrameStore&) = delete;
 
   void start();
-  // Returns the generation the new parameters run under.
+  // Returns the generation the new parameters run under. When only display parameters change (same CoreParams and
+  // same_placement) and every frame has been computed, the cached frames are redrawn (restyle) in the worker
+  // instead of re-running the pipeline; the generation still advances.
   std::uint64_t set_params(CoreParams core, LandscapeParams land);
   Status status() const;
   std::vector<TimePoint> times() const;
@@ -56,12 +58,15 @@ class FrameStore {
   const std::vector<Security>& nodes() const { return nodes_; }
   CoreParams core_params() const;
   LandscapeParams landscape_params() const;
+  std::size_t pipeline_steps() const { return steps_.load(); }  // core frames computed so far (all generations)
 
  private:
   void stop_worker();                  // call with control_m_ held and m_ NOT held (it joins)
-  std::uint64_t launch_locked(std::optional<CoreParams> core, std::optional<LandscapeParams> land, int threads);
+  std::uint64_t launch_locked(std::optional<CoreParams> core, std::optional<LandscapeParams> land, int threads,
+                              bool restyle_only = false);
   // (launch_locked: call with control_m_ held and m_ NOT held)
   void run(std::uint64_t gen, CoreParams core, LandscapeParams land, int threads);
+  void run_restyle(std::uint64_t gen, LandscapeParams land, int threads);
   void bump();  // version++ and notify (call with m_ held)
 
   const Panel panel_;
@@ -72,6 +77,8 @@ class FrameStore {
   mutable std::condition_variable cv_;
   std::thread worker_;
   std::atomic<std::uint64_t> gen_{0};
+  std::atomic<std::size_t> steps_{0};
+  bool complete_ = false;  // every frame of the current core/placement parameters has been computed (guarded by m_)
   std::uint64_t version_ = 0;
   CoreParams core_;
   LandscapeParams land_;

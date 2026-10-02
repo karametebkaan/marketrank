@@ -32,6 +32,32 @@ double display_height(double h, HeightMode m) {
   return h >= 0 ? std::log1p(h) : -std::log1p(-h);
 }
 
+bool same_placement(const LandscapeParams& a, const LandscapeParams& b) {
+  return a.order_smoothing == b.order_smoothing && a.rank_tolerance == b.rank_tolerance && a.max_arcs == b.max_arcs &&
+         a.territory == b.territory && a.recluster_bars == b.recluster_bars && a.resolution == b.resolution &&
+         a.warmup_bars == b.warmup_bars;
+}
+
+namespace {
+// IDW + display smoothing of the frame's node values (hdisp) at their cells.
+Raster node_raster(const LandscapeFrame& f, const LandscapeParams& p) {
+  std::vector<std::int32_t> cell(f.n, -1);
+  std::vector<double> v(f.n, std::numeric_limits<double>::quiet_NaN());
+  for (const auto& nd : f.nodes) {
+    cell[nd.i] = nd.cell;
+    v[nd.i] = nd.hdisp;
+  }
+  return smooth_raster(idw_raster(cell, v, f.size, p.idw), p.smooth, p.idw.subdivision);
+}
+}  // namespace
+
+LandscapeFrame restyle(const LandscapeFrame& f, const LandscapeParams& p) {
+  LandscapeFrame out = f;
+  for (auto& nd : out.nodes) nd.hdisp = display_height(nd.h, p.height);
+  out.raster = node_raster(out, p);
+  return out;
+}
+
 std::vector<LandscapeArc> top_arcs(const Csr& P, const std::vector<bool>& active, std::size_t max_arcs) {
   if (active.size() != P.n) throw std::invalid_argument("top_arcs: active size != P.n");
   std::vector<LandscapeArc> arcs;
@@ -122,18 +148,16 @@ LandscapeFrame LandscapeBuilder::build(const Frame& f) {
   lf.n = n_;
   lf.size = size;
   const auto cols = static_cast<std::int32_t>(size.cols);
-  std::vector<double> values(n_, std::numeric_limits<double>::quiet_NaN());
   const auto& score = f.forecasts.empty() ? f.h : f.forecasts.front().score;
   for (std::size_t i = 0; i < n_; ++i) {
     if (!f.active[i]) continue;
     const double hd = display_height(f.h[i], p_.height);
-    values[i] = hd;
     lf.nodes.push_back({static_cast<std::uint32_t>(i), cells[static_cast<std::size_t>(i)],
                         static_cast<float>((cells[i] % cols + 0.5) / static_cast<double>(size.cols)),
                         static_cast<float>((cells[i] / cols + 0.5) / static_cast<double>(size.rows)), f.h[i], hd, f.pi[i], score[i],
                         flux ? tracker_.node_group()[i] : (group_.empty() ? 0 : static_cast<std::int32_t>(group_[i]))});
   }
-  lf.raster = smooth_raster(idw_raster(cells, values, size, p_.idw), p_.smooth, p_.idw.subdivision);
+  lf.raster = node_raster(lf, p_);
   lf.arcs = top_arcs(f.P, f.active, p_.max_arcs);
   if (flux) {
     lf.communities = tracker_.communities();
