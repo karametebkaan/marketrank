@@ -57,8 +57,12 @@ Raster delta_raster(const LandscapeFrame& base, const std::vector<double>& delta
   return idw_raster(cell, v, base.size, p.idw);
 }
 
-LandscapeBuilder::LandscapeBuilder(std::size_t n, LandscapeParams params)
-    : n_(n), p_(params), embed_(n, params.embed) {}
+LandscapeBuilder::LandscapeBuilder(std::size_t n, LandscapeParams params, std::vector<std::uint32_t> group)
+    : n_(n), p_(params), group_(std::move(group)), s_prev_(n, 0.0), has_prev_(n, 0) {
+  if (!group_.empty() && group_.size() != n) throw std::invalid_argument("LandscapeBuilder: group size mismatch");
+  if (!(p_.order_smoothing >= 0.0 && p_.order_smoothing <= 1.0))
+    throw std::invalid_argument("LandscapeBuilder: order_smoothing must be in [0, 1]");
+}
 
 LandscapeFrame LandscapeBuilder::build(const Frame& f) {
   const auto t0 = std::chrono::steady_clock::now();
@@ -66,38 +70,40 @@ LandscapeFrame LandscapeBuilder::build(const Frame& f) {
   if (f.h.size() != n_ || f.pi.size() != n_ || f.P.n != n_ ||
       (!f.forecasts.empty() && f.forecasts.front().score.size() != n_))
     throw std::invalid_argument("LandscapeBuilder: frame vector sizes mismatch");
-  xy_ = embed_.positions(f);
   std::size_t n_active = 0;
-  double minx = 1e300, maxx = -1e300, miny = 1e300, maxy = -1e300;
-  for (std::size_t i = 0; i < n_; ++i) {
-    if (!f.active[i]) continue;
-    ++n_active;
-    minx = std::min(minx, xy_[2 * i]);
-    maxx = std::max(maxx, xy_[2 * i]);
-    miny = std::min(miny, xy_[2 * i + 1]);
-    maxy = std::max(maxy, xy_[2 * i + 1]);
-  }
+  for (std::size_t i = 0; i < n_; ++i) n_active += f.active[i] ? 1 : 0;
   const LatticeSize size = lattice_size(n_active);
-  auto next = rcb_assign(xy_, f.active, size);
-  cells_ = (!first_ && size == size_) ? apply_hysteresis(cells_, next, size, p_.max_shift) : next;
-  size_ = size;
-  first_ = false;
+  // Ranking hotness: signed-log h blended with the previous frame's value; non-finite h ranks as 0.
+  std::vector<double> rank(n_, 0.0);
+  for (std::size_t i = 0; i < n_; ++i) {
+    if (!f.active[i]) {
+      has_prev_[i] = 0;
+      continue;
+    }
+    double cur = display_height(f.h[i], p_.height);
+    if (!std::isfinite(cur)) cur = 0.0;
+    rank[i] = has_prev_[i] ? (1.0 - p_.order_smoothing) * cur + p_.order_smoothing * s_prev_[i] : cur;
+    s_prev_[i] = rank[i];
+    has_prev_[i] = 1;
+  }
+  const std::vector<std::int32_t> cells = territory_layout(f.active, group_, rank, size).cell;
 
   LandscapeFrame lf;
   lf.t = f.t;
   lf.n = n_;
   lf.size = size;
+  const auto cols = static_cast<std::int32_t>(size.cols);
   std::vector<double> values(n_, std::numeric_limits<double>::quiet_NaN());
-  const double rx = maxx > minx ? maxx - minx : 1.0, ry = maxy > miny ? maxy - miny : 1.0;
   const auto& score = f.forecasts.empty() ? f.h : f.forecasts.front().score;
   for (std::size_t i = 0; i < n_; ++i) {
     if (!f.active[i]) continue;
     const double hd = display_height(f.h[i], p_.height);
     values[i] = hd;
-    lf.nodes.push_back({static_cast<std::uint32_t>(i), cells_[i], static_cast<float>((xy_[2 * i] - minx) / rx),
-                        static_cast<float>((xy_[2 * i + 1] - miny) / ry), f.h[i], hd, f.pi[i], score[i]});
+    lf.nodes.push_back({static_cast<std::uint32_t>(i), cells[static_cast<std::size_t>(i)],
+                        static_cast<float>((cells[i] % cols + 0.5) / static_cast<double>(size.cols)),
+                        static_cast<float>((cells[i] / cols + 0.5) / static_cast<double>(size.rows)), f.h[i], hd, f.pi[i], score[i]});
   }
-  lf.raster = idw_raster(cells_, values, size, p_.idw);
+  lf.raster = idw_raster(cells, values, size, p_.idw);
   lf.arcs = top_arcs(f.P, f.active, p_.max_arcs);
   lf.compute_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
   return lf;

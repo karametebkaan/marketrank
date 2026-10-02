@@ -2,9 +2,25 @@
 
 #include <omp.h>
 
+#include <map>
 #include <stdexcept>
+#include <string>
 
 namespace fx {
+
+namespace {
+// Sector ids in ascending sector-string order, so they are stable for a given universe.
+std::vector<std::uint32_t> sector_groups(const std::vector<Security>& nodes) {
+  std::map<std::string, std::uint32_t> ids;
+  for (const auto& s : nodes) ids.emplace(s.sector, 0);
+  std::uint32_t k = 0;
+  for (auto& kv : ids) kv.second = k++;
+  std::vector<std::uint32_t> g;
+  g.reserve(nodes.size());
+  for (const auto& s : nodes) g.push_back(ids[s.sector]);
+  return g;
+}
+}  // namespace
 
 FrameStore::FrameStore(Panel panel, std::vector<Security> nodes, CoreParams core, LandscapeParams land,
                        std::size_t max_frames)
@@ -80,7 +96,7 @@ void FrameStore::run(std::uint64_t gen, CoreParams core, LandscapeParams land, i
     const std::size_t T = panel_.T();
     if (T < 3) throw std::runtime_error("need at least three bars to serve landscapes");
     CorePipeline pipe(panel_.N(), core);
-    LandscapeBuilder builder(panel_.N(), land);
+    LandscapeBuilder builder(panel_.N(), land, sector_groups(nodes_));
     const std::size_t first_landscape = T - 1 > max_frames_ ? T - max_frames_ : 1;
     for (std::size_t t = 1; t < T; ++t) {
       if (gen_.load() != gen) return;

@@ -27,6 +27,13 @@ Frame synthetic_frame() {
 }
 }  // namespace
 
+// The synthetic market has 5 sectors of 10 consecutive stocks.
+static std::vector<std::uint32_t> synthetic_groups(std::size_t n) {
+  std::vector<std::uint32_t> g(n);
+  for (std::size_t i = 0; i < n; ++i) g[i] = static_cast<std::uint32_t>(i / 10);
+  return g;
+}
+
 TEST_CASE("display height") {
   CHECK(display_height(0.0, HeightMode::SignedLog) == 0.0);
   CHECK(display_height(std::exp(1.0) - 1.0, HeightMode::SignedLog) == doctest::Approx(1.0));
@@ -64,7 +71,7 @@ TEST_CASE("landscape build: one cell per active node, raster sized from the latt
   CHECK(lf.t == f.t);
 }
 
-TEST_CASE("rebuilding on the same frame keeps most cells (warm start + hysteresis)") {
+TEST_CASE("rebuilding on the same frame keeps most cells (smoothed ranking)") {
   const Frame f = synthetic_frame();
   LandscapeBuilder b(f.active.size(), LandscapeParams{});
   LandscapeFrame a = b.build(f);
@@ -166,24 +173,14 @@ TEST_CASE("builder state: lattice size change, unit-range fx/fy, single node") {
     CHECK(nd.fy >= 0.0f);
     CHECK(nd.fy <= 1.0f);
   }
-  // Across a size change there is no hysteresis: cells are the plain RCB assignment of the node positions
-  // (fx, fy are a monotone per-axis rescale of the embedding, which preserves the RCB sort order).
-  std::vector<double> xy(2 * n, 0.0);
-  for (const auto& nd : c.nodes) {
-    xy[2 * nd.i] = nd.fx;
-    xy[2 * nd.i + 1] = nd.fy;
-  }
-  const auto plain = rcb_assign(xy, f.active, c.size);
-  for (const auto& nd : c.nodes) CHECK(nd.cell == plain[nd.i]);
-
   Frame one = f;
   std::fill(one.active.begin(), one.active.end(), false);
   one.active[0] = true;
   LandscapeBuilder b1(n, LandscapeParams{});
   LandscapeFrame s = b1.build(one);
   REQUIRE(s.nodes.size() == 1);
-  CHECK(s.nodes[0].fx == 0.0f);
-  CHECK(s.nodes[0].fy == 0.0f);
+  CHECK(s.nodes[0].fx == 0.5f);
+  CHECK(s.nodes[0].fy == 0.5f);
   CHECK(std::isfinite(s.nodes[0].hdisp));
   for (float z : s.raster.z) CHECK(std::isfinite(z));
 }
@@ -192,7 +189,7 @@ TEST_CASE("lattice neighbours have correlated heights") {
   const Frame f = synthetic_frame();
   LandscapeParams p;
   p.idw.subdivision = 1;
-  LandscapeBuilder b(f.active.size(), p);
+  LandscapeBuilder b(f.active.size(), p, synthetic_groups(f.active.size()));
   LandscapeFrame lf = b.build(f);
   const std::size_t W = lf.size.cols, H = lf.size.rows;
   std::vector<double> hd(W * H, std::numeric_limits<double>::quiet_NaN());
@@ -224,7 +221,23 @@ TEST_CASE("lattice neighbours have correlated heights") {
   }
   const double corr = sxy / std::sqrt(sxx * syy);
   MESSAGE("neighbour correlation = " << corr);
-  // Brief asked for >= 0.5; the synthetic panel measures 0.39 (features h, pi, forecasts are only weakly
-  // correlated, so a 2D projection cannot align with h alone). This is a regression bar, reported in the task report.
-  CHECK(corr >= 0.3);
+  CHECK(corr >= 0.5);
+}
+
+TEST_CASE("territory placement is stable: identical rebuilds, and 1% hotness noise moves few nodes") {
+  const Frame f = synthetic_frame();
+  const std::size_t n = f.active.size();
+  const auto groups = synthetic_groups(n);
+  LandscapeBuilder b1(n, LandscapeParams{}, groups), b2(n, LandscapeParams{}, groups);
+  auto a = b1.build(f), c = b2.build(f);
+  REQUIRE(a.nodes.size() == c.nodes.size());
+  for (std::size_t k = 0; k < a.nodes.size(); ++k) CHECK(a.nodes[k].cell == c.nodes[k].cell);
+  Frame g = f;
+  for (std::size_t i = 0; i < n; ++i)
+    if (g.active[i]) g.h[i] *= 1.0 + 0.01 * ((i % 3 == 0) ? 1.0 : -1.0);
+  auto d = b1.build(g);
+  std::size_t moved = 0;
+  for (std::size_t k = 0; k < a.nodes.size(); ++k) moved += a.nodes[k].cell != d.nodes[k].cell ? 1 : 0;
+  CHECK(static_cast<double>(moved) <= 0.1 * static_cast<double>(a.nodes.size()));
+  CHECK_THROWS_AS(LandscapeBuilder(n, LandscapeParams{}, std::vector<std::uint32_t>(3, 0)), std::invalid_argument);
 }

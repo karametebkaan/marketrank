@@ -7,7 +7,7 @@
 #include "core/types.hpp"
 #include "geom/idw.hpp"
 #include "geom/lattice.hpp"
-#include "geom/embedding.hpp"
+#include "geom/territory.hpp"
 #include "pipeline/core_pipeline.hpp"
 
 namespace fx {
@@ -18,17 +18,16 @@ std::string_view to_string(HeightMode m);
 double display_height(double h, HeightMode m);
 
 struct LandscapeParams {
-  EmbeddingParams embed;
   IdwParams idw{1, 2.0, 3};  // subdivision 1: raster = lattice mesh vertices
   HeightMode height = HeightMode::SignedLog;
-  int max_shift = 2;
+  double order_smoothing = 0.5;  // weight on the previous frame's hotness when ranking nodes inside a territory
   std::size_t max_arcs = 2000;
 };
 
 struct LandscapeNode {
   std::uint32_t i;
   std::int32_t cell;
-  float fx, fy;  // solve-embedding position normalized to [0, 1]
+  float fx, fy;  // cell centre normalized to [0, 1]
   double h, hdisp, pi, score;
 };
 
@@ -50,20 +49,19 @@ struct LandscapeFrame {
 std::vector<LandscapeArc> top_arcs(const Csr& P, const std::vector<bool>& active, std::size_t max_arcs);
 Raster delta_raster(const LandscapeFrame& base, const std::vector<double>& delta, const LandscapeParams& p);
 
-// Stateful across frames: Procrustes-aligned, smoothed solve-embedding positions and hysteresis on the lattice cells.
+// Sector-territory placement (spec 6.1). Stateful across frames only through the smoothed hotness used for ranking.
 class LandscapeBuilder {
  public:
-  LandscapeBuilder(std::size_t n, LandscapeParams params);
+  // group[i] is node i's sector id; empty means one group for all nodes.
+  LandscapeBuilder(std::size_t n, LandscapeParams params, std::vector<std::uint32_t> group = {});
   LandscapeFrame build(const Frame& f);
 
  private:
   std::size_t n_;
   LandscapeParams p_;
-  SolveEmbedding embed_;
-  std::vector<double> xy_;
-  std::vector<std::int32_t> cells_;
-  LatticeSize size_;
-  bool first_ = true;
+  std::vector<std::uint32_t> group_;
+  std::vector<double> s_prev_;   // smoothed ranking hotness per node
+  std::vector<char> has_prev_;
 };
 
 }  // namespace fx

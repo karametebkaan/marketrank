@@ -54,7 +54,7 @@ scripts/ui_smoke.sh                                # headless-Chrome smoke test 
 
 The page shows a triangulated landscape of signed-log hotness. Hills are where money settles relative to size, and valleys are where it drains.
 
-**Placement.** Placement is by solver outputs. Each stock sits on a lattice point next to stocks with similar solve results: robust-standardized signed-log hotness, log π and the forecast scores, projected to 2D by PCA and Procrustes-aligned frame to frame. It is not placed by graph adjacency.
+**Placement.** Placement is by sector territories. Each sector owns one contiguous region of the lattice, with area proportional to its active stock count, laid out along a Hilbert-type curve. Inside a region the stocks are ordered by hotness from the centre outward, so a sector reads as a mountain (inflow) or a crater (outflow).
 
 **Surface.** The mesh vertices are the lattice points. A vertex with a stock carries that stock's exact value, and an empty vertex is filled by IDW. Each triangle is Gouraud-shaded from its vertex colours, red for inflow and blue for outflow, with relief lighting on top.
 

@@ -140,16 +140,16 @@ The report gives the shocked nodes' Δh and Δπ, the top-N receivers and losers
 
 Built per frame from the active nodes (about 6,000 at N = 10,000 under the $1M floor). Nothing is O(N²) or O(N³).
 
-1. **Solve-based placement (placement by solver outputs; user decision 2026-10-02).** Neighbours are stocks with similar solve results, so the landscape reads as terrain.
-   - Per active stock, the feature vector is: signed-log hotness h, log π, and the signed-log score of each forecast horizon.
-   - Each feature column is robust-standardized over active rows, (x − median) / (1.4826·MAD), clipped to ±4. A degenerate column (MAD 0 or non-finite) becomes 0, as do non-finite entries.
-   - Positions are the top-2 principal components of the centered features over active nodes, scaled to unit RMS radius. The covariance is accumulated serially and the components come from deterministic power iteration with deflation.
-   - Each frame is aligned to the previous one by orthogonal Procrustes (rotation, plus reflection if it fits better), then smoothed 50/50 with the previous positions.
-   - This replaces the earlier money-destination embedding of P_offᵏ, whose neighbouring-vertex hotness correlation on real data was 0.04.
-2. **Lattice snap (recursive coordinate bisection).**
-   - The lattice is cols = ⌈√N_active⌉ by rows = ⌈N_active/cols⌉.
-   - Active nodes are sorted by x (ties broken by index) into column bands of `rows` nodes, and each band is sorted by y. A node's cell is (band, rank). This is O(N log N), one node per cell, and it preserves locality.
-   - **Hysteresis:** a node keeps its previous cell if the new cell is within 2 cells (Chebyshev distance) and that cell is still free. Otherwise it takes its new cell if free, else the nearest free cell. When the lattice size changes, the assignment is recomputed fresh.
+1. **Sector territories (user decision 2026-10-02; replaces solve-based placement, whose real-data neighbour height correlation was 0.09).**
+   - Each sector owns one contiguous region of the lattice, with area proportional to its active stock count. A node's sector is its `Security::sector`; sector ids follow ascending string order, and a sector with no active stocks in a frame has no territory.
+   - The cell order is the generalized Hilbert (gilbert2d) curve over the lattice: every cell once, consecutive cells at Chebyshev distance 1, starting at (0,0).
+   - With A active stocks and C lattice cells, sector g gets c_g = a_g plus its largest-remainder share of the C − A spare cells (ties to the lower id). Territories are consecutive ranges of the curve in ascending sector id.
+   - Inside a territory, cells are ordered by squared distance to the territory centre (ties by cell index). Stocks are ranked by smoothed hotness s = (1−β)·signed-log h + β·previous s (β = 0.5; non-finite h ranks as 0).
+   - A sector is a mountain when its median s is at or above the median over all active stocks, and a crater otherwise. A mountain places the highest s nearest the centre, a crater the lowest. The farthest c_g − a_g cells stay empty and IDW fills them, which forms seams between territories.
+   - Every vertex still shows its stock's exact value. Cost is O(C log C) per frame, with no O(N²) work.
+2. **Lattice.**
+   - The lattice is cols = ⌈√N_active⌉ by rows = ⌈N_active/cols⌉. A node's cell is row·cols + col.
+   - Placement is recomputed each frame. Stability comes from the smoothed ranking, not from cell hysteresis. (The recursive-bisection snap and hysteresis helpers remain in `lattice.*` but are unused.)
 3. **IDW landscape.**
    - The raster has (cols·s) × (rows·s) pixels, with s = 4 by default. Each pixel is `z = Σ wᵢhᵢ / Σ wᵢ`, wᵢ = 1/dᵢ^q (q = 2), over occupied lattice cells within radius R = 3 cells.
    - If no cell is within R, the nearest occupied cell is used. A pixel exactly on a node takes that node's value.
