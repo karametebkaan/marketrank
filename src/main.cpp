@@ -332,15 +332,7 @@ int run_rank(const mr::CliArgs& args, const mr::Panel& panel, const mr::Universe
 // from the panel are dropped with a warning (their weight stays in cash).
 int run_walkforward_cli(const mr::CliArgs& args, const mr::Panel& panel,
                         const std::optional<mr::PortfolioSpec>& portfolio) {
-  mr::WalkForwardParams p;
-  p.core = args.params;
-  p.rebalance = args.wf_rebalance;
-  p.warmup_bars = args.wf_warmup;
-  p.top_n = args.wf_top_n;
-  p.bt.cost_bps = args.wf_cost_bps;
-  p.bt.tilt = args.wf_tilt;
-  p.bt.k = args.wf_k;
-  p.largecap_run = args.wf_largecap_run;
+  mr::WalkForwardParams p = mr::walkforward_params(args);
   std::vector<mr::BaseWeight> base;
   if (portfolio)
     for (const auto& h : portfolio->holdings) base.push_back({h.ticker, h.weight});
@@ -379,6 +371,7 @@ int run_walkforward_cli(const mr::CliArgs& args, const mr::Panel& panel,
 int main(int argc, char** argv) {
   try {
     const mr::CliArgs args = mr::parse_cli(std::vector<std::string>(argv + 1, argv + argc));
+    for (const auto& w : args.warnings) std::cerr << "warning: " << w << "\n";
     if (args.help) {
       std::cout << mr::cli_usage();
       return 0;

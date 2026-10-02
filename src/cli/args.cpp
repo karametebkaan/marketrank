@@ -1,5 +1,7 @@
 #include "cli/args.hpp"
 
+#include "walkforward/report.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -43,6 +45,23 @@ std::pair<std::string, double> to_shock(const std::string& flag, const std::stri
   return {v.substr(0, colon), size};
 }
 
+// "TRAIN/EMBARGO/GATE/MIN" in rebalance periods; train, gate and min must be >= 1.
+BlendParams to_blend(const std::string& flag, const std::string& v) {
+  std::vector<std::size_t> x;
+  std::size_t start = 0;
+  for (;;) {
+    const auto slash = v.find('/', start);
+    x.push_back(to_size(flag, v.substr(start, slash == std::string::npos ? std::string::npos : slash - start)));
+    if (slash == std::string::npos) break;
+    start = slash + 1;
+  }
+  if (x.size() != 4 || x[0] == 0 || x[2] == 0 || x[3] == 0)
+    throw std::invalid_argument(flag + " expects TRAIN/EMBARGO/GATE/MIN periods (TRAIN, GATE, MIN >= 1), got '" + v + "'");
+  BlendParams b;
+  b.train_months = x[0], b.embargo = x[1], b.gate_months = x[2], b.gate_min = x[3];
+  return b;
+}
+
 }  // namespace
 
 CliArgs parse_cli(const std::vector<std::string>& args) {
@@ -58,8 +77,10 @@ CliArgs parse_cli(const std::vector<std::string>& args) {
   if (legacy) a.params = CoreParams::legacy(), a.preset = "legacy";
   if (money) a.params = CoreParams::money_flow(), a.preset = "money-flow";
   if (market) a.params = CoreParams::market_rank(), a.preset = "marketrank";
+  bool wf_flag = false;  // any --wf-* flag given
   for (std::size_t i = 0; i < args.size(); ++i) {
     const std::string& flag = args[i];
+    if (flag.rfind("--wf-", 0) == 0) wf_flag = true;
     auto value = [&]() -> std::string {
       if (i + 1 >= args.size()) throw std::invalid_argument("missing value for " + flag);
       return args[++i];
@@ -127,6 +148,7 @@ CliArgs parse_cli(const std::vector<std::string>& args) {
     else if (flag == "--wf-out") a.wf_out = value();
     else if (flag == "--wf-run-id") a.wf_run_id = value();
     else if (flag == "--wf-largecap-run") a.wf_largecap_run = value();
+    else if (flag == "--wf-blend") a.wf_blend = to_blend(flag, value());
     else if (flag == "--help" || flag == "-h") a.help = true;
     else throw std::invalid_argument("unknown flag " + flag);
   }
@@ -135,6 +157,11 @@ CliArgs parse_cli(const std::vector<std::string>& args) {
   if (a.refetch_full && a.mode != "alpaca") throw std::invalid_argument("--refetch-full needs --mode alpaca");
   if (a.export_slice > 0 && a.mode != "replay") throw std::invalid_argument("--export-slice needs --mode replay");
   if (a.walkforward && a.mode != "replay") throw std::invalid_argument("--walkforward needs --mode replay");
+  if (a.walkforward && (a.serve || a.export_slice > 0 || !a.shocks.empty() || a.eval))
+    throw std::invalid_argument("--walkforward cannot be combined with --serve, --export-slice, --shock or --eval");
+  if (wf_flag && !a.walkforward) a.warnings.push_back("--wf-* flags have no effect without --walkforward");
+  if (!a.wf_run_id.empty()) check_run_id(a.wf_run_id, "--wf-run-id");
+  if (!a.wf_largecap_run.empty()) check_run_id(a.wf_largecap_run, "--wf-largecap-run");
   if (!(a.wf_cost_bps >= 0 && std::isfinite(a.wf_cost_bps))) throw std::invalid_argument("--wf-cost-bps must be >= 0");
   if (!(a.wf_tilt >= 0 && a.wf_tilt <= 1)) throw std::invalid_argument("--wf-tilt must be in [0, 1]");
   if (a.wf_k == 0) throw std::invalid_argument("--wf-k must be >= 1");
@@ -142,6 +169,20 @@ CliArgs parse_cli(const std::vector<std::string>& args) {
     a.lookback_days = a.tf == Timeframe::Hour ? 60 : a.tf == Timeframe::Day ? 365 : 5 * 365;
   a.params.validate();
   return a;
+}
+
+WalkForwardParams walkforward_params(const CliArgs& a) {
+  WalkForwardParams p;
+  p.core = a.params;
+  p.rebalance = a.wf_rebalance;
+  p.blend = a.wf_blend ? *a.wf_blend : blend_defaults(a.wf_rebalance);
+  p.warmup_bars = a.wf_warmup;
+  p.top_n = a.wf_top_n;
+  p.bt.cost_bps = a.wf_cost_bps;
+  p.bt.tilt = a.wf_tilt;
+  p.bt.k = a.wf_k;
+  p.largecap_run = a.wf_largecap_run;
+  return p;
 }
 
 std::pair<TimePoint, TimePoint> data_window(const CliArgs& args, TimePoint now) {
@@ -180,7 +221,9 @@ std::string cli_usage() {
          "                   [--wf-rebalance weekly|monthly (weekly)] [--wf-top-n N (0 = all; 500 = large caps)]\n"
          "                   [--wf-cost-bps X (10)] [--wf-tilt X (0.2)] [--wf-k N (10)] [--wf-warmup N (252)]\n"
          "                   [--wf-out DIR (<data>/walkforward)] [--wf-run-id ID (<UTC time>-<params hash>)]\n"
-         "                   [--wf-largecap-run ID]   (sibling --wf-top-n 500 run in the same --wf-out: gate c5)\n";
+         "                   [--wf-largecap-run ID]   (sibling --wf-top-n 500 run in the same --wf-out: gate c5)\n"
+         "                   [--wf-blend TRAIN/EMBARGO/GATE/MIN]   (blend windows in rebalance periods; default\n"
+         "                                   156/1/104/52 weekly, 36/1/24/12 monthly)\n";
 }
 
 std::string describe(const CoreParams& p) {

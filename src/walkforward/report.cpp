@@ -1,6 +1,12 @@
 #include "walkforward/report.hpp"
 
+#include <fcntl.h>
+#include <sys/file.h>
+#include <unistd.h>
+
 #include <algorithm>
+#include <cctype>
+#include <cerrno>
 #include <cinttypes>
 #include <cmath>
 #include <cstdio>
@@ -100,12 +106,81 @@ struct StratRow {
 
 constexpr const char* kRegistryHeader = "run_id,strategy,params_hash,cost_bps,top_n,sharpe_daily,T,ann_excess";
 
+// Data rows of a registry (header and blank lines dropped); none for a missing file.
+std::vector<std::string> read_registry_rows(const fs::path& path) {
+  std::vector<std::string> rows;
+  std::ifstream in(path);
+  std::string line;
+  if (!std::getline(in, line)) return rows;  // header
+  while (std::getline(in, line))
+    if (!line.empty()) rows.push_back(line);
+  return rows;
+}
+
+RegistryStats stats_of(const std::vector<std::string>& rows) {
+  std::vector<double> srs;
+  for (const auto& line : rows) {
+    const auto f = split(line);
+    if (f.size() < 8) continue;
+    try {
+      const double v = std::stod(f[5]);
+      if (std::isfinite(v)) srs.push_back(v);
+    } catch (const std::exception&) {
+    }
+  }
+  RegistryStats st;
+  st.n_trials = srs.size();
+  if (srs.size() >= 2) {
+    double m = 0;
+    for (double v : srs) m += v;
+    m /= static_cast<double>(srs.size());
+    for (double v : srs) st.trial_sr_var += (v - m) * (v - m);
+    st.trial_sr_var /= static_cast<double>(srs.size() - 1);
+  }
+  return st;
+}
+
+// Advisory exclusive lock on a side file (not registry.csv itself: the rename replaces that inode).
+class FileLock {
+ public:
+  explicit FileLock(const fs::path& path) : fd_(::open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0644)) {
+    if (fd_ < 0) throw std::runtime_error("cannot open lock file " + path.string());
+    while (::flock(fd_, LOCK_EX) != 0)
+      if (errno != EINTR) {
+        ::close(fd_);
+        throw std::runtime_error("cannot lock " + path.string());
+      }
+  }
+  ~FileLock() {
+    ::flock(fd_, LOCK_UN);
+    ::close(fd_);
+  }
+  FileLock(const FileLock&) = delete;
+  FileLock& operator=(const FileLock&) = delete;
+
+ private:
+  int fd_;
+};
+
 }  // namespace
+
+void check_run_id(const std::string& id, const std::string& what) {
+  const bool ok = !id.empty() && id.size() <= 128 && id != "." && id != ".." &&
+                  std::all_of(id.begin(), id.end(), [](char c) {
+                    return std::isalnum(static_cast<unsigned char>(c)) || c == '.' || c == '_' || c == ':' ||
+                           c == '+' || c == '-';
+                  });
+  if (!ok)
+    throw std::invalid_argument(what + " must be 1-128 characters from A-Z a-z 0-9 . _ : + - (not . or ..), got '" +
+                                id + "'");
+}
+
+RegistryStats registry_stats(const fs::path& registry_csv) { return stats_of(read_registry_rows(registry_csv)); }
 
 fs::path write_report(const WalkForwardResult& r, const WalkForwardParams& p, const Panel& panel,
                       const fs::path& out_dir, const std::string& run_id) {
-  if (run_id.empty() || run_id.find_first_of(",/\\ \t\n") != std::string::npos || run_id == "." || run_id == "..")
-    throw std::invalid_argument("write_report: run id must be non-empty without , / \\ or whitespace: '" + run_id + "'");
+  check_run_id(run_id, "run id");
+  if (!p.largecap_run.empty()) check_run_id(p.largecap_run, "large-cap run id");
   // Sibling large-cap run first, so a bad id writes nothing.
   std::optional<bool> largecap;
   if (!p.largecap_run.empty()) {
@@ -121,7 +196,6 @@ fs::path write_report(const WalkForwardResult& r, const WalkForwardParams& p, co
 
   const std::string hash = params_hash(p);
   const fs::path dir = out_dir / run_id;
-  fs::create_directories(dir);
   static const EquityCurve kEmpty;
   const EquityCurve* bh_ptr = find_curve(r, "bench:buyhold");
   const EquityCurve& bh = bh_ptr ? *bh_ptr : kEmpty;
@@ -133,44 +207,47 @@ fs::path write_report(const WalkForwardResult& r, const WalkForwardParams& p, co
     (k.rfind("bench:", 0) == 0 ? bench : strat).push_back(std::move(row));
   }
 
-  // Registry: append this run's rows, then deflate against every row.
+  // Registry: under the lock, replace this run id's rows (same hash) or reject it (other hash), rewrite atomically,
+  // then deflate against every trial.
+  fs::create_directories(out_dir);
   const fs::path reg = out_dir / "registry.csv";
+  RegistryStats trials;
   {
-    const bool fresh = !fs::exists(reg) || fs::file_size(reg) == 0;
-    std::ofstream out(reg, std::ios::app);
-    if (!out) throw std::runtime_error("cannot write " + reg.string());
-    if (fresh) out << kRegistryHeader << "\n";
-    for (const auto& s : strat)
-      if (s.T > 0)  // a strategy with no simulated days is not a trial
-        out << run_id << ',' << s.name << ',' << hash << ',' << full(p.bt.cost_bps) << ',' << p.top_n << ','
-          << full(s.perf.sharpe_daily) << ',' << s.T << ',' << full(s.perf.ann_excess) << "\n";
-  }
-  std::size_t n_trials = 0;
-  std::vector<double> srs;
-  {
-    std::ifstream in(reg);
-    std::string line;
-    std::getline(in, line);  // header
-    while (std::getline(in, line)) {
-      if (line.empty()) continue;
-      ++n_trials;
+    FileLock lock(out_dir / "registry.csv.lock");
+    std::vector<std::string> rows;
+    for (auto& line : read_registry_rows(reg)) {
       const auto f = split(line);
-      if (f.size() < 8) continue;
-      try {
-        const double v = std::stod(f[5]);
-        if (std::isfinite(v)) srs.push_back(v);
-      } catch (const std::exception&) {
+      if (f[0] != run_id) {
+        rows.push_back(std::move(line));
+        continue;
       }
+      if (f.size() < 3 || f[2] != hash)
+        throw std::invalid_argument("run id '" + run_id + "' is already in " + reg.string() + " with params hash " +
+                                    (f.size() >= 3 ? f[2] : std::string("?")) + " (this run: " + hash +
+                                    "); choose another --wf-run-id");
     }
+    for (const auto& s : strat) {
+      if (s.T == 0) continue;  // a strategy with no simulated days is not a trial
+      std::ostringstream row;
+      row << run_id << ',' << s.name << ',' << hash << ',' << full(p.bt.cost_bps) << ',' << p.top_n << ','
+          << full(s.perf.sharpe_daily) << ',' << s.T << ',' << full(s.perf.ann_excess);
+      rows.push_back(row.str());
+    }
+    const fs::path tmp = out_dir / "registry.csv.tmp";
+    {
+      std::ofstream out(tmp, std::ios::trunc);
+      if (!out) throw std::runtime_error("cannot write " + tmp.string());
+      out << kRegistryHeader << "\n";
+      for (const auto& row : rows) out << row << "\n";
+      out.flush();
+      if (!out) throw std::runtime_error("cannot write " + tmp.string());
+    }
+    fs::rename(tmp, reg);
+    trials = stats_of(rows);
   }
-  double trial_sr_var = 0;
-  if (srs.size() >= 2) {
-    double m = 0;
-    for (double v : srs) m += v;
-    m /= static_cast<double>(srs.size());
-    for (double v : srs) trial_sr_var += (v - m) * (v - m);
-    trial_sr_var /= static_cast<double>(srs.size() - 1);
-  }
+  const std::size_t n_trials = trials.n_trials;
+  const double trial_sr_var = trials.trial_sr_var;
+  fs::create_directories(dir);
   for (auto& s : strat)
     if (std::isfinite(s.perf.sharpe_daily))
       s.dsr = deflated_sharpe(s.perf.sharpe_daily, s.T, s.perf.skew, s.perf.kurt, trial_sr_var,

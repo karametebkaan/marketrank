@@ -15,6 +15,12 @@ std::vector<BaseWeight> default_base_mix() {
           {"NVO", 0.05},  {"NKE", 0.035}, {"F", 0.035}};
 }
 
+BlendParams blend_defaults(Rebalance r) {
+  BlendParams b;  // weekly defaults
+  if (r == Rebalance::Monthly) b.train_months = 36, b.embargo = 1, b.gate_months = 24, b.gate_min = 12;
+  return b;
+}
+
 namespace {
 constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
 

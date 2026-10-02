@@ -14,6 +14,10 @@
 
 namespace mr {
 
+// Blend windows in rebalance periods: weekly 156/1/104/52 (3 years train, 2 years gate, 1 year minimum), monthly
+// 36/1/24/12 (spec section 7).
+BlendParams blend_defaults(Rebalance r);
+
 struct WalkForwardParams {
   CoreParams core = CoreParams::market_rank();
   Rebalance rebalance = Rebalance::Weekly;  // user decision: weekly is primary
@@ -21,7 +25,7 @@ struct WalkForwardParams {
   double min_dollar_volume = 50e6;
   std::vector<int> ic_horizons{1, 2, 5, 20};  // 20 = decay diagnostic only
   BacktestParams bt;
-  BlendParams blend;
+  BlendParams blend;  // = blend_defaults(Weekly); set blend_defaults(Monthly) with Rebalance::Monthly
   // Report only: run id of a sibling run (same --wf-out) on the large-cap sub-universe (--wf-top-n 500) whose
   // gate criteria c1..c4 decide c5 here. Empty = c5 "pending". Not part of the parameter hash.
   std::string largecap_run;

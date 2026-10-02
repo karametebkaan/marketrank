@@ -1,13 +1,14 @@
 #pragma once
 #include <cstddef>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "core/types.hpp"
 #include "pipeline/core_pipeline.hpp"
-#include "walkforward/universe.hpp"
+#include "walkforward/walkforward.hpp"
 
 namespace mr {
 
@@ -53,6 +54,8 @@ struct CliArgs {
   std::filesystem::path wf_out;  // empty = <data>/walkforward
   std::string wf_run_id;         // empty = <UTC timestamp>-<params hash>
   std::string wf_largecap_run;   // sibling large-cap run id for gate c5
+  std::optional<BlendParams> wf_blend;  // --wf-blend TRAIN/EMBARGO/GATE/MIN; default blend_defaults(wf_rebalance)
+  std::vector<std::string> warnings;    // non-fatal problems found while parsing (main prints them)
 };
 
 // Time range of bars to load and analyse: everything for synthetic (fixed historical dates),
@@ -60,6 +63,9 @@ struct CliArgs {
 std::pair<TimePoint, TimePoint> data_window(const CliArgs& args, TimePoint now);
 
 CliArgs parse_cli(const std::vector<std::string>& args);
+// Walk-forward parameters from the CLI (model preset, --wf-* flags; blend windows by calendar unless --wf-blend).
+// The base mix is left empty for the caller (main loads it from data/portfolio.json).
+WalkForwardParams walkforward_params(const CliArgs& a);
 std::string cli_usage();
 std::string describe(const CoreParams& p);
 

@@ -1,9 +1,11 @@
 #include <doctest/doctest.h>
 #include <omp.h>
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
@@ -138,23 +140,33 @@ TEST_CASE("walkforward: monthly dates are month-end bars and every curve key exi
   CHECK(any_n);
 }
 
-TEST_CASE("walkforward: causality - bars after d_k + 1 do not change decisions at months <= k") {
+TEST_CASE("walkforward: causality - bars after d_k do not change decisions at months <= k") {
   const Panel& panel = shared_panel();
-  const WalkForwardParams p = wf_params(Rebalance::Weekly);
+  WalkForwardParams p = wf_params(Rebalance::Weekly);
+  // The mask must depend on the (perturbed) dollar volumes so eligibility leaks show: top third by a 3-bar median,
+  // where one strongly perturbed bar moves the median.
+  p.top_n = panel.N() / 3;
+  p.elig_window = 3;
   const WalkForwardResult a = run_walkforward(panel, p);
   REQUIRE(a.dates.size() >= 30);
+  {
+    std::size_t changes = 0;
+    for (std::size_t m = 1; m < a.eligible.size(); ++m) changes += a.eligible[m] != a.eligible[m - 1] ? 1 : 0;
+    REQUIRE(changes > 0);
+    for (const auto& e : a.eligible) CHECK(static_cast<std::size_t>(std::count(e.begin(), e.end(), true)) <= p.top_n);
+  }
   bool any_gate = false;
   for (const auto& b : a.blend) any_gate = any_gate || b.gate_open;
   REQUIRE(any_gate);  // the score path is exercised
   for (std::size_t k : {a.dates.size() / 3, a.dates.size() / 2, a.dates.size() - 3}) {
     Panel q = panel;
     const std::size_t cut = a.dates[k] + 1;
-    for (std::size_t t = cut + 1; t < q.T(); ++t)
+    for (std::size_t t = cut; t < q.T(); ++t)  // every bar after d_k, including the execution bar d_k + 1
       for (std::size_t i = 0; i < q.N(); ++i) {
         const double f = 1.0 + 0.03 * std::sin(static_cast<double>(t * 31 + i * 7));
         for (auto* v : {&q.open, &q.close, &q.vwap, &q.high, &q.low})
           if (std::isfinite((*v)[q.idx(t, i)])) (*v)[q.idx(t, i)] *= f;
-        if (std::isfinite(q.volume[q.idx(t, i)])) q.volume[q.idx(t, i)] *= 2.0 - f;
+        if (std::isfinite(q.volume[q.idx(t, i)])) q.volume[q.idx(t, i)] *= (i + t) % 2 ? 50.0 : 0.02;
       }
     const WalkForwardResult b = run_walkforward(q, p);
     REQUIRE(b.dates.size() == a.dates.size());
@@ -232,4 +244,122 @@ TEST_CASE("cli: --walkforward and --wf-* flags") {
   CHECK_THROWS_AS(parse_cli({"--mode", "replay", "--walkforward", "--wf-tilt", "1.5"}), std::invalid_argument);
   CHECK(cli_usage().find("--walkforward") != std::string::npos);
   CHECK(cli_usage().find("--wf-largecap-run") != std::string::npos);
+}
+
+TEST_CASE("walkforward: IC table is non-overlapping per horizon, bucketed by UTC year") {
+  const Panel& panel = shared_panel();
+  const WalkForwardParams p = wf_params(Rebalance::Monthly);
+  const WalkForwardResult r = run_walkforward(panel, p);
+  const std::size_t T = panel.T();
+  for (const auto& row : r.ic_table) {
+    CAPTURE(to_string(row.s));
+    CAPTURE(row.h);
+    const auto h = static_cast<std::size_t>(row.h);
+    std::map<int, std::size_t> per_year;  // sample bars per UTC year
+    std::size_t n = 0;
+    for (std::size_t t = p.warmup_bars; t + 1 + h < T; t += h) {
+      ++per_year[civil_from_days(floor_div(panel.times[t], 86400)).y];
+      ++n;
+    }
+    CHECK(row.all.n == n);  // every sample bar t = warmup + j*h has a finite IC on this market
+    REQUIRE(row.by_year.size() == per_year.size());
+    if (row.h == 1) CHECK(per_year.size() == 2);  // daily samples span 2025 and 2026 (calendar-day synthetic bars)
+    double weighted = 0;
+    std::size_t j = 0;
+    for (const auto& [year, count] : per_year) {
+      CHECK(row.by_year[j].first == year);
+      weighted += row.by_year[j].second * static_cast<double>(count);
+      ++j;
+    }
+    CHECK(weighted / static_cast<double>(n) == doctest::Approx(row.all.mean).epsilon(1e-12));
+  }
+}
+
+TEST_CASE("write_report: strategies without days are not registry trials; run ids are idempotent") {
+  const Panel& panel = shared_panel();
+  const WalkForwardParams p = wf_params(Rebalance::Monthly);
+  WalkForwardResult r = run_walkforward(panel, p);
+  for (auto& [k, c] : r.curves)
+    if (k == "sig:pulse20") c = EquityCurve{};
+  const auto out = test::temp_dir("wf_registry");
+  write_report(r, p, panel, out, "a");
+  CHECK(count_lines(out / "registry.csv") == 1 + kSignals);  // blend + 7 signals
+  {
+    std::ifstream in(out / "registry.csv");
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    CHECK(text.find("sig:pulse20") == std::string::npos);
+  }
+  write_report(r, p, panel, out, "b");
+  CHECK(count_lines(out / "registry.csv") == 1 + 2 * kSignals);
+  write_report(r, p, panel, out, "a");  // same id, same params: its rows are replaced, not appended
+  CHECK(count_lines(out / "registry.csv") == 1 + 2 * kSignals);
+  CHECK(registry_stats(out / "registry.csv").n_trials == 2 * kSignals);
+  WalkForwardParams other = p;
+  other.bt.cost_bps = 25;
+  CHECK_THROWS_AS(write_report(r, other, panel, out, "a"), std::invalid_argument);  // same id, other params
+  CHECK(count_lines(out / "registry.csv") == 1 + 2 * kSignals);
+  CHECK_FALSE(std::filesystem::exists(out / "registry.csv.tmp"));
+}
+
+TEST_CASE("registry_stats: finite sharpe rows only, sample variance") {
+  const auto dir = test::temp_dir("wf_regstats");
+  const auto path = test::write_file(dir / "registry.csv",
+                                     "run_id,strategy,params_hash,cost_bps,top_n,sharpe_daily,T,ann_excess\n"
+                                     "r1,blend,aaaaaaaa,10,0,0.01,100,0.1\n"
+                                     "r1,sig:score,aaaaaaaa,10,0,0.03,100,0.1\n"
+                                     "r1,sig:pulse1,aaaaaaaa,10,0,nan,100,0.1\n"
+                                     "garbage\n"
+                                     "\n"
+                                     "r2,blend,bbbbbbbb,10,0,0.05,100,0.1\n");
+  const RegistryStats st = registry_stats(path);
+  CHECK(st.n_trials == 3);
+  CHECK(st.trial_sr_var == doctest::Approx(0.0004).epsilon(1e-12));  // values .01 .03 .05: mean .03, ss 8e-4 / 2
+  CHECK(registry_stats(dir / "missing.csv").n_trials == 0);
+}
+
+TEST_CASE("walkforward_params: blend windows follow the rebalance calendar unless overridden") {
+  auto blend_is = [](const BlendParams& b, std::size_t tr, std::size_t em, std::size_t g, std::size_t mn) {
+    return b.train_months == tr && b.embargo == em && b.gate_months == g && b.gate_min == mn;
+  };
+  CHECK(blend_is(WalkForwardParams{}.blend, 156, 1, 104, 52));
+  CHECK(blend_is(blend_defaults(Rebalance::Weekly), 156, 1, 104, 52));
+  CHECK(blend_is(blend_defaults(Rebalance::Monthly), 36, 1, 24, 12));
+  const std::vector<std::string> base{"--mode", "replay", "--walkforward"};
+  auto with = [&](std::vector<std::string> extra) {
+    auto v = base;
+    v.insert(v.end(), extra.begin(), extra.end());
+    return walkforward_params(parse_cli(v));
+  };
+  CHECK(blend_is(with({}).blend, 156, 1, 104, 52));
+  CHECK(blend_is(with({"--wf-rebalance", "weekly"}).blend, 156, 1, 104, 52));
+  CHECK(blend_is(with({"--wf-rebalance", "monthly"}).blend, 36, 1, 24, 12));
+  CHECK(with({"--wf-rebalance", "monthly"}).rebalance == Rebalance::Monthly);
+  CHECK(blend_is(with({"--wf-rebalance", "monthly", "--wf-blend", "10/2/8/4"}).blend, 10, 2, 8, 4));
+  CHECK(blend_is(with({"--wf-blend", "10/2/8/4", "--wf-rebalance", "monthly"}).blend, 10, 2, 8, 4));
+  const WalkForwardParams w = with({"--wf-top-n", "500", "--wf-cost-bps", "25", "--wf-tilt", "0.3", "--wf-k", "7",
+                                    "--wf-warmup", "60", "--wf-largecap-run", "lc"});
+  CHECK(w.top_n == 500);
+  CHECK(w.bt.cost_bps == 25.0);
+  CHECK(w.bt.tilt == 0.3);
+  CHECK(w.bt.k == 7);
+  CHECK(w.warmup_bars == 60);
+  CHECK(w.largecap_run == "lc");
+  CHECK_THROWS_AS(with({"--wf-blend", "10/2/8"}), std::invalid_argument);
+  CHECK_THROWS_AS(with({"--wf-blend", "0/1/8/4"}), std::invalid_argument);
+}
+
+TEST_CASE("cli: walk-forward flag validation") {
+  CHECK(parse_cli({}).warnings.empty());
+  CHECK(parse_cli({"--mode", "replay", "--walkforward", "--wf-k", "5"}).warnings.empty());
+  const CliArgs w = parse_cli({"--mode", "replay", "--wf-k", "5", "--wf-out", "x"});
+  REQUIRE(w.warnings.size() == 1);
+  CHECK(w.warnings[0].find("--walkforward") != std::string::npos);
+  CHECK_THROWS_AS(parse_cli({"--mode", "replay", "--walkforward", "--serve"}), std::invalid_argument);
+  CHECK_THROWS_AS(parse_cli({"--mode", "replay", "--walkforward", "--export-slice"}), std::invalid_argument);
+  CHECK_THROWS_AS(parse_cli({"--mode", "replay", "--walkforward", "--shock", "AAPL:-5"}), std::invalid_argument);
+  CHECK_THROWS_AS(parse_cli({"--mode", "replay", "--walkforward", "--wf-largecap-run", "a/b"}), std::invalid_argument);
+  CHECK_THROWS_AS(parse_cli({"--mode", "replay", "--walkforward", "--wf-largecap-run", ".."}), std::invalid_argument);
+  CHECK_THROWS_AS(parse_cli({"--mode", "replay", "--walkforward", "--wf-run-id", "a,b"}), std::invalid_argument);
+  CHECK_NOTHROW(check_run_id("2026-10-02T1200Z-abcd1234", "run id"));
+  CHECK_THROWS_AS(check_run_id("", "run id"), std::invalid_argument);
 }

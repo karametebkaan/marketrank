@@ -162,7 +162,10 @@ and pay `--wf-cost-bps` per side. Results go to `data/walkforward/<run_id>/` (or
   against buy-and-hold of the base. It also has the blend weights and the decision gate.
 - `results.json`, `equity.csv` and `trades.csv` hold the full data.
 
-Every run appends its strategies to `registry.csv`, and the deflated Sharpe counts every row there as a trial.
+Every run adds its strategies to `registry.csv`, and the deflated Sharpe counts every row there as a trial.
+Re-running a run id with the same parameters replaces its rows. Re-running it with different parameters is an error.
+The blend windows are in rebalance periods: 156/1/104/52 weekly and 36/1/24/12 monthly, and
+`--wf-blend TRAIN/EMBARGO/GATE/MIN` overrides them.
 
 ## Landscape UI (Fluxscape)
 
