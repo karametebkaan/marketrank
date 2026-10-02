@@ -126,3 +126,26 @@ TEST_CASE("snapshot names carry the date and, in the new form, the requested siz
   write_universe_snapshot(dir / "universe_2026-10-02_n2000.csv", ranked, sp);
   CHECK(latest_snapshot(dir)->filename() == "universe_2026-10-02_n2000.csv");
 }
+
+TEST_CASE("find_snapshot picks the newest fresh file of exactly the requested size") {
+  auto dir = test::temp_dir("findsnap");
+  Universe sp = Universe::from_securities({});
+  std::vector<RankedAsset> ranked = {{{"AAPL", "Apple", "NASDAQ", true}, 1.0}};
+  const TimePoint now = 1790812800;  // 2026-10-01
+  CHECK_FALSE(find_snapshot(dir / "missing", 500, now, 7).has_value());
+  write_universe_snapshot(dir / "universe_2026-10-01_n500.csv", ranked, sp);
+  write_universe_snapshot(dir / "universe_2026-10-01_n2000.csv", ranked, sp);
+  write_universe_snapshot(dir / "universe_2026-09-28_n500.csv", ranked, sp);
+  write_universe_snapshot(dir / "universe_2026-09-20_n3000.csv", ranked, sp);  // too old
+  write_universe_snapshot(dir / "universe_2026-10-01.csv", ranked, sp);        // no size
+  CHECK(find_snapshot(dir, 500, now, 7)->filename() == "universe_2026-10-01_n500.csv");
+  CHECK(find_snapshot(dir, 2000, now, 7)->filename() == "universe_2026-10-01_n2000.csv");
+  CHECK_FALSE(find_snapshot(dir, 3000, now, 7).has_value());  // 11 days old
+  CHECK_FALSE(find_snapshot(dir, 1000, now, 7).has_value());
+  CHECK(find_snapshot(dir, 3000, now, 30)->filename() == "universe_2026-09-20_n3000.csv");
+  // Exactly max_age_days old is stale; one day younger is fresh.
+  write_universe_snapshot(dir / "universe_2026-09-24_n700.csv", ranked, sp);
+  write_universe_snapshot(dir / "universe_2026-09-25_n800.csv", ranked, sp);
+  CHECK_FALSE(find_snapshot(dir, 700, now, 7).has_value());
+  CHECK(find_snapshot(dir, 800, now, 7).has_value());
+}

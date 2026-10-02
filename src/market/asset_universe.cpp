@@ -1,5 +1,7 @@
 #include "market/asset_universe.hpp"
 
+#include "core/time.hpp"
+
 #include <algorithm>
 #include <charconv>
 #include <fstream>
@@ -147,6 +149,30 @@ std::optional<std::filesystem::path> latest_snapshot(const std::filesystem::path
     if (!best || *date > *best_date ||
         (*date == *best_date && entry.path().filename() > best->filename()))
       best = entry.path();
+  }
+  return best;
+}
+
+std::optional<std::filesystem::path> find_snapshot(const std::filesystem::path& dir,
+                                                   std::size_t size, TimePoint now,
+                                                   int max_age_days) {
+  if (!std::filesystem::is_directory(dir)) return std::nullopt;
+  const std::int64_t today = floor_div(now, 86400);
+  std::optional<std::filesystem::path> best;
+  std::string best_date;
+  for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+    if (!entry.is_regular_file()) continue;
+    const auto date = snapshot_date(entry.path());
+    const auto n = snapshot_size(entry.path());
+    if (!date || !n || *n != size) continue;
+    const auto y = std::stoi(date->substr(0, 4));
+    const auto m = static_cast<unsigned>(std::stoi(date->substr(5, 2)));
+    const auto d = static_cast<unsigned>(std::stoi(date->substr(8, 2)));
+    if (today - days_from_civil(y, m, d) >= max_age_days) continue;
+    if (!best || *date > best_date) {
+      best = entry.path();
+      best_date = *date;
+    }
   }
   return best;
 }

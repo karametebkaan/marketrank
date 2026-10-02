@@ -22,6 +22,8 @@ cp .env.example .env                                        # add Alpaca keys
 ./build/fluxscape --mode replay --eval --eval-bars 120      # compare A-E settings (floor, Gini, coherence, IC)
 ./build/fluxscape --mode replay --legacy                    # milestone-1 behaviour
 ./build/fluxscape --help                                    # all switches (--pressure, --lift, --k-in, ...)
+./build/fluxscape --migrate-cache                           # one-time: import the old data/cache CSVs into data/lake
+./build/fluxscape --maintain                                # compact partitions and apply data/lake/retention.json
 python3 scripts/fetch_sp500.py                              # refresh the S&P 500 list
 ```
 
@@ -45,7 +47,8 @@ not observed order flow.
    correlation). The result is a directed, weighted graph: edge i→j is the estimated money moving
    from selling i into buying j. Only the strongest edges are stored, so memory grows with N, not N².
 4. **Memory of the flow.** Edges and totals build up with exponential decay: a slow memory
-   (half-life 20 bars) for the equilibrium and a fast memory (3 bars) for the newest flow.
+   (half-life 20 bars) for the equilibrium and a fast memory (3 bars) for the newest flow. Bars are stored in a DuckDB-managed,
+   Hive-partitioned Parquet lake (`data/lake`), with month partitions and a retention policy.
 5. **Keep the real structure.** Subtract the flow you'd expect from size alone ("big buyers meet
    big sellers"). Keep each stock's strongest outgoing and incoming edges. Let net buyers retain
    part of what flows in, so money collects where it's being bought.

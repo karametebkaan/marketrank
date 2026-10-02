@@ -59,6 +59,10 @@ CliArgs parse_cli(const std::vector<std::string>& args) {
     else if (flag == "--eval") a.eval = true;
     else if (flag == "--eval-bars") a.eval_bars = to_size(flag, value());
     else if (flag == "--threads") a.threads = static_cast<int>(to_size(flag, value()));
+    else if (flag == "--migrate-cache") {
+      a.migrate_cache = true;
+      if (i + 1 < args.size() && args[i + 1].rfind("--", 0) != 0) a.migrate_from = args[++i];
+    } else if (flag == "--maintain") a.maintain = true;
     else if (flag == "--legacy") continue;
     else if (flag == "--pressure") a.params.pressure = parse_pressure_mode(value());
     else if (flag == "--lift") a.params.transition.lift = parse_lift_mode(value());
@@ -85,7 +89,8 @@ std::string cli_usage() {
          "                 [--eval] [--eval-bars N]\n"
          "                 [--legacy] [--pressure dollar|sqrt|relative] [--lift off|excess|ratio]\n"
          "                 [--k-out N] [--k-in N] [--retention X] [--h-ref uniform|size|longrun]\n"
-         "                 [--lambda X]\n";
+         "                 [--lambda X]\n"
+         "                 [--migrate-cache [DIR]] [--maintain]\n";
 }
 
 std::string describe(const CoreParams& p) {

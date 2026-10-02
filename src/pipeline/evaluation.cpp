@@ -122,8 +122,10 @@ EvalMetrics evaluate(const Panel& panel, const std::vector<Security>& nodes,
   if (T < 3) throw std::runtime_error("evaluate: need at least three bars");
   if (nodes.size() != N) throw std::invalid_argument("evaluate: nodes/panel size mismatch");
   const std::size_t e0 = eval_bars >= T ? 1 : T - eval_bars;  // no eval_bars + 1 overflow
-  const std::size_t warmup = std::max<std::size_t>(
-      params.corr_window, static_cast<std::size_t>(std::ceil(3.0 * params.halflife_slow)));
+  // Clamp before casting: 3 * halflife_slow may be +inf, and the cast would be undefined.
+  const double warm_d = std::min(std::ceil(3.0 * params.halflife_slow), static_cast<double>(T));
+  const std::size_t warmup =
+      std::max<std::size_t>(params.corr_window, static_cast<std::size_t>(warm_d));
   const std::size_t s0 = e0 > warmup + 1 ? e0 - warmup : 1;
 
   CorePipeline pipe(N, params);

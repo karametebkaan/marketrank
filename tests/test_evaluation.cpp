@@ -128,3 +128,12 @@ TEST_CASE("the IC uses the k = 1 forecast wherever it sits in the horizons") {
   CHECK(b.ic_t == a.ic_t);
   CHECK(c.ic_mean != a.ic_mean);  // no k = 1: falls back to the first horizon
 }
+
+TEST_CASE("an infinite slow half-life does not break the warm-up") {
+  std::vector<Security> secs;
+  const Panel panel = eval_panel(secs);
+  CoreParams p;
+  p.halflife_slow = std::numeric_limits<double>::infinity();
+  const EvalMetrics m = evaluate(panel, secs, p, 30);
+  CHECK(m.mean_frame_ms >= 0);
+}

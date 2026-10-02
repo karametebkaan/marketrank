@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "core/types.hpp"
 #include "market/bar_store.hpp"
 #include "market/universe.hpp"
 
@@ -43,6 +44,10 @@ void write_universe_snapshot(const std::filesystem::path& path,
 std::optional<std::string> snapshot_date(const std::filesystem::path& path);  // "YYYY-MM-DD"
 std::optional<std::size_t> snapshot_size(const std::filesystem::path& path);  // new form only
 std::optional<std::filesystem::path> latest_snapshot(const std::filesystem::path& dir);
+// Newest snapshot named for exactly `size` whose date is less than max_age_days before `now`.
+std::optional<std::filesystem::path> find_snapshot(const std::filesystem::path& dir,
+                                                   std::size_t size, TimePoint now,
+                                                   int max_age_days);
 Universe load_snapshot(const std::filesystem::path& path, const std::filesystem::path& funds_csv);
 std::set<std::string> read_ticker_list(const std::filesystem::path& path);
 

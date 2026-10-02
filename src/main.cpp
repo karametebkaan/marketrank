@@ -20,6 +20,8 @@
 #include "market/universe.hpp"
 #include "pipeline/core_pipeline.hpp"
 #include "pipeline/evaluation.hpp"
+#include "storage/csv_migration.hpp"
+#include "storage/lake.hpp"
 
 namespace {
 namespace fs = std::filesystem;
@@ -43,16 +45,37 @@ fx::Universe sp500_universe(const fs::path& data) {
   return fx::Universe::load(data / "universe" / "sp500.csv", data / "universe" / "funds.csv");
 }
 
+// Compaction and retention, shared by --maintain and the post-sync pass. Retention never
+// reaches into the lookback window: a shorter keep_days is warned about and skipped.
+void maintain_lake(fx::BarStore& store, const fs::path& data, int lookback_days,
+                   fx::Timeframe lookback_tf) {
+  auto policy = fx::RetentionPolicy::load(data / "lake" / "retention.json");
+  for (auto& [tf, keep] : policy.keep_days) {
+    const int needed = tf == lookback_tf ? lookback_days
+                       : tf == fx::Timeframe::Hour ? 60
+                       : tf == fx::Timeframe::Day  ? 365
+                                                   : 5 * 365;
+    if (keep && *keep < needed) {
+      std::cerr << "warning: retention keeps " << *keep << " days of " << fx::to_string(tf)
+                << " bars but the lookback is " << needed << "; skipping retention for it\n";
+      keep = std::nullopt;
+    }
+  }
+  std::size_t compacted = 0;
+  for (auto tf : {fx::Timeframe::Hour, fx::Timeframe::Day, fx::Timeframe::Week})
+    compacted += store.lake().compact(tf, 8);
+  const auto removed = store.lake().apply_retention(policy, now_utc());
+  std::cerr << "compacted " << compacted << " partitions, removed " << removed
+            << " expired partitions\n";
+}
+
 fs::path ensure_snapshot(const fx::CliArgs& args, const fx::AlpacaConfig& cfg,
                          fx::AlpacaClient& data_client, fx::BarStore& store,
                          const fx::PortfolioSpec& portfolio) {
   const fs::path dir = args.data / "universe";
-  // Reuse a fresh (< 7 days) snapshot only if it was built for the requested size.
-  if (auto latest = fx::latest_snapshot(dir); latest && !args.refresh_universe) {
-    const auto date = fx::snapshot_date(*latest);
-    if (date && days_since(*date) < 7 && fx::snapshot_size(*latest) == args.universe_size)
-      return *latest;
-  }
+  // Reuse a fresh (< 7 days) snapshot built for exactly the requested size.
+  if (!args.refresh_universe)
+    if (auto found = fx::find_snapshot(dir, args.universe_size, now_utc(), 7)) return *found;
   fx::AlpacaConfig trading_cfg = cfg;
   trading_cfg.host = cfg.trading_host;
   fx::AlpacaClient trading(trading_cfg);
@@ -71,8 +94,8 @@ fs::path ensure_snapshot(const fx::CliArgs& args, const fx::AlpacaConfig& cfg,
     if (fx::passes_universe_rules(a, rules)) candidates.push_back(a);
   std::vector<std::string> symbols;
   for (const auto& a : candidates) symbols.push_back(a.symbol);
-  store.load_all(symbols, fx::Timeframe::Day);
   const fx::TimePoint end = now_utc() - 16 * 60;
+  store.load_range(symbols, fx::Timeframe::Day, end - 40 * 86400, end);
   std::cerr << assets.size() << " assets, " << candidates.size()
             << " candidates; fetching 40 days of daily bars to rank liquidity...\n";
   const auto stale = fx::sync_bars(data_client, store, symbols, fx::Timeframe::Day,
@@ -173,7 +196,28 @@ int main(int argc, char** argv) {
       return 0;
     }
     if (args.threads > 0) omp_set_num_threads(args.threads);
-    fx::BarStore store(args.data / "cache");
+    if (args.migrate_cache) {
+      fx::BarStore lake_store(args.data / "lake");
+      const auto n = fx::migrate_csv_cache(args.migrate_from, lake_store);
+      std::cout << "migrated " << n << " series from " << args.migrate_from.string() << " into "
+                << (args.data / "lake").string() << "\n";
+      return 0;
+    }
+    if (args.maintain) {
+      fx::BarStore lake_store(args.data / "lake");
+      const auto policy = fx::RetentionPolicy::load(args.data / "lake" / "retention.json");
+      std::size_t compacted = 0;
+      for (auto tf : {fx::Timeframe::Hour, fx::Timeframe::Day, fx::Timeframe::Week})
+        compacted += lake_store.lake().compact(tf, 8);
+      const auto removed = lake_store.lake().apply_retention(policy, now_utc());
+      std::cout << "compacted " << compacted << " partitions, removed " << removed
+                << " expired partitions\n";
+      return 0;
+    }
+    fx::BarStore store(args.data / "lake");
+    const bool live = args.mode == "alpaca";
+    const fx::TimePoint end = live ? now_utc() - 16 * 60 : now_utc();
+    const fx::TimePoint window_start = end - static_cast<fx::TimePoint>(args.lookback_days) * 86400;
     fx::Universe universe;
     std::optional<fx::PortfolioSpec> portfolio;
 
@@ -202,19 +246,20 @@ int main(int argc, char** argv) {
       universe = snapshot ? fx::load_snapshot(*snapshot, dir / "funds.csv")
                           : sp500_universe(args.data);
       universe.add_extras(*portfolio);
-      store.load_all(universe.price_tickers(), args.tf);
+      store.load_range(universe.price_tickers(), args.tf, window_start, end);
       if (client) {
-        const fx::TimePoint end = now_utc() - 16 * 60;
-        const fx::TimePoint start = end - static_cast<fx::TimePoint>(args.lookback_days) * 86400;
+        const fx::TimePoint start = window_start;
         std::cerr << "syncing " << universe.price_tickers().size() << " tickers ("
                   << fx::to_string(args.tf) << ") from " << fx::format_rfc3339(start) << "...\n";
         const auto stale =
             fx::sync_bars(*client, store, universe.price_tickers(), args.tf, start, end);
         if (!stale.empty()) std::cerr << stale.size() << " stale tickers\n";
+        store.flush();
+        maintain_lake(store, args.data, args.lookback_days, args.tf);
       }
     }
 
-    const fx::Panel panel = fx::build_panel(store, universe.node_tickers(), args.tf);
+    const fx::Panel panel = fx::build_panel(store, universe.node_tickers(), args.tf, window_start, end);
     if (panel.T() < 2) throw std::runtime_error("not enough cached bars; run with --mode alpaca first");
     return args.eval ? run_eval(args, panel, universe) : run_rank(args, panel, universe, portfolio);
   } catch (const std::exception& e) {

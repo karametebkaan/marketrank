@@ -23,6 +23,9 @@ struct CliArgs {
   bool eval = false;
   std::size_t eval_bars = 120;
   int threads = 0;  // 0 = OpenMP default
+  bool migrate_cache = false;
+  std::filesystem::path migrate_from = "data/cache";
+  bool maintain = false;
   bool help = false;
   CoreParams params;
 };

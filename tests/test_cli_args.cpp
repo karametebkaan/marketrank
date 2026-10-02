@@ -60,3 +60,12 @@ TEST_CASE("bad cli values throw") {
   CHECK_THROWS_AS(parse_cli({"--bogus"}), std::invalid_argument);
   CHECK(parse_cli({"--help"}).help);
 }
+
+TEST_CASE("storage flags") {
+  CliArgs a = parse_cli({"--migrate-cache"});
+  CHECK(a.migrate_cache);
+  CHECK(a.migrate_from == "data/cache");
+  CliArgs b = parse_cli({"--migrate-cache", "/tmp/old", "--maintain"});
+  CHECK(b.migrate_from == "/tmp/old");
+  CHECK(b.maintain);
+}
