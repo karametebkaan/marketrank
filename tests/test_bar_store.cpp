@@ -53,3 +53,35 @@ TEST_CASE("panel aligns tickers on the union of times with NaN gaps") {
   CHECK(std::isnan(p.volume[p.idx(2, 0)]));
   CHECK(p.vwap[p.idx(2, 1)] == 21);
 }
+
+TEST_CASE("load_all skips malformed rows and keeps the good ones") {
+  auto dir = test::temp_dir("bars_corrupt_row");
+  test::write_file(dir / "1d" / "AAA.csv",
+                   "t,o,h,l,c,v,vw\n100,1,1,1,1,10,1\nnot,a,row,at,all,x,y\n200,2,2,2,2,20,2\n"
+                   "300,3,3\n");
+  BarStore s(dir);
+  CHECK_NOTHROW(s.load_all({"AAA"}, Timeframe::Day));
+  const auto& b = s.bars("AAA", Timeframe::Day);
+  REQUIRE(b.size() == 2);
+  CHECK(b[0].t == 100);
+  CHECK(b[1].t == 200);
+}
+
+TEST_CASE("load_all skips files with a wrong header") {
+  auto dir = test::temp_dir("bars_bad_header");
+  test::write_file(dir / "1d" / "BAD.csv", "time,open\n100,1,1,1,1,10,1\n");
+  test::write_file(dir / "1d" / "EMPTY.csv", "");
+  BarStore s(dir);
+  CHECK_NOTHROW(s.load_all({"BAD", "EMPTY"}, Timeframe::Day));
+  CHECK(s.bars("BAD", Timeframe::Day).empty());
+  CHECK(s.bars("EMPTY", Timeframe::Day).empty());
+}
+
+TEST_CASE("save is atomic and leaves no temp file") {
+  auto dir = test::temp_dir("bars_atomic");
+  BarStore s(dir);
+  s.merge("AAPL", Timeframe::Day, {{100, 1, 1, 1, 1, 10, 1}});
+  s.save("AAPL", Timeframe::Day);
+  CHECK(std::filesystem::exists(dir / "1d" / "AAPL.csv"));
+  CHECK_FALSE(std::filesystem::exists(dir / "1d" / "AAPL.csv.tmp"));
+}

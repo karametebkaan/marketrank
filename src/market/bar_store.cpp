@@ -2,6 +2,7 @@
 
 #include <fstream>
 #include <iomanip>
+#include <stdexcept>
 
 #include "core/csv.hpp"
 
@@ -38,27 +39,48 @@ std::filesystem::path BarStore::file_for(const std::string& ticker, Timeframe tf
 void BarStore::save(const std::string& ticker, Timeframe tf) const {
   const auto path = file_for(ticker, tf);
   std::filesystem::create_directories(path.parent_path());
-  std::ofstream out(path);
-  out << "t,o,h,l,c,v,vw\n" << std::setprecision(15);
-  for (const Bar& b : bars(ticker, tf)) {
-    out << b.t << ',' << b.o << ',' << b.h << ',' << b.l << ',' << b.c << ',' << b.v << ','
-        << b.vw << '\n';
+  auto tmp = path;
+  tmp += ".tmp";
+  {
+    std::ofstream out(tmp, std::ios::trunc);
+    out << "t,o,h,l,c,v,vw\n" << std::setprecision(15);
+    for (const Bar& b : bars(ticker, tf)) {
+      out << b.t << ',' << b.o << ',' << b.h << ',' << b.l << ',' << b.c << ',' << b.v << ','
+          << b.vw << '\n';
+    }
+    out.flush();
+    if (!out) {
+      out.close();
+      std::filesystem::remove(tmp);
+      throw std::runtime_error("failed to write " + tmp.string());
+    }
   }
+  std::filesystem::rename(tmp, path);
 }
 
 void BarStore::load_all(const std::vector<std::string>& tickers, Timeframe tf) {
+  static const std::vector<std::string> kHeader = {"t", "o", "h", "l", "c", "v", "vw"};
   for (const auto& ticker : tickers) {
-    const auto path = file_for(ticker, tf);
-    if (!std::filesystem::exists(path)) continue;
-    const CsvRows rows = read_csv_file(path);
-    std::vector<Bar> loaded;
-    for (std::size_t r = 1; r < rows.size(); ++r) {
-      const auto& f = rows[r];
-      if (f.size() < 7) continue;
-      loaded.push_back({std::stoll(f[0]), std::stod(f[1]), std::stod(f[2]), std::stod(f[3]),
-                        std::stod(f[4]), std::stod(f[5]), std::stod(f[6])});
+    try {
+      const auto path = file_for(ticker, tf);
+      if (!std::filesystem::exists(path)) continue;
+      const CsvRows rows = read_csv_file(path);
+      if (rows.empty() || rows[0] != kHeader) continue;
+      std::vector<Bar> loaded;
+      for (std::size_t r = 1; r < rows.size(); ++r) {
+        const auto& f = rows[r];
+        if (f.size() < 7) continue;
+        try {
+          loaded.push_back({std::stoll(f[0]), std::stod(f[1]), std::stod(f[2]), std::stod(f[3]),
+                            std::stod(f[4]), std::stod(f[5]), std::stod(f[6])});
+        } catch (const std::exception&) {
+          continue;  // malformed row
+        }
+      }
+      merge(ticker, tf, loaded);
+    } catch (const std::exception&) {
+      continue;  // unreadable file: treat as missing
     }
-    merge(ticker, tf, loaded);
   }
 }
 
