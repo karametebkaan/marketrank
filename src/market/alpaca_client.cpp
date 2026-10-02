@@ -42,7 +42,8 @@ void load_dotenv(const std::filesystem::path& path) {
     const auto eq = line.find('=');
     if (eq == std::string::npos) continue;
     std::string key = line.substr(0, eq), value = line.substr(eq + 1);
-    if (!value.empty() && value.back() == '\r') value.pop_back();
+    while (!value.empty() && (value.back() == '\r' || value.back() == ' ' || value.back() == '\t'))
+      value.pop_back();
     if (value.size() >= 2 && (value.front() == '"' || value.front() == '\'') &&
         value.back() == value.front())
       value = value.substr(1, value.size() - 2);
