@@ -1,7 +1,10 @@
 #include <doctest/doctest.h>
 
 #include <chrono>
+#include <cmath>
+#include <cstdio>
 #include <cstdlib>
+#include <limits>
 
 #include "core/time.hpp"
 #include "market/alpaca_client.hpp"
@@ -435,4 +438,119 @@ TEST_CASE("only a bar that was complete when stored is checked for re-adjustment
   REQUIRE(paths.size() == 2);
   CHECK(paths[1].find("start=2026-09-01T00:00:00Z") != std::string::npos);
   CHECK(store.bars("AAPL", Timeframe::Day).front().c == 50);
+}
+
+namespace {
+// Reviewer scenario vendor: weekday daily bars at 04:00Z from 2026-06-01; the true close of day k is
+// 100 + k. A bar whose session (20:00Z) has not closed by `now` gets a partial close (+0.37). From
+// split_at on, the whole history is divided by 2. fail_full fails any request spanning > 10 days.
+struct SplitVendor {
+  TimePoint now = 0;
+  TimePoint split_at = std::numeric_limits<TimePoint>::max();
+  bool fail_full = false;
+  static TimePoint param(const std::string& path, const std::string& key) {
+    const auto p = path.find(key + "=");
+    return parse_rfc3339(path.substr(p + key.size() + 1, 20));
+  }
+  HttpResponse operator()(const std::string& path) const {
+    const TimePoint s = param(path, "start"), e = param(path, "end");
+    if (fail_full && e - s > 10 * 86400) return {500, "x"};
+    std::string out = R"({"bars":{"AAPL":[)";
+    bool first = true;
+    const TimePoint d0 = utc_seconds(2026, 6, 1, 4);
+    for (TimePoint t = d0; t <= e && t <= now; t += 86400) {
+      if (t < s) continue;
+      const auto wd = weekday_from_days(floor_div(t, 86400));
+      if (wd == 0 || wd == 6) continue;
+      double c = 100 + static_cast<double>((t - d0) / 86400);
+      if (t + 16 * 3600 > now) c += 0.37;
+      if (now >= split_at) c /= 2;
+      char buf[256];
+      std::snprintf(buf, sizeof buf, R"(%s{"t":"%s","o":%.6f,"h":%.6f,"l":%.6f,"c":%.6f,"v":1000,"vw":%.6f})",
+                    first ? "" : ",", format_rfc3339(t).c_str(), c, c, c, c, c);
+      out += buf;
+      first = false;
+    }
+    return {200, out + "]}}"};
+  }
+};
+
+// Bars whose basis differs from the latest bar's (a ratio of ~2 after a split).
+int mixed_basis(const BarStore& s) {
+  const auto& b = s.bars("AAPL", Timeframe::Day);
+  const TimePoint d0 = utc_seconds(2026, 6, 1, 4);
+  const double basis = (100 + static_cast<double>((b.back().t - d0) / 86400)) / b.back().c;
+  int bad = 0;
+  for (const Bar& x : b)
+    if (std::abs((100 + static_cast<double>((x.t - d0) / 86400)) / x.c / basis - 1) > 0.05) ++bad;
+  return bad;
+}
+
+AlpacaConfig no_retry_config() {
+  AlpacaConfig c = test_config();
+  c.max_retries = 0;
+  return c;
+}
+
+bool weekend(TimePoint t) {
+  const auto wd = weekday_from_days(floor_div(t, 86400));
+  return wd == 0 || wd == 6;
+}
+}  // namespace
+
+TEST_CASE("intraday syncs still catch a split (tail starts at the last complete bar)") {
+  for (int hour : {14, 22}) {  // 10:30 EDT intraday (minute 30 below), and 18:00 EDT evening
+    INFO("sync hour UTC " << hour);
+    BarStore store(test::temp_dir("split_intraday"));
+    SplitVendor v;
+    v.split_at = utc_seconds(2026, 9, 16, 13);
+    AlpacaClient client(no_retry_config(), [&](const std::string& p) { return v(p); });
+    for (unsigned day = 1; day <= 20; ++day) {
+      const TimePoint now = utc_seconds(2026, 9, day, hour, hour == 14 ? 30 : 0);
+      if (weekend(now)) continue;
+      v.now = now;
+      sync_bars(client, store, {"AAPL"}, Timeframe::Day, utc_seconds(2026, 6, 1), now);
+    }
+    CHECK(store.bars("AAPL", Timeframe::Day).size() == 80);
+    CHECK(mixed_basis(store) == 0);
+  }
+}
+
+TEST_CASE("a split found by a narrow-window sync refetches all stored history") {
+  BarStore store(test::temp_dir("split_narrow"));
+  SplitVendor v;
+  AlpacaClient client(no_retry_config(), [&](const std::string& p) { return v(p); });
+  const TimePoint start = utc_seconds(2026, 6, 1);
+  v.now = utc_seconds(2026, 9, 15, 22);
+  sync_bars(client, store, {"AAPL"}, Timeframe::Day, start, v.now);
+  v.now = utc_seconds(2026, 9, 16, 22);
+  v.split_at = utc_seconds(2026, 9, 16, 13);
+  sync_bars(client, store, {"AAPL"}, Timeframe::Day, v.now - 40 * 86400, v.now);  // ranking-style window
+  CHECK(mixed_basis(store) == 0);
+  sync_bars(client, store, {"AAPL"}, Timeframe::Day, start, v.now);
+  CHECK(mixed_basis(store) == 0);
+}
+
+TEST_CASE("a failed re-adjustment refetch leaves the data untouched and is retried next sync") {
+  BarStore store(test::temp_dir("split_failed"));
+  SplitVendor v;
+  AlpacaClient client(no_retry_config(), [&](const std::string& p) { return v(p); });
+  const TimePoint start = utc_seconds(2026, 6, 1);
+  v.now = utc_seconds(2026, 9, 15, 22);
+  sync_bars(client, store, {"AAPL"}, Timeframe::Day, start, v.now);
+  const std::vector<Bar> before = store.bars("AAPL", Timeframe::Day);
+  v.now = utc_seconds(2026, 9, 16, 22);
+  v.split_at = utc_seconds(2026, 9, 16, 13);
+  v.fail_full = true;
+  const auto st = sync_bars(client, store, {"AAPL"}, Timeframe::Day, start, v.now);
+  CHECK(st == std::vector<std::string>{"AAPL"});
+  const auto& after = store.bars("AAPL", Timeframe::Day);
+  REQUIRE(after.size() == before.size());
+  for (std::size_t i = 0; i < after.size(); ++i) CHECK(after[i].c == before[i].c);  // stale: untouched
+  v.fail_full = false;
+  for (unsigned d = 17; d <= 18; ++d) {
+    v.now = utc_seconds(2026, 9, d, 22);
+    sync_bars(client, store, {"AAPL"}, Timeframe::Day, start, v.now);
+  }
+  CHECK(mixed_basis(store) == 0);
 }

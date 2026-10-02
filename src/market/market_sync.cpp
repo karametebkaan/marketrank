@@ -30,6 +30,19 @@ TimePoint bar_end(Timeframe tf, TimePoint t) {
   return session_close(t);
 }
 
+bool close_changed(double c_new, double c_old) {
+  return std::fabs(c_new - c_old) / std::max(std::fabs(c_old), 1e-12) > 1e-6;
+}
+
+// Stored bar at time t, or nullptr. Series are sorted by t.
+const Bar* stored_at(const std::vector<Bar>& series, TimePoint t) {
+  auto it = std::lower_bound(series.begin(), series.end(), t, [](const Bar& b, TimePoint x) { return b.t < x; });
+  return it != series.end() && it->t == t ? &*it : nullptr;
+}
+
+// readjusted != nullptr turns on the adjustment check (tail fetches only). A ticker found re-adjusted
+// is neither merged nor saved: its stored data stays as it is until the full refetch replaces it, so
+// a failed refetch is detected again on the next sync.
 void fetch_into(AlpacaClient& client, BarStore& store, const std::vector<std::string>& group,
                 Timeframe tf, TimePoint from, TimePoint to, std::set<std::string>& stale,
                 const std::set<std::string>& cover, std::set<std::string>* readjusted = nullptr) {
@@ -42,21 +55,24 @@ void fetch_into(AlpacaClient& client, BarStore& store, const std::vector<std::st
         for (const auto& [ticker, raw] : batch_bars) {
           const std::vector<Bar> bars = tf == Timeframe::Hour ? aggregate_session_hours(raw) : raw;
           if (readjusted) {
-            // The inclusive tail re-fetches the last cached bar. If that bar was complete when it was
-            // stored, a changed close means Alpaca re-adjusted the history (split or dividend), so the
-            // cached bars are on an old basis. A bar stored before its session closed may change
-            // legitimately and is not compared.
-            const auto& old = store.bars(ticker, tf);
-            const auto done = store.complete_through(ticker, tf);
-            if (!old.empty() && old.back().t == from && done && *done >= from) {
-              const double c_old = old.back().c;
+            // Compare every re-fetched bar that was complete when stored (t <= complete_through). A
+            // changed close means Alpaca re-adjusted the history (split or dividend). Bars stored
+            // before their session or bucket closed may change legitimately and are not compared.
+            if (const auto done = store.complete_through(ticker, tf)) {
+              const auto& old = store.bars(ticker, tf);
+              bool changed = false;
               for (const Bar& b : bars) {
-                if (b.t != from) continue;
-                if (std::fabs(b.c - c_old) / std::max(std::fabs(c_old), 1e-12) > 1e-6) {
-                  std::cerr << "sync: " << ticker << " re-adjusted; refetching history\n";
-                  readjusted->insert(ticker);
+                if (b.t > *done) break;
+                const Bar* o = stored_at(old, b.t);
+                if (o && close_changed(b.c, o->c)) {
+                  changed = true;
+                  break;
                 }
-                break;
+              }
+              if (changed) {
+                std::cerr << "sync: " << ticker << " re-adjusted; refetching history\n";
+                readjusted->insert(ticker);
+                continue;
               }
             }
           }
@@ -74,6 +90,21 @@ void fetch_into(AlpacaClient& client, BarStore& store, const std::vector<std::st
         store.flush();
       });
   stale.insert(r.stale.begin(), r.stale.end());
+}
+
+// Full refetch of each ticker from the earliest of start, its first stored bar and its coverage
+// through end, grouped by that start. The newer seq wins in the lake.
+void refetch_full(AlpacaClient& client, BarStore& store, const std::set<std::string>& tickers, Timeframe tf,
+                  TimePoint start, TimePoint end, std::set<std::string>& stale) {
+  std::map<TimePoint, std::vector<std::string>> by_from;
+  for (const auto& t : tickers) {
+    TimePoint from = start;
+    if (const auto first = store.first_time(t, tf)) from = std::min(from, *first);
+    if (const auto cov = store.covered_from(t, tf)) from = std::min(from, *cov);
+    by_from[from].push_back(t);
+  }
+  for (const auto& [from, group] : by_from)
+    fetch_into(client, store, group, tf, from, end, stale, std::set<std::string>(group.begin(), group.end()));
 }
 
 }  // namespace
@@ -95,9 +126,17 @@ std::vector<std::string> sync_bars(AlpacaClient& client, BarStore& store,
   }
   fetch_into(client, store, backfill, tf, start, std::min(backfill_to, end), stale,
              std::set<std::string>(backfill.begin(), backfill.end()));
-  // 2. Incremental tail from each ticker's last cached bar (inclusive: refreshes a partial bar).
+  // 2. Incremental tail (inclusive: refreshes a partial bar). It starts at the last bar that was
+  // complete when stored, so the adjustment check always has a complete bar to compare.
   std::map<TimePoint, std::vector<std::string>> by_start;
-  for (const auto& t : tickers) by_start[store.last_time(t, tf).value_or(start)].push_back(t);
+  for (const auto& t : tickers) {
+    TimePoint from = start;
+    if (const auto last = store.last_time(t, tf)) {
+      from = *last;
+      if (const auto done = store.complete_through(t, tf)) from = std::min(from, *done);
+    }
+    by_start[from].push_back(t);
+  }
   std::set<std::string> readjusted;
   for (const auto& [from, group] : by_start) {
     // Tickers with no cache are fetched from `start`, so that history is now covered.
@@ -106,10 +145,8 @@ std::vector<std::string> sync_bars(AlpacaClient& client, BarStore& store,
       if (!store.last_time(t, tf)) cover.insert(t);
     fetch_into(client, store, group, tf, from, end, stale, cover, &readjusted);
   }
-  // 3. Re-adjusted tickers: re-fetch the full window so every bar is on the new basis (the newer
-  // write wins in the lake).
-  const std::vector<std::string> refetch(readjusted.begin(), readjusted.end());
-  fetch_into(client, store, refetch, tf, start, end, stale, readjusted);
+  // 3. Re-adjusted tickers: re-fetch all stored history so every bar is on the new basis.
+  refetch_full(client, store, readjusted, tf, start, end, stale);
   return {stale.begin(), stale.end()};
 }
 
