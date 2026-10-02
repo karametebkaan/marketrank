@@ -23,6 +23,12 @@ std::vector<Security> generate_synthetic(const SyntheticConfig& cfg, BarStore& s
 
   std::vector<std::vector<Bar>> series(static_cast<std::size_t>(n));
   std::vector<double> price(static_cast<std::size_t>(n), 100.0);
+  std::vector<double> base(static_cast<std::size_t>(n));
+  std::mt19937_64 size_rng(cfg.seed ^ 0x5eedULL);
+  std::normal_distribution<double> size_dist(0.0, cfg.size_sigma > 0 ? cfg.size_sigma : 1.0);
+  for (int i = 0; i < n; ++i)
+    base[static_cast<std::size_t>(i)] =
+        cfg.size_sigma > 0 ? 1e6 * std::exp(size_dist(size_rng)) : 1e6 * (1 + i % 5);
   const TimePoint step = timeframe_seconds(cfg.tf);
   for (int b = 0; b < cfg.bars; ++b) {
     std::vector<double> factor(static_cast<std::size_t>(cfg.sectors));
@@ -39,8 +45,7 @@ std::vector<Security> generate_synthetic(const SyntheticConfig& cfg, BarStore& s
       const double c = o * (1.0 + r);
       const double h = std::max(o, c) * 1.002;
       const double l = std::min(o, c) * 0.998;
-      const double base = 1e6 * (1 + i % 5);
-      const double v = base * (1.0 + 30.0 * std::abs(r)) * mult;
+      const double v = base[ui] * (1.0 + 30.0 * std::abs(r)) * mult;
       series[ui].push_back({cfg.start + b * step, o, h, l, c, v, (o + h + l + c) / 4.0});
       price[ui] = c;
     }

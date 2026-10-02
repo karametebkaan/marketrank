@@ -19,6 +19,7 @@ struct SyntheticConfig {
   double rotation_strength = 0.004;
   Timeframe tf = Timeframe::Day;
   TimePoint start = utc_seconds(2025, 1, 2, 21, 0);
+  double size_sigma = 0.0;  // > 0: base volume 1e6 * exp(N(0, size_sigma)) per stock
 };
 
 std::vector<Security> generate_synthetic(const SyntheticConfig& cfg, BarStore& store);

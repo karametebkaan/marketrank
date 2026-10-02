@@ -44,3 +44,21 @@ TEST_CASE("planted rotation moves sector returns apart") {
   CHECK(to_sum > 0);
   CHECK(from_sum < 0);
 }
+
+TEST_CASE("size_sigma makes stock sizes heavy-tailed") {
+  SyntheticConfig cfg;
+  cfg.sectors = 10;
+  cfg.per_sector = 20;
+  cfg.bars = 30;
+  cfg.size_sigma = 1.5;
+  BarStore s(test::temp_dir("syn_tail"));
+  auto secs = generate_synthetic(cfg, s);
+  double lo = 1e300, hi = 0;
+  for (const auto& sec : secs) {
+    double mean = 0;
+    for (const Bar& b : s.bars(sec.ticker, cfg.tf)) mean += b.v / 30.0;
+    lo = std::min(lo, mean);
+    hi = std::max(hi, mean);
+  }
+  CHECK(hi / lo > 100.0);
+}
