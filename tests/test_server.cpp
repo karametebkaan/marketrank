@@ -35,7 +35,7 @@ struct Fixture {
     auto secs = generate_synthetic(cfg, bars);
     std::vector<std::string> tickers;
     for (auto& s : secs) tickers.push_back(s.ticker);
-    for (std::size_t i = secs.size() - etf_tail; i < secs.size(); ++i) secs[i].sector = kSectorEtfFund;
+    for (std::size_t i = secs.size() - etf_tail; i < secs.size(); ++i) secs[i].sector = kSectorEtfFund;  // hermetic ETF/Fund nodes
     store = std::make_unique<FrameStore>(build_panel(bars, tickers, cfg.tf), secs, core, LandscapeParams{}, 10);
     if (start) store->start();
     for (int k = 0; start && k < 600 && !store->status().ready; ++k) std::this_thread::sleep_for(50ms);
@@ -555,8 +555,9 @@ TEST_CASE("server: show_etf round-trips through /api/params and /api/status, def
   httplib::Client c("127.0.0.1", f.port);
   auto etf_cells = [&] {
     std::size_t placed = 0, etf = 0;
-    for (const auto& n : json::parse(c.Get("/api/frame")->body)["nodes"]) {
-      if (n[2] != kSectorEtfFund) continue;
+    const json frame = json::parse(c.Get("/api/frame")->body);  // (a range-for over a temporary would dangle)
+    for (const auto& n : frame["nodes"]) {
+      if (n[2].get<std::string>() != kSectorEtfFund) continue;
       ++etf;
       placed += n[3].get<int>() >= 0 ? 1 : 0;
     }
