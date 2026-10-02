@@ -20,6 +20,7 @@ struct BacktestParams {
   double max_name_tilt = 0.10;   // cap on one name's tilt weight
   double cost_bps = 10;          // per side, on traded notional
   double max_turnover = 0.5;     // per rebalance, sum |delta w| / 2; larger moves are scaled down
+  bool flat_holds_equal_weight = false;  // an empty score holds the equal-weight eligible universe, not the base
 };
 
 // One decision per rebalance date: the score vector (NaN = not a candidate) and the eligibility mask;
@@ -31,7 +32,9 @@ struct Decision {
   std::vector<bool> eligible;
 };
 
-enum class BenchKind { None, BuyHoldBase, RebalancedBase, Single };  // Single = 100% in one ticker
+// Single = 100% in one ticker; EqualWeightEligible = 1/n in each of the n eligible names of every decision
+// (empty mask: every stock), rebalanced at every decision date.
+enum class BenchKind { None, BuyHoldBase, RebalancedBase, Single, EqualWeightEligible };
 
 struct EquityCurve {
   std::vector<TimePoint> t;             // every bar from the first execution day on
@@ -43,7 +46,8 @@ struct EquityCurve {
 
 // Target weight per stock (size N): (1 - tilt) * base + tilt * tiltpart, where the tilt part gives
 // min(1/k, max_name_tilt/tilt) to each of the top-k finite-score eligible names (ties -> lower index).
-// Unallocated tilt and any base remainder are cash. Empty score -> base alone.
+// Unallocated tilt and any base remainder are cash. Empty score -> base alone, or, with flat_holds_equal_weight,
+// 1/n in each of the n eligible names (empty mask: every stock).
 // Throws std::invalid_argument on an unknown base ticker or a score/eligible size mismatch.
 std::vector<double> target_weights(const Panel&, const BacktestParams&, const Decision&);
 
@@ -73,6 +77,7 @@ std::vector<double> target_weights(const Panel&, const BacktestParams&, const De
 //  BuyHoldBase    - trade to the base weights at the first decision only, then hold.
 //  RebalancedBase - trade to the base weights at every decision date.
 //  Single         - 100% in single_ticker at the first decision, then hold (throws if unknown).
+//  EqualWeightEligible - trade to 1/n of each decision's eligible names at every decision date.
 // No decisions -> empty curve.
 EquityCurve simulate(const Panel&, const BacktestParams&, const std::vector<Decision>&, BenchKind bench = BenchKind::None,
                      const std::string& single_ticker = "");

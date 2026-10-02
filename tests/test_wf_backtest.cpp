@@ -98,8 +98,31 @@ TEST_CASE("wf backtest: target weights") {
   w = target_weights(p, bp, Decision{5, {}, {}});
   CHECK(w[0] == 0.5);
   CHECK(w[1] == 0.3);
+  // flat_holds_equal_weight: no score -> the equal-weight eligible universe instead of the base.
+  bp.flat_holds_equal_weight = true;
+  w = target_weights(p, bp, Decision{5, {}, {true, false, true, false}});
+  CHECK(w == std::vector<double>{0.5, 0.0, 0.5, 0.0});
+  w = target_weights(p, bp, Decision{5, {}, {}});  // empty mask: every stock
+  CHECK(w == std::vector<double>{0.25, 0.25, 0.25, 0.25});
   bp.base = {{"ZZZ", 1.0}};
   CHECK_THROWS_AS(target_weights(p, bp, d), std::invalid_argument);
+}
+
+TEST_CASE("wf backtest: equal-weight eligible benchmark rebalances to 1/n of the eligible names") {
+  const Panel p = make_panel();
+  BacktestParams bp;  // base is ignored by this benchmark
+  bp.base = {{"D", 1.0}};
+  bp.cost_bps = 0;
+  bp.max_turnover = 1.0;
+  const std::vector<Decision> ds = {{0, {7.0, 1.0, 2.0, 3.0}, {true, true, false, false}},
+                                    {20, {}, {false, true, true, false}}};
+  const EquityCurve r = simulate(p, bp, ds, BenchKind::EqualWeightEligible);
+  const double sa = 0.5 / O(p, 1, 0), sb = 0.5 / O(p, 1, 1);
+  check_rel(r.value[19], sa * C(p, 20, 0) + sb * C(p, 20, 1));
+  const double V = sa * O(p, 21, 0) + sb * O(p, 21, 1);
+  const double sb2 = 0.5 * V / O(p, 21, 1), sc2 = 0.5 * V / O(p, 21, 2);  // A sold, B and C at V/2
+  check_rel(r.value.back(), sb2 * C(p, kT - 1, 1) + sc2 * C(p, kT - 1, 2));
+  check_rel(r.turnover, (sa * O(p, 21, 0) + std::abs(sb2 - sb) * O(p, 21, 1) + sc2 * O(p, 21, 2)) / (2 * V));
 }
 
 TEST_CASE("wf backtest (a): buy-and-hold equals the analytic value") {

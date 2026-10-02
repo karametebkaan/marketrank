@@ -131,6 +131,23 @@ WalkForwardResult run_walkforward(const Panel& panel, const WalkForwardParams& p
   r.curves.emplace_back("bench:rebalanced", simulate(panel, p.bt, cal, BenchKind::RebalancedBase));
   if (std::find(panel.tickers.begin(), panel.tickers.end(), "VOO") != panel.tickers.end())
     r.curves.emplace_back("bench:VOO", simulate(panel, p.bt, cal, BenchKind::Single, "VOO"));
+
+  // Base-free sleeves (secondary, pre-registered for M3c): 100% in the top k at 1/k each, against the equal-weight
+  // eligible universe on the same calendar. A flat blend (gate closed) holds that universe.
+  BacktestParams sleeve = p.bt;
+  sleeve.base.clear();
+  sleeve.tilt = 1.0;
+  sleeve.max_name_tilt = 1.0;
+  sleeve.flat_holds_equal_weight = true;
+  r.curves.emplace_back("sleeve:blend",
+                        simulate(panel, sleeve, decisions([&](std::size_t j) { return r.blend[j].score; })));
+  for (std::size_t s = 0; s < kSignals; ++s)
+    r.curves.emplace_back("sleeve:" + std::string(to_string(static_cast<Signal>(s))),
+                          simulate(panel, sleeve, decisions([&](std::size_t j) { return r.months[j].z[s]; })));
+  r.curves.emplace_back("bench:ew_eligible", simulate(panel, sleeve, decisions([](std::size_t) {
+                                                        return std::vector<double>{};
+                                                      }),
+                                                      BenchKind::EqualWeightEligible));
   return r;
 }
 

@@ -23,6 +23,16 @@ std::vector<double> base_weights(const Panel& p, const BacktestParams& bp) {
   return w;
 }
 
+std::vector<double> equal_weight(std::size_t N, const std::vector<bool>& eligible) {
+  std::vector<double> w(N, 0.0);
+  std::size_t n = 0;
+  for (std::size_t i = 0; i < N; ++i) n += eligible.empty() || eligible[i] ? 1 : 0;
+  if (n == 0) return w;
+  for (std::size_t i = 0; i < N; ++i)
+    if (eligible.empty() || eligible[i]) w[i] = 1.0 / static_cast<double>(n);
+  return w;
+}
+
 std::string trade_row(TimePoint t, const std::string& ticker, double dw, double px) {
   char buf[96];
   std::snprintf(buf, sizeof buf, ",%.12g,%.12g", dw, px);
@@ -115,6 +125,7 @@ std::vector<double> target_weights(const Panel& p, const BacktestParams& bp, con
   const std::size_t N = p.N();
   if (!d.score.empty() && d.score.size() != N) throw std::invalid_argument("target_weights: score size != N");
   if (!d.eligible.empty() && d.eligible.size() != N) throw std::invalid_argument("target_weights: eligible size != N");
+  if (d.score.empty() && bp.flat_holds_equal_weight) return equal_weight(N, d.eligible);
   std::vector<double> w = base_weights(p, bp);
   if (d.score.empty()) return w;
   for (double& x : w) x *= 1.0 - bp.tilt;
@@ -143,6 +154,8 @@ EquityCurve simulate(const Panel& p, const BacktestParams& bp, const std::vector
     if (decisions[j].date + 1 >= T) throw std::invalid_argument("simulate: decision date has no next open");
     if (j > 0 && decisions[j].date <= decisions[j - 1].date)
       throw std::invalid_argument("simulate: decision dates must be strictly increasing");
+    if (bench == BenchKind::EqualWeightEligible && !decisions[j].eligible.empty() && decisions[j].eligible.size() != N)
+      throw std::invalid_argument("simulate: eligible size != N");
   }
   std::vector<double> fixed_w;
   if (bench == BenchKind::BuyHoldBase || bench == BenchKind::RebalancedBase) {
@@ -164,10 +177,15 @@ EquityCurve simulate(const Panel& p, const BacktestParams& bp, const std::vector
     }
     if (next < decisions.size() && decisions[next].date + 1 == t) {
       const bool initial = next == 0;
-      const bool trade = bench == BenchKind::None || bench == BenchKind::RebalancedBase || initial;
+      const bool trade = bench == BenchKind::None || bench == BenchKind::RebalancedBase ||
+                         bench == BenchKind::EqualWeightEligible || initial;
       if (trade) {
-        const auto [cost, turnover] = execute(
-            p, bp, t, bench == BenchKind::None ? target_weights(p, bp, decisions[next]) : fixed_w, initial, bk, out);
+        const auto [cost, turnover] =
+            execute(p, bp, t,
+                    bench == BenchKind::None                  ? target_weights(p, bp, decisions[next])
+                    : bench == BenchKind::EqualWeightEligible ? equal_weight(N, decisions[next].eligible)
+                                                              : fixed_w,
+                    initial, bk, out);
         out.costs += cost;
         if (!initial) out.turnover += turnover;
       }

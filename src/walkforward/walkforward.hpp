@@ -48,7 +48,10 @@ struct WalkForwardResult {
   std::vector<std::vector<bool>> eligible; // per rebalance: eligible_at(d_m) && frame.active
   std::vector<BlendStep> blend;
   // Equity curves: "blend", one per signal ("sig:<name>"), "bench:buyhold", "bench:rebalanced", "bench:VOO"
-  // (the last only when VOO is in the panel).
+  // (the last only when VOO is in the panel), then the base-free sleeves "sleeve:blend" and "sleeve:<name>"
+  // (tilt 1, the top k at 1/k each, a flat blend holds the benchmark) and their benchmark "bench:ew_eligible"
+  // (equal weight over each rebalance's eligible names, rebalanced on the same calendar). Sleeves are secondary
+  // results: not registry trials and not gated.
   std::vector<std::pair<std::string, EquityCurve>> curves;
 };
 

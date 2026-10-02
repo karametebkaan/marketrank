@@ -133,8 +133,12 @@ TEST_CASE("walkforward: monthly dates are month-end bars and every curve key exi
     keys.insert(k);
     CHECK_FALSE(c.value.empty());
   }
-  std::set<std::string> want{"blend", "bench:buyhold", "bench:rebalanced", "bench:VOO"};
-  for (std::size_t s = 0; s < kSignals; ++s) want.insert("sig:" + std::string(to_string(static_cast<Signal>(s))));
+  std::set<std::string> want{"blend", "bench:buyhold", "bench:rebalanced", "bench:VOO", "sleeve:blend",
+                             "bench:ew_eligible"};
+  for (std::size_t s = 0; s < kSignals; ++s) {
+    want.insert("sig:" + std::string(to_string(static_cast<Signal>(s))));
+    want.insert("sleeve:" + std::string(to_string(static_cast<Signal>(s))));
+  }
   CHECK(keys == want);
   // IC table: one row per signal x horizon, with samples.
   CHECK(r.ic_table.size() == kSignals * p.ic_horizons.size());
@@ -239,9 +243,28 @@ TEST_CASE("walkforward: write_report creates the files and registry grows per st
   }
   CHECK(j.at("registry").contains("n_ir_trials"));
   CHECK(j.at("registry").contains("trial_ir_var"));
-  // Registry rows carry ir_daily (9th column) and count as IR trials.
+  // Registry rows carry ir_daily (9th column) and count as IR trials; sleeves are secondaries, not trials.
   const RegistryStats st = registry_stats(out / "registry.csv");
   CHECK(st.n_ir_trials == 2 * strategies);
+  {
+    std::ifstream in(out / "registry.csv");
+    const std::string reg((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    CHECK(reg.find("sleeve:") == std::string::npos);
+  }
+  // Secondaries (reported, not gated): every strategy against the rebalanced base, every sleeve against the
+  // equal-weight eligible universe.
+  const auto& sec = j.at("secondary");
+  REQUIRE(sec.at("vs_rebalanced").size() == strategies);
+  for (const auto& s : sec.at("vs_rebalanced"))
+    for (const char* k : {"name", "ann_excess", "excess_ci95", "ir", "dsr_excess", "years", "year_hit_rate"})
+      CHECK(s.contains(k));
+  REQUIRE(sec.at("sleeves").size() == strategies);
+  CHECK(sec.at("sleeves")[0].at("name") == "sleeve:blend");
+  CHECK(sec.at("sleeves")[0].at("benchmark") == "bench:ew_eligible");
+  for (const auto& s : j.at("strategies")) CHECK(s.at("name").get<std::string>().rfind("sleeve:", 0) != 0);
+  CHECK(text.find("## Secondary (reported, not gated)") != std::string::npos);
+  CHECK(text.find("against the base rebalanced on the same calendar") != std::string::npos);
+  CHECK(text.find("| sleeve:blend |") != std::string::npos);
 }
 
 TEST_CASE("cli: --walkforward and --wf-* flags") {

@@ -222,11 +222,22 @@ fs::path write_outputs(const Meta& mt, const std::vector<IcRow>& ic_table, const
   const EquityCurve& bh = bh_ptr ? *bh_ptr : kEmpty;
   const double base_mdd = performance(bh, bh).max_drawdown;
 
-  std::vector<StratRow> strat, bench;
+  std::vector<StratRow> strat, bench, sleeves;
   for (const auto& [k, c] : curves) {
+    if (k.rfind("sleeve:", 0) == 0) continue;
     StratRow row{k, &c, performance(c, bh)};
     (k.rfind("bench:", 0) == 0 ? bench : strat).push_back(std::move(row));
   }
+  // Secondaries (reported, not gated): every strategy against the base rebalanced on the same calendar, and the
+  // base-free sleeves against the equal-weight eligible universe.
+  const EquityCurve* reb = find_curve(curves, "bench:rebalanced");
+  const EquityCurve* ew = find_curve(curves, "bench:ew_eligible");
+  std::vector<StratRow> vs_reb;
+  if (reb)
+    for (const auto& s : strat) vs_reb.push_back(StratRow{s.name, s.curve, performance(*s.curve, *reb)});
+  if (ew)
+    for (const auto& [k, c] : curves)
+      if (k.rfind("sleeve:", 0) == 0) sleeves.push_back(StratRow{k, &c, performance(c, *ew)});
 
   // Registry: under the lock, replace this run id's rows (same hash) or reject it (other hash), rewrite atomically,
   // then deflate against every trial.
@@ -263,6 +274,8 @@ fs::path write_outputs(const Meta& mt, const std::vector<IcRow>& ic_table, const
     s.dsr = dsr_total(s.perf, trials.trial_sr_var, trials.n_trials);
     s.dsr_excess = dsr_excess(s.perf, trials.trial_ir_var, trials.n_ir_trials);
   }
+  for (auto* v : {&vs_reb, &sleeves})  // deflated with the same IR trials (an approximation: other benchmarks)
+    for (auto& s : *v) s.dsr_excess = dsr_excess(s.perf, trials.trial_ir_var, trials.n_ir_trials);
 
   const StratRow* blend_row = nullptr;
   for (const auto& s : strat)
@@ -332,6 +345,22 @@ fs::path write_outputs(const Meta& mt, const std::vector<IcRow>& ic_table, const
     for (const auto& s : strat) st.push_back(perf_json(s));
     auto& be = j["benchmarks"] = nlohmann::json::array();
     for (const auto& s : bench) be.push_back(perf_json(s));
+    auto sec_json = [&](const StratRow& s, const char* benchmark) {
+      const Perf& q = s.perf;
+      return nlohmann::json{{"name", s.name}, {"benchmark", benchmark}, {"T", q.T},
+                            {"cum_return", jnum(q.cum_return)}, {"ann_return", jnum(q.ann_return)},
+                            {"ann_vol", jnum(q.ann_vol)}, {"sharpe", jnum(q.sharpe)},
+                            {"max_drawdown", jnum(q.max_drawdown)}, {"ann_excess", jnum(q.ann_excess)},
+                            {"excess_ci95", {jnum(q.excess_ci95.lo), jnum(q.excess_ci95.hi)}}, {"ir", jnum(q.ir)},
+                            {"ir_daily", jnum(q.ir_daily)}, {"year_hit_rate", jnum(q.year_hit_rate)},
+                            {"years", q.years}, {"dsr_excess", jnum(s.dsr_excess)}, {"costs", jnum(s.curve->costs)},
+                            {"turnover", jnum(s.curve->turnover)}};
+    };
+    auto& sec = j["secondary"] = nlohmann::json::object();
+    sec["vs_rebalanced"] = nlohmann::json::array();
+    for (const auto& s : vs_reb) sec["vs_rebalanced"].push_back(sec_json(s, "bench:rebalanced"));
+    sec["sleeves"] = nlohmann::json::array();
+    for (const auto& s : sleeves) sec["sleeves"].push_back(sec_json(s, "bench:ew_eligible"));
     j["base_max_drawdown"] = jnum(base_mdd);
     j["registry"] = {{"n_trials", trials.n_trials}, {"trial_sr_var", jnum(trials.trial_sr_var)},
                      {"n_ir_trials", trials.n_ir_trials}, {"trial_ir_var", jnum(trials.trial_ir_var)}};
@@ -391,6 +420,44 @@ fs::path write_outputs(const Meta& mt, const std::vector<IcRow>& ic_table, const
     };
     for (const auto& s : strat) line(s, true);
     for (const auto& s : bench) line(s, false);
+
+    // Secondaries.
+    auto sec_line = [&](const StratRow& s) {
+      const Perf& q = s.perf;
+      const auto hits = static_cast<long long>(std::llround(q.year_hit_rate * static_cast<double>(q.years)));
+      md << "| " << s.name << " | " << q.T << " | " << pct(q.ann_return) << " | " << pct(q.max_drawdown) << " | "
+         << pct(q.ann_excess) << " | " << pct(q.excess_ci95.lo) << " .. " << pct(q.excess_ci95.hi) << " | "
+         << num(q.ir, 2) << " | " << hits << " of " << q.years << " | " << num(s.curve->turnover, 2) << " | "
+         << num(s.dsr_excess, 3) << " |\n";
+    };
+    const char* kSecHeader =
+        "| curve | days | ann | max DD | ann excess | excess CI95 | IR | years + | turnover | DSR_excess |\n"
+        "|---|---:|---:|---:|---:|---|---:|---:|---:|---:|\n";
+    md << "\n## Secondary (reported, not gated)\n\n"
+       << "Pre-registered on 2026-10-02 as secondaries for the next experiment (spec amendment). DSR_excess here uses "
+          "the same registry IR trials as c3, an approximation since the benchmark differs.\n\n"
+       << "### Strategies against the base rebalanced on the same calendar\n\n"
+       << "This removes the rebalancing drag of the hindsight-selected base from the comparison.\n\n";
+    if (vs_reb.empty()) md << "No `bench:rebalanced` curve in this run.\n";
+    else {
+      md << kSecHeader;
+      for (const auto& s : vs_reb) sec_line(s);
+    }
+    md << "\n### Base-free sleeves against the equal-weight eligible universe\n\n"
+       << "Each sleeve holds the top " << mt.k << " names at 1/" << mt.k
+       << " each (tilt 1, no base; a flat blend holds the benchmark), with the same costs and turnover cap, "
+          "against equal weight over each rebalance's eligible names rebalanced on the same calendar "
+          "(`bench:ew_eligible`). Free of the hindsight-selected base.\n\n";
+    if (sleeves.empty()) md << "No sleeves in this run (they were added on 2026-10-02; runs from then on carry them).\n";
+    else {
+      md << kSecHeader;
+      for (const auto& s : sleeves) sec_line(s);
+      if (ew) {
+        const Perf q = performance(*ew, *ew);
+        md << "\n`bench:ew_eligible` itself: ann " << pct(q.ann_return) << ", max DD " << pct(q.max_drawdown)
+           << ", turnover " << num(ew->turnover, 2) << ", costs " << pct(ew->costs, 3) << ".\n";
+      }
+    }
 
     md << "\n## Blend\n\n"
        << "Gate open in " << open << " of " << M << " periods (" << pct(open_share, 1) << "); weights formed in "
@@ -573,9 +640,12 @@ fs::path rereport(const fs::path& out_dir, const std::string& run_id) {
     }
   }
   std::map<std::string, std::pair<double, double>> cost_turn;
-  for (const char* key : {"strategies", "benchmarks"})
-    for (const auto& s : j.at(key))
-      cost_turn[s.at("name").get<std::string>()] = {unjnum(s.at("costs")), unjnum(s.at("turnover"))};
+  auto add_costs = [&](const nlohmann::json& arr) {
+    for (const auto& s : arr) cost_turn[s.at("name").get<std::string>()] = {unjnum(s.at("costs")), unjnum(s.at("turnover"))};
+  };
+  add_costs(j.at("strategies"));
+  add_costs(j.at("benchmarks"));
+  if (j.contains("secondary")) add_costs(j.at("secondary").at("sleeves"));
   for (auto& [name, c] : curves)
     if (auto it = cost_turn.find(name); it != cost_turn.end()) c.costs = it->second.first, c.turnover = it->second.second;
   return write_outputs(mt, ic, blend, curves, out_dir);
