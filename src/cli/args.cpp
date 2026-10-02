@@ -125,7 +125,7 @@ std::string cli_usage() {
          "                 [--migrate-cache [DIR]] [--maintain]\n"
          "                 [--sync-sectors]   (fetch SEC EDGAR SIC sectors for the universe snapshot into\n"
          "                                   data/sectors/sec_sic.csv; needs SEC_USER_AGENT in .env, no Alpaca keys;\n"
-         "                                   honours --universe/--universe-size; run it on its own, then rank/eval)\n"
+         "                                   uses the newest snapshot (--universe-size is ignored); run it on its own, then rank/eval)\n"
          "                 [--refetch-full]   (alpaca: one-time refetch of every ticker's full stored history,\n"
          "                                   replacing old-basis bars; failed tickers stay untouched)\n";
 }

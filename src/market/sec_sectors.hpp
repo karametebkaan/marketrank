@@ -1,10 +1,12 @@
 #pragma once
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <map>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -45,13 +47,24 @@ void save_sec_cache(const std::filesystem::path& path, const SecCache& cache);  
 
 struct SecConfig {
   std::string user_agent;  // never printed or logged
-  int min_request_interval_ms = 125;  // <= 8 requests/second
+  int min_request_interval_ms = 150;  // under SEC's 10 requests/second limit
   int backoff_initial_ms = 500;
   int backoff_max_ms = 30000;
   int max_attempts = 3;
+  int max_retry_after_s = 60;
+  // Injectable for tests; empty means the real steady clock / this_thread::sleep_for.
+  std::function<std::chrono::steady_clock::time_point()> now;
+  std::function<void(std::chrono::milliseconds)> sleep;
 };
 
-using SecHttpGet = std::function<HttpResponse(const std::string& host, const std::string& path)>;
+// Fatal for the whole sync (HTTP 403, or too many consecutive failures); progress is saved first.
+struct SecAbort : std::runtime_error {
+  using std::runtime_error::runtime_error;
+};
+
+// The User-Agent is passed on every call so the transport must send it (and tests can see it).
+using SecHttpGet = std::function<HttpResponse(const std::string& host, const std::string& path,
+                                              const std::string& user_agent)>;
 
 class SecClient {
  public:
@@ -74,6 +87,7 @@ struct SecSyncOptions {
   std::int64_t now = 0;
   int stale_days = 90;
   std::size_t commit_every = 500;
+  std::size_t max_consecutive_failures = 20;
 };
 struct SecSyncStats {
   std::size_t fresh = 0, fetched = 0, no_cik = 0, failed = 0;

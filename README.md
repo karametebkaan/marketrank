@@ -26,7 +26,7 @@ cp .env.example .env                                        # add Alpaca keys
 ./build/fluxscape --migrate-cache                           # one-time: import the old data/cache CSVs into data/lake
 ./build/fluxscape --maintain                                # compact partitions and apply data/lake/retention.json
 ./build/fluxscape --mode alpaca --refetch-full             # one-time: refetch every ticker's full stored history (repairs old split/dividend bases)
-./build/fluxscape --sync-sectors --universe snapshot --universe-size 10000  # fill sectors from SEC EDGAR SIC codes (run on its own)
+./build/fluxscape --sync-sectors --universe snapshot  # fill sectors from SEC EDGAR SIC codes (run on its own)
 python3 scripts/fetch_sp500.py                              # refresh the S&P 500 list
 ```
 
@@ -34,7 +34,7 @@ python3 scripts/fetch_sp500.py                              # refresh the S&P 50
 `data/universe/include.csv` / `exclude.csv` (one ticker per line) override the universe filters.
 
 Sectors: only S&P 500 names have a GICS sector in the snapshot. `--sync-sectors` fetches SEC EDGAR SIC
-codes for every ticker of the latest snapshot (honours `--universe`/`--universe-size`) into
+codes for every ticker of the newest snapshot, as rank loads it in replay mode (honours `--universe`; `--universe-size` is ignored, the cache is keyed by ticker), into
 `data/sectors/sec_sic.csv` and prints per-sector counts and the % Unclassified before and after. It
 needs `SEC_USER_AGENT="Your Name your@email"` in `.env` (SEC requires a contact), no Alpaca keys, and
 does not touch the lake. It is limited to 8 requests/s, caches for 90 days and resumes if interrupted;

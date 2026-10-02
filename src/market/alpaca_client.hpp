@@ -15,6 +15,7 @@ namespace fx {
 struct HttpResponse {
   int status = 0;
   std::string body;
+  int retry_after_s = 0;  // Retry-After header seconds, when the server sent one
 };
 
 using HttpGet = std::function<HttpResponse(const std::string& path_and_query)>;
