@@ -59,7 +59,7 @@
 \address{Graph AI LLC}
 
 \begin{abstract}
-We present \MR, a Markov-chain transition-probability solver for the stock market. Its states are stocks, its transition probabilities are the out-shares of estimated stock-to-stock dollar flows, and a stock's MarketRank score is the chain's stationary probability $\pi_i$, computed by damped power iteration. The stationary condition of the damped chain is the \emph{MarketRank Condition} $r_i=(1-p)\sum_{j}r_j\,T_{j\to i}/\sum_k T_{j\to k}+p/N$, with damping $p=0.15$; PageRank is the best-known instance of the same construction, applied to hyperlinks. Paired transactions between stocks are not public, so the flow matrix $T$ is \emph{estimated} from public daily bars. Each bar's signed dollar pressure splits net sellers' outflow over net buyers by a correlation-tilted gravity model, and the result is accumulated over the data window and pruned to a sparse graph. The engine is written in C++20 with OpenMP and gives bit-identical results for any thread count. It ranks a liquidity-ranked universe of 10,000 US tickers (about 6,200 active) from a DuckDB-catalogued Parquet lake. A 3D view, \FS, turns each frame into a landscape. Flux communities from a deterministic, warm-started Louvain become territories, which are ordered by spectral bisection along a generalized Hilbert curve and filled centre-out on a spiral. The surface is interpolated by inverse-distance weighting, smoothed by a centroidal-Voronoi-style relaxation and Gouraud-shaded. On real data the top of the ranking is the large-cap semiconductor and technology complex (MU, SNDK, NVDA, TSLA, \dots), and the landscape is stable between frames (median cell jump 0). The flows show sector structure, but the evaluated scores have no material predictive information coefficient for next-day returns. We state these limits plainly and outline calibration against observed account-level pairings from SEC Form 13F.
+We present \MR, a Markov-chain transition-probability solver for the stock market. Its states are stocks, its transition probabilities are the out-shares of estimated stock-to-stock dollar flows, and a stock's MarketRank score is the chain's stationary probability $\pi_i$, computed by damped power iteration. The stationary condition of the damped chain is the \emph{MarketRank Condition} $r_i=(1-p)\sum_{j}r_j\,T_{j\to i}/\sum_k T_{j\to k}+p/N$, with damping $p=0.15$; PageRank is the best-known instance of the same construction, applied to hyperlinks. Paired transactions between stocks are not public, so the flow matrix $T$ is \emph{estimated} from public daily bars. Each bar's signed dollar pressure splits net sellers' outflow over net buyers by a correlation-tilted gravity model, and the result is accumulated over the data window and pruned to a sparse graph. The engine is written in C++20 with OpenMP and gives bit-identical results for any thread count. It ranks a liquidity-ranked universe of 10,000 US tickers (about 6,200 active) from a DuckDB-catalogued Parquet lake. A 3D view, \FS, turns each frame into a landscape. Flux communities from a deterministic, warm-started Louvain become territories, which are ordered by spectral bisection along a generalized Hilbert curve and filled centre-out on a spiral. The surface is interpolated by inverse-distance weighting, smoothed by a centroidal-Voronoi-style relaxation and Gouraud-shaded. On real data the top of the ranking is the large-cap semiconductor and technology complex (MU, SNDK, NVDA, TSLA, \dots), and the landscape is stable between frames (median cell jump 0). Stock-to-stock flow stays within a sector 2.35 times as often as under shuffled sector labels, but the flux communities are not sectors (NMI 0.017). The MarketRank score has no predictive information coefficient for next-day returns (IC $+0.0035$, $t=0.54$): it describes where money concentrates and is not a return forecast. We state these limits plainly and outline calibration against observed account-level pairings from SEC Form 13F.
 \end{abstract}
 
 \begin{keyword}
@@ -209,9 +209,9 @@ where $\rho_{ij}$ is the Pearson correlation of returns over the last $W=60$ bar
 
 \paragraph{Data lake} Bars come from the Alpaca Market Data API v2~\cite{alpaca} with the consolidated SIP feed (which on the free plan is available beyond a 15-minute delay), rate-limited below the provider's limit. They are stored in a Hive-partitioned Parquet~\cite{parquet} lake (\texttt{tf=/year=/month=}) managed by an embedded DuckDB~\cite{duckdb} catalogue: writes are batched with a sequence number and published by atomic rename, reads keep the newest version of each bar, and re-adjusted histories (splits, dividends) are detected by comparing re-fetched closes and refetched in full.
 
-\paragraph{Universe} The snapshot universe is every tradable US-listed stock on Alpaca after dropping warrants, units and rights, ranked by median daily dollar volume over 20 days, keeping the top 10,000. ETFs stay as ordinary nodes. Sectors come from S\&P 500 GICS where known and SEC EDGAR~\cite{edgar} SIC codes otherwise. Every per-bar data structure is $O(Nk)$ or $O(NW)$; none is $O(N^2)$.
+\paragraph{Universe} The snapshot universe is every tradable US-listed stock on Alpaca after dropping warrants, units and rights, ranked by median daily dollar volume over 20 days, keeping the top 10,000. ETFs stay as ordinary nodes (Section~\ref{Section:etf}). Sectors come from S\&P 500 GICS where known and SEC EDGAR~\cite{edgar} SIC codes otherwise; after that fill, 95.4\% of the 10,000 tickers are classified, and 4,380 of them are ETF/Fund. Every per-bar data structure is $O(Nk)$ or $O(NW)$; none is $O(N^2)$.
 
-\paragraph{Runtime} On a 10,000-node synthetic daily frame the full core step (flux, pruning, solve, forecast) takes a mean of 155.9\,ms (worst 205.6\,ms) on 22 threads. On the real 10,000-ticker replay the evaluation harness reports 72--285\,ms per frame depending on the configuration, and the whole 15-configuration evaluation over 60 bars ran in 4\,min\,28\,s of wall time at a peak resident set of 1.58\,GB. Landscape timings are in Section~\ref{Section:results}.
+\paragraph{Runtime} On the real 10,000-ticker replay (250 daily bars, 22 threads), one core step of the \MR\ preset (flux, pruning, solve, forecast) takes 146.5\,ms, and the evaluation harness reports 76--282\,ms per step across configurations. The full 16-configuration evaluation over 60 bars runs in 5\,min\,07\,s at a peak resident set of 1.16\,GB. Server and landscape timings are in Section~\ref{Section:results}.
 
 %% ------------------------------------------------------------------
 \section{The \FS\ landscape}
@@ -268,41 +268,78 @@ z'=(1-\lambda)\,z+\lambda\,\frac{\sum a\rho z}{\sum a\rho},
 with 12 iterations and $\lambda=0.6$. Tall neighbours pull a pixel toward them, which fills the ring without moving any stock. On a $15\times15$ test lattice with one spike of 10 on a background of 1 and its 8-neighbour ring at 0, the ring dip (far background minus the ring minimum) is 0.358 without smoothing, $-0.031$ with a Gaussian of $\sigma=1$ cell and $-0.477$ with the CVT smoother. The negative values mean the ring ends \emph{above} the background: the smoother overshoots into a halo, and it does not conserve the mean height. The smoothing is for the eye only; the ranking table, the tooltips and the API always show exact, unsmoothed values.
 
 \subsection{Height: \texorpdfstring{$\pi$}{pi} relative to size}
-Raw $\pi$ is dominated by size, since the largest names carry the largest flows. The landscape height under the \MR\ preset is therefore $\log(\pi_i/s_i)$, where $s_i$ is stock $i$'s size share (its trailing median dollar volume over the sum over active stocks): it shows how much more money a stock attracts than its size predicts, balanced around 0. With uniform $s_i=1/N$ this reduces to the score $\log(\pi_i N)$, the height used for Figure~\ref{Figure:landscape}. The value also drives the spiral ordering and the mountain/crater rule, so changing it re-places the stocks; the ranking itself is always $\pi$.
+Raw $\pi$ is dominated by size, since the largest names carry the largest flows. The landscape height under the \MR\ preset is therefore $\log(\pi_i/s_i)$, where $s_i$ is stock $i$'s size share (its trailing median dollar volume over the sum over active stocks). A hill attracts more money than its size predicts, a valley less, and 0 is exactly as predicted; stocks without a size get no height. The value also drives the spiral ordering and the mountain/crater rule, so it decides placement as well as relief. The \emph{ranking} is always $\pi$ itself.
 
 \subsection{Gouraud-shaded mesh}
-Each lattice quad is split into two triangles with a fixed index buffer, so per frame only the vertex heights change. Vertex colours come from a diverging map symmetric around 0 (red for inflow, blue for outflow), scaled robustly by the 90th percentile of $|z|$ and soft-clipped by $\tanh$, and each triangle is Gouraud-shaded~\cite{gouraud} with relief lighting. The strongest flux arcs and the user's portfolio, as rings, are drawn on top.
+Each lattice quad is split into two triangles with a fixed index buffer, so per frame only the vertex heights change. Vertex colours come from a diverging map symmetric around 0 (red for inflow, blue for outflow), scaled robustly by the 90th percentile of $|z|$ and soft-clipped by $\tanh$, and each triangle is Gouraud-shaded~\cite{gouraud} with relief lighting. The strongest flux arcs and the user's portfolio are drawn on top. Each holding gets a \emph{directed depth arrow} from the smoothed surface to its exact, unsmoothed value: green and pointing up when the exact value lies above the surface, red and pointing down when it lies below.
+
+\paragraph{A fixed interface} The web interface has no model or landscape options. Its settings are fixed defaults: the \MR\ preset, height $\log(\pi/s)$, flux-community territories, the CVT smoother (12 iterations, $\lambda=0.6$) and subdivision 1. The exact sorted $\pi$ table is the truth; the surface is for the eye and the trend. Developer options remain on the command line and the HTTP API.
 
 %% ------------------------------------------------------------------
 \section{Results on real data}
 \label{Section:results}
 
-\paragraph{Data} The universe is the 10,000-ticker liquidity snapshot with daily (1d) bars from the lake, replayed offline; on the latest bar, 2026-10-01, 6,188 stocks are active under the \$1M liquidity floor.
+\paragraph{Data} The universe is the 10,000-ticker liquidity snapshot with 250 daily (1d) bars from the lake, replayed offline. After the SEC EDGAR fill, 95.4\% of tickers have a sector: 4,380 are ETF/Fund, 1,031 Financials, 961 Health Care, 808 Industrials and 641 Information Technology, and only 464 (4.6\%) are Unclassified. On the latest bar, 2026-10-01, 6,188 stocks are active under the \$1M liquidity floor. All measurements below use the \MR\ preset unless stated otherwise.
 
-\paragraph{Top of the ranking} Table~\ref{Table:top} lists the ten highest MarketRank scores $\pi N$. The top is the large-cap semiconductor and technology complex, together with TSLA, META and one leveraged inverse semiconductor ETF (SOXS). Below them come AMZN (\#13), GOOGL (\#18), AVGO (\#21), QQQ (\#24) and SPY (\#25). This is what the model should produce: the names that send and receive the most dollars, and that receive a large share of what their large counterparties pass on, accumulate the most rank.
+\paragraph{ETFs: a design position}
+\label{Section:etf}
+ETFs are deliberately kept in the universe and in the graph, uncapped and unfiltered, including leveraged and inverse products. In a liquidity-ranked universe they are about 44\% of the names. Where they dominate the flow, that \emph{is} the trend, and portfolios can hold ETFs as well as stocks. Leveraged and inverse products rank high because they are real dollar destinations: inflow to an inverse semiconductor ETF is a bearish signal on semiconductors.
+
+\paragraph{Top of the ranking} Table~\ref{Table:top} lists the ten highest MarketRank scores $\pi N$ with their heartbeat $\Delta\log(\pi N)$. The top is the large-cap semiconductor, memory and technology complex, together with TSLA, META and an inverse semiconductor ETF (SOXS). Among the top 50, 26 are Information Technology and 8 are exchange-traded products: SOXS (\#5), SOXL (\#11) and SQQQ (\#15), all 3$\times$ leveraged or inverse; QQQ and SPY, with $\pi N$ of about 38--40; and the commodity trusts SLV, USO and GLD, which the SEC SIC code 6221 places in Financials rather than ETF/Fund. The leveraged semiconductor products therefore outrank the broad index funds by a wide margin. This is what the model should produce: the names that send and receive the most dollars, and receive a large share of what their large counterparties pass on, accumulate the most probability.
 
 \begin{table}[t]
 \centering
-\caption{Top 10 by MarketRank score $\pi N$ (1 = average) on 2026-10-01, replay, 6,188 active stocks.}
+\caption{Top 10 by MarketRank score $\pi N$ (1 = average) on 2026-10-01, replay, 6,188 active stocks, SEC/GICS sectors. The heartbeat $\Delta\log(\pi N)$ is against the previous bar.}
 \label{Table:top}
-\small\setlength{\tabcolsep}{4pt}
-\begin{tabular}{rllr}
+\small\setlength{\tabcolsep}{3.5pt}
+\begin{tabular}{rllrr}
 \toprule
-\# & Ticker & Sector & $\pi N$\\
+\# & Ticker & Sector & $\pi N$ & $\Delta\log(\pi N)$\\
 \midrule
-1 & MU & Inf.\ Technology & 387.43\\
-2 & SNDK & Inf.\ Technology & 373.25\\
-3 & NVDA & Inf.\ Technology & 245.87\\
-4 & TSLA & Cons.\ Discretionary & 214.61\\
-5 & SOXS & ETF/Fund & 203.70\\
-6 & META & Comm.\ Services & 188.95\\
-7 & MSFT & Inf.\ Technology & 157.76\\
-8 & AAPL & Inf.\ Technology & 153.02\\
-9 & AMD & Inf.\ Technology & 151.37\\
-10 & INTC & Inf.\ Technology & 123.40\\
+1 & MU & Inf.\ Technology & 387.43 & $+0.01009$\\
+2 & SNDK & Inf.\ Technology & 373.25 & $+0.00320$\\
+3 & NVDA & Inf.\ Technology & 245.87 & $+0.00208$\\
+4 & TSLA & Cons.\ Discretionary & 214.61 & $-0.00062$\\
+5 & SOXS & ETF/Fund & 203.70 & $+0.00040$\\
+6 & META & Comm.\ Services & 188.95 & $-0.0009$\\
+7 & MSFT & Inf.\ Technology & 157.76 & $+0.0007$\\
+8 & AAPL & Inf.\ Technology & 153.02 & $+0.0012$\\
+9 & AMD & Inf.\ Technology & 151.37 & $-0.0003$\\
+10 & INTC & Inf.\ Technology & 123.40 & $-0.0020$\\
 \bottomrule
 \end{tabular}
 \end{table}
+
+\paragraph{A slice of the real graph} Figure~\ref{Figure:slice} is the real-data counterpart of the A/B/C example (Figure~\ref{Figure:abc}). It shows the top-$\pi$ stock, MU, with its five strongest partners by raw flux in both directions, on the same bar. The arrows are estimated dollar flows accumulated over the data window, not observed trades. ``Slice $\pi$'' is the MRC re-solved on these six stocks alone with $p=0.15$. MU takes a third of the slice's probability (0.333), although within the slice it sends more (\$10.0B) than it receives (\$7.5B): the chain counts out-shares, not net dollars, and every partner sends MU the largest share of its slice outflow. TSLA is second of the six in the full graph ($\pi N$ 214.6) but last in the slice, so its global standing rests on money from stocks outside the slice.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[>={Stealth[length=1.9mm]},
+  st/.style={draw,thick,rounded corners=2pt,fill=gray!8,align=center,font=\scriptsize,inner sep=2pt},
+  fl/.style={->,thick,draw=black!65,bend left=16},
+  lb/.style={font=\tiny,fill=white,inner sep=0.6pt}]
+  \node[st,fill=red!12] (MU) at (0,0) {\textbf{MU}\\0.333 $\cdot$ 387.4};
+  \node[st] (MSFT) at (90:2.75) {\textbf{MSFT}\\0.157 $\cdot$ 157.8};
+  \node[st] (AAPL) at (162:2.75) {\textbf{AAPL}\\0.130 $\cdot$ 153.0};
+  \node[st] (TSLA) at (234:2.75) {\textbf{TSLA}\\0.114 $\cdot$ 214.6};
+  \node[st] (SOXS) at (306:2.75) {\textbf{SOXS}\\0.152 $\cdot$ 203.7};
+  \node[st] (SPCX) at (18:2.75) {\textbf{SPCX}\\0.114 $\cdot$ 105.3};
+  \draw[fl] (MU) to node[lb]{2.53} (MSFT);
+  \draw[fl] (MSFT) to node[lb]{1.15} (MU);
+  \draw[fl] (MU) to node[lb]{2.39} (AAPL);
+  \draw[fl] (AAPL) to node[lb]{1.20} (MU);
+  \draw[fl] (MU) to node[lb]{0.93} (TSLA);
+  \draw[fl] (TSLA) to node[lb]{2.46} (MU);
+  \draw[fl] (MU) to node[lb]{2.38} (SOXS);
+  \draw[fl] (SOXS) to node[lb]{0.88} (MU);
+  \draw[fl] (MU) to node[lb]{1.77} (SPCX);
+  \draw[fl] (SPCX) to node[lb]{1.83} (MU);
+  \draw[->,thick,draw=black!65] (TSLA) to node[lb]{1.04} (SOXS);
+  \draw[->,thick,draw=black!65] (TSLA) to node[lb]{0.73} (AAPL);
+\end{tikzpicture}
+\caption{The real graph around MU on 2026-10-01: MU and its five strongest partners, with the 12 strongest of the 30 estimated flows among them in \$B (81\% of the slice's dollars). Each box gives the slice $\pi$ (the MRC re-solved on the six stocks, $p=0.15$) and the global $\pi N$. Data: \texttt{docs/img/marketrank-slice.json}.}
+\label{Figure:slice}
+\end{figure}
 
 \begin{figure*}[t]
 \centering
@@ -311,49 +348,117 @@ Each lattice quad is split into two triangles with a fixed index buffer, so per 
 \label{Figure:landscape}
 \end{figure*}
 % TODO(fig-final): replace figs/fluxscape-cvt.png with the screenshot of the final UI (controller will supply it).
-% TODO(fig): add the README's graph-slice figure once docs/img/marketrank-slice.svg exists,
-% converted to PDF (e.g. figs/marketrank-slice.pdf); it does not exist yet.
 
-\paragraph{Contrast with hotness} The engine's earlier ``money-flow'' preset reads a different quantity, hotness relative to size, $h_i=\pi_i/\pi^{\mathrm{ref}}_i-1$ with $\pi^{\mathrm{ref}}$ proportional to trailing median dollar volume, on a chain in which net buyers retain part of their inflow. Its top 10 on the same data are TNON, KOD, DFNS, NFEGP, SOAR, BNAI, WETO, LHSW, AGEN and GRML: all small, all without a known sector. Dividing by size rewards any stock whose flow is large relative to a small denominator, so a single volume spike in an illiquid name outranks steady flow in a mega-cap. The ratio is informative, but as a primary ranking it is dominated by noise in the smallest names, which is why \MR\ ranks by $\pi$ and uses size only for the landscape height.
+\paragraph{Contrast with hotness} The engine's earlier ``money-flow'' preset reads a different quantity, hotness relative to size, $h_i=\pi_i/\pi^{\mathrm{ref}}_i-1$ with $\pi^{\mathrm{ref}}$ proportional to trailing median dollar volume, on a chain in which net buyers retain part of their inflow. Its top 10 on the same data are TNON, KOD, DFNS, NFEGP, SOAR, BNAI, WETO, LHSW, AGEN and GRML: all small names. Dividing by size rewards any stock whose flow is large relative to a small denominator, so a single volume spike in an illiquid name outranks steady flow in a mega-cap. The ratio is informative, but as a primary ranking it is dominated by noise in the smallest names, which is why \MR\ ranks by $\pi$ and uses size only for the landscape height.
 
-\paragraph{Evaluation} The harness runs the pipeline over the last 60 of 251 daily bars (10,000 nodes) for a grid of configurations and reports, per configuration: the \emph{floor share} (fraction of active stocks at the teleport floor), the Gini coefficient of $\pi$, \emph{sector coherence} (share of off-diagonal raw edge weight between stocks of the same known sector), \emph{structure gain} ($1-$ Spearman of $\pi$ against inflow share; near 0 means the chain has collapsed to plain inflow), and the information coefficient (IC: the mean per-bar Spearman correlation with the next bar's return, with its $t$-statistic) of the $+1$-bar forecast score and of hotness $h$. Table~\ref{Table:eval} gives the result. Here ``legacy'' is the first milestone (dollar pressure, no pruning of inbound edges, no retention); +A to +E switch on, one at a time, relative pressure, excess-over-gravity lift, $k_{\mathrm{in}}=10$, size or long-run hotness references, and retention; ``defaults'' has them all; ``money-flow'' is dollar pressure with two-sided pruning and retention. The \MR\ preset was added to the grid after this run and has not yet been evaluated.
+\paragraph{Evaluation} The harness runs the pipeline over the last 60 of 250 daily bars (10,000 nodes) for 16 configurations. For each configuration it reports:
+\begin{itemize}
+\item the \emph{floor share}, the fraction of active stocks at the teleport floor;
+\item the Gini coefficient of $\pi$;
+\item \emph{sector coherence}, defined below;
+\item \emph{structure gain}, $1-$ Spearman of $\pi$ against inflow share (near 0 means the chain has collapsed to plain inflow);
+\item the information coefficient (IC), the mean daily Spearman correlation with the next bar's return, with $t=\bar{x}/(s/\sqrt{n})$, for the $+1$-bar forecast score and for hotness $h$.
+\end{itemize}
+Table~\ref{Table:eval} gives the result. ``Legacy'' is the first milestone (dollar pressure, no inbound pruning, no retention). +A to +E switch on, one at a time, relative pressure, excess-over-gravity lift, $k_{\mathrm{in}}=10$, size or long-run hotness references, and retention. ``Defaults'' has them all, and ``money-flow'' is dollar pressure with two-sided pruning and retention.
 
 \begin{table*}[t]
 \centering
-\caption{Evaluation grid on real data: last 60 of 251 daily bars, 10,000 nodes, 22 threads. IC is the mean per-bar Spearman correlation with the next bar's close-to-close return; $t$ its $t$-statistic. The last column is the mean core frame time.}
+\caption{Evaluation grid on real data: last 60 of 250 daily bars, 10,000 nodes, 22 threads, SEC sectors. IC is the mean daily Spearman correlation with the next bar's close-to-close return; $t$ its $t$-statistic. Coherence is the engine metric (ETF/Fund counted as a sector; see Table~\ref{Table:coh}). The last column is the mean core step time.}
 \label{Table:eval}
-\small\setlength{\tabcolsep}{5pt}
+\small\setlength{\tabcolsep}{4pt}
 \begin{tabular}{lrrrrrrrrr}
 \toprule
 Configuration & Floor & Gini & Coherence & Structure & IC(score) & $t$ & IC($h$) & $t$ & ms/frame\\
 \midrule
-legacy             & 0.947 & 0.847 & 0.378 & 0.642 & $+0.0093$ & $+1.94$ & $-0.0240$ & $-3.95$ & 186.9\\
-+A relative        & 0.949 & 0.843 & 0.000 & 0.643 & $+0.0146$ & $+5.04$ & $-0.0471$ & $-10.98$ & 189.0\\
-+B excess          & 0.929 & 0.843 & 0.358 & 0.591 & $+0.0096$ & $+1.83$ & $-0.0267$ & $-4.27$ & 113.9\\
-+C $k_{\mathrm{in}}=10$ & 0.850 & 0.840 & 0.365 & 0.419 & $+0.0099$ & $+1.72$ & $-0.0274$ & $-4.30$ & 247.0\\
-+D size            & 0.947 & 0.847 & 0.378 & 0.642 & $+0.0093$ & $+1.94$ & $-0.0043$ & $-0.53$ & 190.1\\
-+D longrun         & 0.947 & 0.847 & 0.378 & 0.642 & $+0.0093$ & $+1.94$ & $+0.0031$ & $+0.81$ & 284.7\\
-+E retention       & 0.001 & 0.760 & 0.378 & 0.628 & $-0.0095$ & $-0.72$ & $-0.0243$ & $-1.18$ & 194.9\\
-defaults           & 0.001 & 0.743 & 0.224 & 0.429 & $-0.0164$ & $-1.20$ & $-0.0195$ & $-1.30$ & 75.9\\
-defaults relative  & 0.002 & 0.728 & 0.125 & 0.318 & $-0.0092$ & $-0.66$ & $-0.0306$ & $-3.54$ & 75.3\\
-defaults+longrun   & 0.001 & 0.743 & 0.224 & 0.429 & $-0.0164$ & $-1.20$ & $-0.0041$ & $-0.28$ & 110.2\\
-defaults+netflow   & 0.001 & 0.743 & 0.224 & 0.429 & $-0.0164$ & $-1.20$ & $-0.0103$ & $-0.36$ & 71.9\\
-money-flow         & 0.001 & 0.732 & 0.360 & 0.508 & $-0.0155$ & $-1.10$ & $-0.0057$ & $-0.91$ & 164.6\\
-money-flow+netflow & 0.001 & 0.732 & 0.360 & 0.508 & $-0.0155$ & $-1.10$ & $-0.0136$ & $-0.49$ & 161.1\\
-defaults+volscale  & 0.002 & 0.742 & 0.152 & 0.369 & $-0.0203$ & $-1.61$ & $-0.0144$ & $-1.09$ & 72.0\\
-money-flow+volscale& 0.002 & 0.747 & 0.254 & 0.493 & $-0.0217$ & $-1.66$ & $-0.0050$ & $-0.79$ & 160.7\\
+legacy             & 0.947 & 0.847 & 0.226 & 0.642 & $+0.0093$ & $+1.95$ & $-0.0240$ & $-3.95$ & 181.0\\
++A relative        & 0.949 & 0.843 & 0.156 & 0.643 & $+0.0144$ & $+5.04$ & $-0.0471$ & $-11.03$ & 187.1\\
++B excess          & 0.929 & 0.843 & 0.207 & 0.591 & $+0.0095$ & $+1.81$ & $-0.0267$ & $-4.27$ & 116.2\\
++C $k_{\mathrm{in}}=10$ & 0.850 & 0.840 & 0.226 & 0.419 & $+0.0098$ & $+1.71$ & $-0.0274$ & $-4.30$ & 244.2\\
++D size            & 0.947 & 0.847 & 0.226 & 0.642 & $+0.0093$ & $+1.95$ & $-0.0043$ & $-0.53$ & 187.0\\
++D longrun         & 0.947 & 0.847 & 0.226 & 0.642 & $+0.0093$ & $+1.95$ & $+0.0032$ & $+0.84$ & 282.1\\
++E retention       & 0.001 & 0.760 & 0.226 & 0.628 & $-0.0094$ & $-0.72$ & $-0.0243$ & $-1.18$ & 198.9\\
+defaults           & 0.001 & 0.743 & 0.148 & 0.429 & $-0.0164$ & $-1.20$ & $-0.0195$ & $-1.30$ & 79.1\\
+defaults relative  & 0.002 & 0.728 & 0.145 & 0.318 & $-0.0092$ & $-0.66$ & $-0.0306$ & $-3.54$ & 82.8\\
+defaults+longrun   & 0.001 & 0.743 & 0.148 & 0.429 & $-0.0164$ & $-1.20$ & $-0.0041$ & $-0.28$ & 117.5\\
+defaults+netflow   & 0.001 & 0.743 & 0.148 & 0.429 & $-0.0164$ & $-1.20$ & $-0.0103$ & $-0.36$ & 77.7\\
+money-flow         & 0.001 & 0.732 & 0.257 & 0.508 & $-0.0155$ & $-1.10$ & $-0.0057$ & $-0.91$ & 170.6\\
+money-flow+netflow & 0.001 & 0.732 & 0.257 & 0.508 & $-0.0155$ & $-1.10$ & $-0.0136$ & $-0.49$ & 172.9\\
+defaults+volscale  & 0.002 & 0.742 & 0.120 & 0.369 & $-0.0203$ & $-1.61$ & $-0.0144$ & $-1.09$ & 76.3\\
+money-flow+volscale& 0.002 & 0.747 & 0.180 & 0.493 & $-0.0217$ & $-1.66$ & $-0.0050$ & $-0.79$ & 164.5\\
+\midrule
+\textbf{marketrank} & \textbf{0.714} & \textbf{0.832} & \textbf{0.222} & \textbf{0.248} & $\mathbf{+0.0035}$ & $\mathbf{+0.54}$ & $\mathbf{-0.0151}$ & $\mathbf{-1.96}$ & \textbf{146.5}\\
 \bottomrule
 \end{tabular}
 \end{table*}
 
-The honest reading is as follows. \emph{Structure exists}: with dollar pressure, raw edge weight between stocks of the same sector is 0.36--0.38 of the total, and structure gain is 0.3--0.6 in every configuration, so the pruned multi-hop chain is not just a restatement of who received the most inflow. (Coherence 0.000 under relative pressure alone is an outlier we have not explained.) \emph{Prediction does not}: every IC is at most a few hundredths in magnitude. The largest $|t|$ values belong to configurations without retention, where 85--95\% of stocks sit at the teleport floor, and they have opposite signs for the score and for $h$ (for example $+0.015$ and $-0.047$ under relative pressure), consistent with short-term reversal in a degenerate chain rather than with a usable signal. In the non-degenerate configurations (floor share near 0) only one IC reaches $|t|>2$, the hotness of defaults with relative pressure ($-0.031$, $t=-3.54$), and it is again negative. Open-to-open variants (decide at the close, fill at the next open), also in the log, give the same picture. We read the predictive IC as approximately zero. \MR\ is a description of where estimated money sits, not a return forecast.
+\paragraph{Reading the evaluation} The \MR\ preset has floor share 0.714, Gini 0.832, structure gain 0.248, score IC $+0.0035$ ($t=0.54$) and hotness IC $-0.015$ ($t=-1.96$). The open-to-open variants (decide at the close, fill at the next open, exit at the following open) are similar: $+0.0057$ ($t=0.90$) and $-0.014$ ($t=-1.85$). Its score IC is approximately zero. \MR\ $\pi$ describes where money concentrates; it is \emph{not} a next-day return forecast.
 
-\paragraph{Landscape} Figure~\ref{Figure:landscape} shows the real landscape on 2026-10-01 with flux-community territories: four broad mountains, the strongest flux arcs and the portfolio rings. At Louvain resolution 1.0 the real flux graph forms a median of 4 communities (4--5) with modularity 0.13 (0.09--0.25) over 49 re-clusters; it is a weakly modular graph.
+The one significant pattern is a reversal in hotness under the legacy and relative-pressure configurations: names that are hot today underperform tomorrow. IC($h$) is $-0.047$ ($t=-11.0$) under +A relative, between $-0.024$ and $-0.027$ ($t\approx-4$) under legacy, +B and +C, and $-0.031$ ($t=-3.54$) under defaults with relative pressure. It survives the tradeable open-to-open timing ($t=-9.0$ for +A relative). The only significant positive score IC is +A relative ($+0.014$, $t=5.0$; open-to-open $t=4.6$), a configuration in which 95\% of stocks sit at the teleport floor. Sixty daily cross-sections are a short sample, and these $t$-statistics ignore cross-sectional dependence beyond the daily IC, so they are probably optimistic.
 
+\paragraph{Sector coherence} The engine's coherence is the share of slow-flux edge weight, over edges between two active stocks with a known sector, that stays within a sector:
+\[
+\mathrm{coh}=\frac{\sum_{i\to j}\mathrm{raw}_{ij}\,[\mathrm{sec}_i=\mathrm{sec}_j]}{\sum_{i\to j}\mathrm{raw}_{ij}},
+\]
+averaged over the evaluation frames. Unclassified names are excluded, but ETF/Fund counts as a sector. Table~\ref{Table:coh} compares it with a null in which sector labels are permuted among the same nodes (5 seeds). Under the engine definition every configuration scores \emph{below} its shuffled baseline (\MR\ 0.222 against 0.263), except money-flow, which is level with it (0.257 against 0.252). ETF/Fund is 44\% of the nodes, so it dominates the random-label baseline, while the flux runs between ETFs and single stocks more often than random labels predict, which is plausible because a sector or index ETF trades with its constituents. With ETF/Fund and Unclassified both removed, that is, on stock-to-stock flow only, coherence is well above the null: 0.288 against 0.123 (2.35$\times$) under \MR, and 0.333 against 0.116 (2.9$\times$) under money-flow. This is the positive structural result: stock-to-stock edges are sector-enriched. An earlier figure of about 0.36 was computed when only some 5--9\% of names were classified, mostly the liquid S\&P 500, and is not comparable.
+
+\begin{table}[t]
+\centering
+\caption{Sector coherence against a shuffled-label null (mean of 5 permutations), same frames as Table~\ref{Table:eval}. ``Engine'' counts ETF/Fund as a sector; ``stocks only'' drops ETF/Fund and Unclassified. Rows with the same transition matrix are merged.}
+\label{Table:coh}
+\footnotesize\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lrrrrr}
+\toprule
+ & \multicolumn{2}{c}{Engine} & \multicolumn{3}{c}{Stocks only}\\
+\cmidrule(lr){2-3}\cmidrule(lr){4-6}
+Configuration & coh & null & coh & null & ratio\\
+\midrule
+legacy, +D, +E      & 0.226 & 0.254 & 0.289 & 0.115 & 2.53\\
++A relative         & 0.156 & 0.238 & 0.168 & 0.143 & 1.17\\
++B excess           & 0.208 & 0.254 & 0.264 & 0.115 & 2.29\\
++C $k_{\mathrm{in}}=10$ & 0.226 & 0.254 & 0.289 & 0.115 & 2.51\\
+defaults            & 0.148 & 0.236 & 0.183 & 0.130 & 1.41\\
+defaults relative   & 0.145 & 0.233 & 0.176 & 0.134 & 1.31\\
+money-flow          & 0.257 & 0.252 & 0.333 & 0.116 & 2.87\\
+defaults+volscale   & 0.120 & 0.261 & 0.147 & 0.130 & 1.13\\
+money-flow+volscale & 0.180 & 0.281 & 0.234 & 0.118 & 1.99\\
+\textbf{marketrank} & \textbf{0.222} & \textbf{0.263} & \textbf{0.288} & \textbf{0.123} & \textbf{2.35}\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Flux communities are not sectors} On the last bar the flux graph has 4 communities plus a loose pool of 22 names, with modularity 0.109; every one of the 245 landscape frames has exactly 4 communities, with median modularity 0.150. Against SEC sectors, over the 3,738 active, classified, non-ETF stocks outside the loose pool, the normalized mutual information is 0.0168 and the adjusted Rand index 0.0079, against a shuffled baseline of 0.0021 and 0.0005 (20 seeds). The agreement is above chance but negligible in absolute terms. Table~\ref{Table:comm} shows that each community's leading sectors track the universe base rates (Financials 18.9\%, Health Care 16.7\%, Industrials 16.3\%, IT 13.0\%) to within a few points; the strongest tilt is Industrials at 23\% in community 5. Restricted to the 1,580 off-floor stocks, NMI and ARI roughly double, to 0.028 and 0.015, which is still small. Money rotates across sector lines, and the partition probably reflects liquidity and flow regimes rather than industries. The territories therefore show structure that a sector map does not; we do not claim that they recover sectors.
+
+\begin{table}[t]
+\centering
+\caption{Flux communities on 2026-10-01. Size is all active members; the top-2 sector shares are among each community's classified non-ETF stocks (Fin.\ = Financials, Indust.\ = Industrials, IT = Information Technology).}
+\label{Table:comm}
+\footnotesize\setlength{\tabcolsep}{2.5pt}
+\begin{tabular}{rrrrll}
+\toprule
+Comm. & Size & ETF & Stocks & Top-1 & Top-2\\
+\midrule
+3 & 2401 & 620 & 1697 & Fin.\ 21\% & Health 17\%\\
+5 & 1506 & 614 & 843 & Indust.\ 23\% & IT 17\%\\
+0 & 1231 & 720 & 484 & Indust.\ 19\% & Health 17\%\\
+1 & 1028 & 284 & 714 & Fin.\ 23\% & Health 17\%\\
+loose & 22 & 11 & 9 & Fin.\ 44\% & Staples 11\%\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Landscape} Figure~\ref{Figure:landscape} shows the real landscape on 2026-10-01 with flux-community territories, the strongest flux arcs and the portfolio holdings.
 
 \paragraph{Stability} Measured over the real replay (245 landscape frames, 48 re-clusters): between re-clusters the median jump of a stock is 0 cells (p90 also 0) and 85\% of stocks keep their cell on average (96\% on bars where the lattice size is unchanged), against a 13-cell median jump and 4\% kept before hysteresis and spiral ordering. At a re-cluster 39\% keep their cell (median jump 15 cells). Community labels persist for 74\% of stocks per re-cluster (median 76\%, worst 47\%), against about 52\% before the warm start and matching. Mountains and craters stay coherent: the median Spearman correlation of value against distance from the territory centre is 0.98.
 
-\paragraph{Performance} The server is ready to serve about 25\,s after start on the 10,000-ticker replay. A landscape frame takes 10--14\,ms on top of the core step, and a Louvain re-cluster about 35\,ms (in the earlier stability measurement, a median of 28\,ms at resolution 1.0 and 37\,ms at 1.5); only re-cluster frames pay it.
+\paragraph{Performance} Measured on the server with the \MR\ preset, 10,000 nodes, 250 daily bars and 22 threads:
+\begin{itemize}
+\item time to ready is 42.3\,s, from process start to the status endpoint reporting ready. That includes the DuckDB load, the panel build, 249 core steps and 245 landscapes.
+\item a core model step takes about 146\,ms, so the 249 sequential steps (about 36\,s) dominate start-up.
+\item peak memory is 1.34\,GB: the panel plus up to 300 cached landscape frames.
+\item a landscape frame takes a median of 23.1\,ms (mean 31.2\,ms).
+\item a Louvain re-cluster takes a median of 54.8\,ms on the 49 re-clustering frames; only those frames pay it.
+\end{itemize}
+The 60-bar, 16-configuration evaluation runs in 5\,min\,07\,s.
 
 %% ------------------------------------------------------------------
 \section{Limitations and future work}
@@ -361,9 +466,9 @@ The honest reading is as follows. \emph{Structure exists}: with dollar pressure,
 
 \paragraph{The flows are inferred} $T$ is an estimate built from simultaneous price and dollar-volume moves (Section~\ref{Section:flows}), not paired transactions. The rank inherits every assumption of Equation~(\ref{eqn:gravity}), and it cannot distinguish a true rotation from two unrelated stocks that moved in opposite directions on the same day.
 
-\paragraph{Teleport floor} Under the \MR\ preset 70.9\% (about 71\%) of active stocks sit at the teleport floor: each source reaches at most 64 of the 256 largest sinks per bar, and two-sided pruning keeps 20 out- and 10 in-edges, so most small stocks never receive kept inflow and hold only teleport mass. The ranking is informative at the top and flat below it.
+\paragraph{Teleport floor} Under the \MR\ preset 71\% of active stocks (floor share 0.714) sit at the teleport floor. This comes from the sparsity of the estimate, not from the chain: each source reaches at most 64 of the 256 largest sinks per bar, and two-sided pruning keeps 20 out- and 10 in-edges, so most small stocks never receive kept inflow and hold only teleport mass. The ranking is informative at the top and flat below it. Because floor stocks get the same $\pi$ whatever their size, small floor names read slightly above 0 under the $\log(\pi/s)$ height: a mild relief from teleport mass alone, not a signal. The structure gain of the preset is also low (0.248), so $\pi$ is close to the inflow ranking.
 
-\paragraph{Leveraged ETFs} Leveraged and inverse ETFs such as SOXS combine large dollar volume with large returns, so they produce large $|\phi|$ and rank high; they are ordinary nodes today, although their flows are partly mechanical.
+\paragraph{Leveraged and inverse products} They are deliberately kept (Section~\ref{Section:etf}), but their flows are partly mechanical: daily rebalancing and retail trading make them flow magnets independent of fundamentals. Their rank should be read as a directional signal about their underlying, not as a quality of the product.
 
 \paragraph{Planned work}
 \begin{itemize}
@@ -379,7 +484,7 @@ The honest reading is as follows. \emph{Structure exists}: with dollar pressure,
 \section{Conclusion}
 \label{Section:conclusion}
 
-\MR\ is a Markov-chain transition-probability solver for money. A stock's score is its stationary probability: the share of the market's estimated dollar flow that settles on it in the steady state of a damped chain. PageRank is the best-known instance of the same idea. The model is small enough to check by hand (the three-stock example) and the engine is fast and deterministic enough to rank 10,000 tickers bit-identically on any thread count. \FS\ makes the result legible as a stable landscape of flux communities. On real data the ranking puts the large-cap semiconductor and technology complex on top and the flow graph shows sector structure, but the evaluated scores have no material predictive power for next-day returns. The flows are inferred; calibrating them against observed pairings, starting with 13F holdings changes, is the most important next step.
+\MR\ is a Markov-chain transition-probability solver for money. A stock's score is its stationary probability: the share of the market's estimated dollar flow that settles on it in the steady state of a damped chain. PageRank is the best-known instance of the same idea. The model is small enough to check by hand (the three-stock example) and the engine is fast and deterministic enough to rank 10,000 tickers bit-identically on any thread count. \FS\ makes the result legible as a stable landscape of flux communities. On real data the ranking puts the large-cap semiconductor and technology complex on top, together with the leveraged products that trade on it. Stock-to-stock flow is sector-enriched (2.35 times the shuffled baseline), yet the flux communities are not sectors, and the score has no predictive power for next-day returns: it describes where money concentrates, not where returns go. The flows are inferred; calibrating them against observed pairings, starting with 13F holdings changes, is the most important next step.
 
 \section*{Software availability}
 \MR\ is a C++20 program; the model, the evaluation harness and the \FS\ view described here are those of the current implementation.
