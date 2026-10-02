@@ -236,8 +236,8 @@ function drawSections(prof, nodes, shock, vmax) {
   const what = shock ? 'Δh' : heightName().short;
   drawProfile($('secX'), prof.alongX, 'x', row, vmax, '', $('secXTitle'));
   drawProfile($('secY'), prof.alongY, 'y', col, vmax, '', $('secYTitle'));
-  $('secXTitle').textContent = `x-section · row ${prof.row + 1}/${L.rows} · ${row.length} stocks · ${what}`;
-  $('secYTitle').textContent = `y-section · column ${prof.col + 1}/${L.cols} · ${col.length} stocks · ${what}`;
+  $('secXTitle').textContent = `x-section · row ${prof.row + 1}/${L.rows} · ${row.length} stocks · ${what} · ↑↓ moves`;
+  $('secYTitle').textContent = `y-section · column ${prof.col + 1}/${L.cols} · ${col.length} stocks · ${what} · ←→ moves`;
 }
 
 // ---- Label decluttering: holdings first, then the highest, then the lowest values; a label is skipped when its
@@ -306,7 +306,8 @@ function viewProps(mode, lattice) {
     views: new deck.OrbitView({ id: `v-${mode}`, orbitAxis: 'Z', fovy: 40, orthographic: v.ortho }),
     initialViewState: { target: [lattice.cols / 2, lattice.rows / 2, 0], rotationX: v.rotationX, rotationOrbit: v.rotationOrbit,
       zoom: fit, minZoom: -6, maxZoom: 12 },
-    controller: v.rotate ? true : { dragRotate: false, touchRotate: false, keyboard: { rotateSpeedX: 0, rotateSpeedY: 0 } },
+    // Sections: left-drag moves the crosshair (not the camera); the wheel still zooms.
+    controller: v.rotate ? true : { dragRotate: false, touchRotate: false, dragPan: mode !== 'sections', keyboard: mode !== 'sections' },
   };
 }
 function setView(mode) {
@@ -319,18 +320,30 @@ function setView(mode) {
     render();
   }
 }
+// Moves the section crosshair to the clicked / dragged lattice cell (Sections view only).
+function moveCut(info) {
+  if (S.view !== 'sections' || !info || !info.coordinate || !S.frame) return;
+  const L = S.frame.lattice;
+  const col = Math.max(0, Math.min(L.cols - 1, Math.floor(info.coordinate[0])));
+  const row = Math.max(0, Math.min(L.rows - 1, Math.floor(info.coordinate[1])));
+  if (S.sec && S.sec.col === col && S.sec.row === row) return;
+  S.sec = { col, row };
+  render();
+}
+function stepCut(dc, dr) {
+  if (S.view !== 'sections' || !S.frame || !S.sec) return;
+  const L = S.frame.lattice;
+  S.sec = { col: Math.max(0, Math.min(L.cols - 1, S.sec.col + dc)), row: Math.max(0, Math.min(L.rows - 1, S.sec.row + dr)) };
+  render();
+}
 function initDeck(lattice) {
   const el = $('canvas');
   S.deck = new deck.Deck({
     parent: el,
     ...viewProps(S.view || '3d', lattice),
     onViewStateChange: () => { scheduleLabels(); },
-    onClick: (info) => {
-      if (S.view !== 'sections' || !info.coordinate || !S.frame) return;
-      const L = S.frame.lattice;
-      S.sec = { col: Math.max(0, Math.min(L.cols - 1, Math.floor(info.coordinate[0]))), row: Math.max(0, Math.min(L.rows - 1, Math.floor(info.coordinate[1]))) };
-      render();
-    },
+    onClick: (info) => moveCut(info),
+    onDrag: (info) => moveCut(info),
     getTooltip: ({ object }) => (object && object.ticker
       ? `${object.ticker} · ${object.sector}\n${clusterLine(object)}MarketRank π·N ${fmt(object.mr, 3)}  heartbeat ${fmtSigned(object.pulse, 4)}\nπ ${object.pi === null ? 'n/a' : object.pi.toExponential(3)}  h ${fmt(object.h, 3)}\ndisplayed height (${heightName().short}) ${fmtSigned(object.hd, 3)}${holdingLine(object)}`
       : null),
@@ -751,6 +764,21 @@ function drawPath(r) {
 function wire() {
   document.querySelectorAll('#viewbar [data-view]').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
   $('viewReset').addEventListener('click', () => setView(S.view || '3d'));
+  // Arrow keys step the section cuts (Shift: 5 cells); ignored while typing in a field.
+  window.addEventListener('keydown', (e) => {
+    if (S.view !== 'sections' || e.target.closest('input, textarea, select')) return;
+    const k = e.shiftKey ? 5 : 1;
+    const d = { ArrowLeft: [-k, 0], ArrowRight: [k, 0], ArrowUp: [0, -k], ArrowDown: [0, k] }[e.key];
+    if (!d) return;
+    e.preventDefault();
+    // ↑ moves the row cut up on screen, whichever way the view maps the lattice's y axis.
+    let flip = 1;
+    try {
+      const vp = S.deck.getViewports()[0], L = S.frame.lattice;
+      flip = vp.project([0, L.rows, 0])[1] < vp.project([0, 0, 0])[1] ? -1 : 1;
+    } catch (err) { flip = 1; }
+    stepCut(d[0], flip * d[1]);
+  });
   $('pathClose').addEventListener('click', () => {
     closePath();
     if (S.highlight !== null) { S.highlight = null; document.querySelectorAll('.toprow').forEach((el) => el.classList.remove('sel')); render(); }
