@@ -49,8 +49,10 @@ TEST_CASE("fetch_bars follows pages, URL-encodes the token and retries 429") {
     return {200, kPage2};
   };
   AlpacaClient client(test_config(), fake);
-  auto bars = client.fetch_bars({"AAPL", "NVO"}, "1Day", utc_seconds(2026, 9, 29),
-                                utc_seconds(2026, 10, 1));
+  auto res = client.fetch_bars({"AAPL", "NVO"}, "1Day", utc_seconds(2026, 9, 29),
+                               utc_seconds(2026, 10, 1));
+  const auto& bars = res.bars;
+  CHECK(res.stale.empty());
   CHECK(bars.at("AAPL").size() == 2);
   CHECK(bars.at("NVO").size() == 1);
   REQUIRE(paths.size() == 3);
@@ -60,11 +62,53 @@ TEST_CASE("fetch_bars follows pages, URL-encodes the token and retries 429") {
   CHECK(paths[2].find("page_token=QUFQTHxE%2B%2F%3D") != std::string::npos);
 }
 
-TEST_CASE("fetch_bars throws on 403 and after exhausting retries") {
-  AlpacaClient forbidden(test_config(), [](const std::string&) { return HttpResponse{403, "no"}; });
-  CHECK_THROWS_AS(forbidden.fetch_bars({"AAPL"}, "1Day", 0, 1), std::runtime_error);
-  AlpacaClient down(test_config(), [](const std::string&) { return HttpResponse{503, ""}; });
-  CHECK_THROWS_AS(down.fetch_bars({"AAPL"}, "1Day", 0, 1), std::runtime_error);
+TEST_CASE("fetch_bars marks failing symbols stale on 403 and exhausted retries") {
+  int calls = 0;
+  AlpacaClient forbidden(test_config(), [&](const std::string&) {
+    ++calls;
+    return HttpResponse{403, "no"};
+  });
+  auto r = forbidden.fetch_bars({"AAPL"}, "1Day", 0, 1);
+  CHECK(r.bars.empty());
+  CHECK(r.stale == std::vector<std::string>{"AAPL"});
+  CHECK(calls == 1);
+
+  calls = 0;
+  auto cfg = test_config();
+  cfg.max_retries = 6;
+  AlpacaClient down(cfg, [&](const std::string&) {
+    ++calls;
+    return HttpResponse{503, ""};
+  });
+  auto r2 = down.fetch_bars({"AAPL"}, "1Day", 0, 1);
+  CHECK(r2.stale == std::vector<std::string>{"AAPL"});
+  CHECK(calls == 7);
+}
+
+TEST_CASE("fetch_bars treats a malformed body as a stale batch") {
+  AlpacaClient bad(test_config(), [](const std::string&) { return HttpResponse{200, "not json"}; });
+  auto r = bad.fetch_bars({"AAPL"}, "1Day", 0, 1);
+  CHECK(r.stale == std::vector<std::string>{"AAPL"});
+  AlpacaClient typed(test_config(), [](const std::string&) {
+    return HttpResponse{200, R"({"bars":{"AAPL":[{"t":"2026-09-29T04:00:00Z","o":"x"}]}})"};
+  });
+  CHECK(typed.fetch_bars({"AAPL"}, "1Day", 0, 1).stale.size() == 1);
+}
+
+TEST_CASE("a failing second batch keeps the first batch's bars") {
+  std::vector<std::string> symbols = {"AAPL"};
+  for (int i = 0; i < 99; ++i) symbols.push_back("Y" + std::to_string(i));
+  for (int i = 0; i < 100; ++i) symbols.push_back("Z" + std::to_string(i));
+  AlpacaClient client(test_config(), [](const std::string& path) {
+    if (path.find("symbols=AAPL,") != std::string::npos) return HttpResponse{200, kPage2};
+    return HttpResponse{403, "denied"};
+  });
+  auto r = client.fetch_bars(symbols, "1Day", 0, 1);
+  REQUIRE(r.bars.count("AAPL") == 1);
+  CHECK(r.bars.at("AAPL").size() == 1);
+  REQUIRE(r.stale.size() == 100);
+  CHECK(r.stale.front() == "Z0");
+  CHECK(r.stale.back() == "Z99");
 }
 
 TEST_CASE("fetch_bars batches 100 symbols per request") {
@@ -87,8 +131,9 @@ TEST_CASE("sync_bars fetches incrementally and saves") {
     paths.push_back(path);
     return HttpResponse{200, path.find("page_token") == std::string::npos ? kPage1 : kPage2};
   });
-  sync_bars(client, store, {"AAPL", "NVO"}, Timeframe::Day, utc_seconds(2026, 9, 1),
-            utc_seconds(2026, 10, 1));
+  auto stale = sync_bars(client, store, {"AAPL", "NVO"}, Timeframe::Day, utc_seconds(2026, 9, 1),
+                         utc_seconds(2026, 10, 1));
+  CHECK(stale.empty());
   CHECK(store.bars("AAPL", Timeframe::Day).size() == 2);
   CHECK(std::filesystem::exists(dir / "1d" / "AAPL.csv"));
 
@@ -97,6 +142,22 @@ TEST_CASE("sync_bars fetches incrementally and saves") {
             utc_seconds(2026, 10, 2));
   REQUIRE_FALSE(paths.empty());
   CHECK(paths[0].find("start=2026-09-30T04:00:00Z") != std::string::npos);
+}
+
+TEST_CASE("sync_bars reports stale tickers and keeps the rest") {
+  BarStore store(test::temp_dir("sync_stale"));
+  std::vector<std::string> tickers = {"AAPL"};
+  for (int i = 0; i < 99; ++i) tickers.push_back("Y" + std::to_string(i));
+  for (int i = 0; i < 100; ++i) tickers.push_back("Z" + std::to_string(i));
+  AlpacaClient client(test_config(), [](const std::string& path) {
+    if (path.find("symbols=AAPL,") != std::string::npos)
+      return HttpResponse{200, R"({"bars":{"AAPL":[{"t":"2026-09-30T04:00:00Z","o":1,"h":1,"l":1,"c":1,"v":1,"vw":1}]}})"};
+    return HttpResponse{500, ""};
+  });
+  auto stale = sync_bars(client, store, tickers, Timeframe::Day, utc_seconds(2026, 9, 1),
+                         utc_seconds(2026, 10, 1));
+  CHECK(stale.size() == 100);
+  CHECK(store.bars("AAPL", Timeframe::Day).size() == 1);
 }
 
 TEST_CASE("load_dotenv sets unset variables only") {

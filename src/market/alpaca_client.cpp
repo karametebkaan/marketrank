@@ -121,14 +121,14 @@ HttpResponse AlpacaClient::get_with_retry(const std::string& path) {
   }
 }
 
-std::map<std::string, std::vector<Bar>> AlpacaClient::fetch_bars(
-    const std::vector<std::string>& symbols, std::string_view timeframe, TimePoint start,
-    TimePoint end) {
-  std::map<std::string, std::vector<Bar>> out;
+FetchResult AlpacaClient::fetch_bars(const std::vector<std::string>& symbols,
+                                     std::string_view timeframe, TimePoint start, TimePoint end) {
+  FetchResult result;
   constexpr std::size_t kBatch = 100;
   for (std::size_t b = 0; b < symbols.size(); b += kBatch) {
+    const std::size_t batch_end = std::min(symbols.size(), b + kBatch);
     std::string joined;
-    for (std::size_t i = b; i < std::min(symbols.size(), b + kBatch); ++i) {
+    for (std::size_t i = b; i < batch_end; ++i) {
       if (!joined.empty()) joined += ',';
       joined += url_encode(symbols[i]);
     }
@@ -136,17 +136,33 @@ std::map<std::string, std::vector<Bar>> AlpacaClient::fetch_bars(
                              "&timeframe=" + std::string(timeframe) +
                              "&start=" + format_rfc3339(start) + "&end=" + format_rfc3339(end) +
                              "&limit=10000&adjustment=all&feed=" + config_.feed;
-    std::optional<std::string> token;
-    do {
-      std::string path = base;
-      if (token) path += "&page_token=" + url_encode(*token);
-      BarsPage page = parse_bars_page(get_with_retry(path).body);
-      for (auto& [sym, bars] : page.bars)
-        out[sym].insert(out[sym].end(), bars.begin(), bars.end());
-      token = page.next_page_token;
-    } while (token);
+    std::map<std::string, std::vector<Bar>> batch_bars;
+    try {
+      std::optional<std::string> token;
+      do {
+        std::string path = base;
+        if (token) path += "&page_token=" + url_encode(*token);
+        BarsPage page;
+        try {
+          page = parse_bars_page(get_with_retry(path).body);
+        } catch (const std::runtime_error&) {
+          throw;
+        } catch (const std::exception&) {
+          throw std::runtime_error("Alpaca response could not be parsed");
+        }
+        for (auto& [sym, bars] : page.bars)
+          batch_bars[sym].insert(batch_bars[sym].end(), bars.begin(), bars.end());
+        token = page.next_page_token;
+      } while (token);
+    } catch (const std::runtime_error&) {
+      result.stale.insert(result.stale.end(), symbols.begin() + static_cast<std::ptrdiff_t>(b),
+                          symbols.begin() + static_cast<std::ptrdiff_t>(batch_end));
+      continue;
+    }
+    for (auto& [sym, bars] : batch_bars)
+      result.bars[sym].insert(result.bars[sym].end(), bars.begin(), bars.end());
   }
-  return out;
+  return result;
 }
 
 }  // namespace fx

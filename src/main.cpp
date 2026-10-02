@@ -89,7 +89,8 @@ int main(int argc, char** argv) {
         const fx::TimePoint start = end - static_cast<fx::TimePoint>(args.lookback_days) * 86400;
         std::cerr << "syncing " << universe.price_tickers().size() << " tickers ("
                   << fx::to_string(args.tf) << ") from " << fx::format_rfc3339(start) << "...\n";
-        fx::sync_bars(client, store, universe.price_tickers(), args.tf, start, end);
+        const auto stale = fx::sync_bars(client, store, universe.price_tickers(), args.tf, start, end);
+        if (!stale.empty()) std::cerr << stale.size() << " stale tickers\n";
       }
     }
 

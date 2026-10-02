@@ -39,13 +39,17 @@ std::optional<AlpacaConfig> alpaca_config_from_env();
 std::string url_encode(std::string_view s);
 std::string_view alpaca_timeframe(Timeframe tf);
 
+struct FetchResult {
+  std::map<std::string, std::vector<Bar>> bars;
+  std::vector<std::string> stale;  // symbols from batches that failed
+};
+
 class AlpacaClient {
  public:
   explicit AlpacaClient(AlpacaConfig config, HttpGet get = {});
 
-  std::map<std::string, std::vector<Bar>> fetch_bars(const std::vector<std::string>& symbols,
-                                                     std::string_view timeframe, TimePoint start,
-                                                     TimePoint end);
+  FetchResult fetch_bars(const std::vector<std::string>& symbols, std::string_view timeframe,
+                         TimePoint start, TimePoint end);
 
  private:
   HttpResponse get_with_retry(const std::string& path);
