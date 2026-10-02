@@ -124,6 +124,8 @@ class SecClient:
 
 def load_dotenv(path):
     """Minimal .env parser: sets only variables that are missing. Prints nothing."""
+    if not path:
+        return
     try:
         f = open(path, encoding="utf-8")
     except OSError:
@@ -206,11 +208,16 @@ def read_meta(path):
     subs, cov = {}, {}
     with zipfile.ZipFile(path) as z:
         for r in _table(z, "SUBMISSION.TSV"):
-            subs[r["ACCESSION_NUMBER"]] = {"cik": r["CIK"].strip(), "period": r["PERIODOFREPORT"],
-                                           "filing_date": r["FILING_DATE"], "type": r["SUBMISSIONTYPE"].strip()}
+            g = lambda k: (r.get(k) or "").strip()
+            if not g("ACCESSION_NUMBER") or not g("PERIODOFREPORT") or not g("FILING_DATE"):
+                continue  # unusable row (short or blank)
+            subs[g("ACCESSION_NUMBER")] = {"cik": g("CIK"), "period": g("PERIODOFREPORT"),
+                                           "filing_date": g("FILING_DATE"), "type": g("SUBMISSIONTYPE")}
         for r in _table(z, "COVERPAGE.TSV"):
-            cov[r["ACCESSION_NUMBER"]] = {"amendment_type": (r.get("AMENDMENTTYPE") or "").strip().upper(),
-                                          "is_amendment": (r.get("ISAMENDMENT") or "").strip().upper()}
+            acc = (r.get("ACCESSION_NUMBER") or "").strip()
+            if acc:
+                cov[acc] = {"amendment_type": (r.get("AMENDMENTTYPE") or "").strip().upper(),
+                            "is_amendment": (r.get("ISAMENDMENT") or "").strip().upper()}
     return subs, cov
 
 

@@ -333,7 +333,8 @@ class Sec13fTests(unittest.TestCase):
         self.assertEqual(stats["unknown_amendments"], 1)
 
     def test_to_skips_late_zips(self):
-        blob = open(self.zip, "rb").read()
+        with open(self.zip, "rb") as fh:
+            blob = fh.read()
         fetched = []
         index = ('<a href="/d/01jan2022-31mar2022_form13f.zip">a</a>'
                  '<a href="/d/01jan2030-31mar2030_form13f.zip">b</a>')
@@ -345,9 +346,47 @@ class Sec13fTests(unittest.TestCase):
         self.assertEqual(len(fetched), 2)
         self.assertFalse(any("2030" in u for u in fetched))
 
+    @staticmethod
+    def _read(path):
+        with open(path) as fh:
+            return fh.read()
+
+    def test_main_without_dotenv(self):
+        ran = {}
+        def fake_run(data, qf, qt, url, client, stats=None):
+            ran["ok"] = True
+            return []
+        with mock.patch.object(sec13f, "find_dotenv", lambda *a, **k: None), \
+                mock.patch.object(sec13f, "run", fake_run), \
+                mock.patch.dict(os.environ, {"SEC_USER_AGENT": "FAKE-UA-set"}):
+            sec13f.main(["--data", self.tmp.name])
+        self.assertTrue(ran.get("ok"))
+        with mock.patch.object(sec13f, "find_dotenv", lambda *a, **k: None), \
+                mock.patch.dict(os.environ, {}):
+            os.environ.pop("SEC_USER_AGENT", None)
+            with self.assertRaises(SystemExit) as cm:
+                sec13f.main(["--data", self.tmp.name])
+        self.assertEqual(str(cm.exception), sec13f.MISSING_UA)
+
+    def test_read_meta_short_rows(self):
+        p = self._custom_zip([["A", "10-FEB-2024", "13F-HR", "9", "31-DEC-2023"]],
+                             [["A", "31-DEC-2023", "N", ""]], "")
+        with zipfile.ZipFile(p, "a") as z:
+            pass
+        # rewrite with short rows
+        with zipfile.ZipFile(p, "w") as z:
+            z.writestr("SUBMISSION.tsv", "ACCESSION_NUMBER\tFILING_DATE\tSUBMISSIONTYPE\tCIK\tPERIODOFREPORT\n"
+                       "A\t10-FEB-2024\t13F-HR\t9\t31-DEC-2023\nB\t10-FEB-2024\n")
+            z.writestr("COVERPAGE.tsv", "ACCESSION_NUMBER\tREPORTCALENDARORQUARTER\tISAMENDMENT\tAMENDMENTTYPE\n"
+                       "A\t31-DEC-2023\nB\n")
+        subs, cov = sec13f.read_meta(p)
+        self.assertIn("A", subs)
+        self.assertEqual(cov["A"]["amendment_type"], "")
+        sec13f.apply_amendments(subs, cov)  # must not raise
+
     def test_gitignore_pycache(self):
         root = os.path.join(os.path.dirname(__file__), "..", "..", ".gitignore")
-        self.assertIn("__pycache__/", open(root).read().split())
+        self.assertIn("__pycache__/", self._read(root).split())
 
 
 if __name__ == "__main__":
