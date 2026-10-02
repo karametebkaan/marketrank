@@ -96,6 +96,124 @@ into one line ("N stocks tied at the teleport floor (π·N = x)") and lists the 
 2026-10-01 bar): no kept edge points at them, so they receive only the teleport share and tie at
 π·N ≈ 0.15. The ranking is informative at the top and in the middle; the floor is one large tie.
 
+## Observed flows from 13F
+
+The flows above are **estimated** from bars. SEC Form 13F gives an **observed**, if coarse, pairing: each
+institutional manager's quarter-end long holdings. Between two quarters a manager's cuts are its sources and its
+adds are its sinks. We compare that observed quarterly flow matrix with the estimate summed over the same
+quarter's bars.
+
+```bash
+python3 scripts/sec13f.py --data data --from 2016Q1            # SEC 13F data sets -> data/13f/holdings_<q>.csv
+python3 scripts/openfigi_map.py --data data --min-value 1e7     # CUSIP -> ticker via OpenFIGI (cached, resumable)
+./build/marketrank --mode replay --timeframe 1d --compare-13f --lookback-days 3750   # -> data/13f/report.md|json
+```
+
+**Method.**
+- **Holdings.** 13F-HR only. Per (CIK, period) we keep the latest filing: a RESTATEMENT replaces the holdings and
+  a NEW HOLDINGS amendment adds rows. Rows must be shares (`SH`) and not options.
+- **VALUE units.** These are repaired against each CUSIP's consensus price (median value/shares over at least 5
+  holders):
+  - a manager whose prices are a power of ten (100x or more) off has all its values rescaled;
+  - a single row whose value is that much too large is rescaled on its own.
+
+  About 60-80 managers per quarter reported dollars before the 2023 cutover, which inflated the raw totals to
+  $150-530T. From 2023 on, 340-1,140 managers per quarter still report thousands.
+- **Mapping.** CUSIPs map to tickers through OpenFIGI.
+- **Observed matrix.** Per manager, d = Δshares × the quarter's mean lake close (split-adjusted to the filing
+  basis). Each manager's outflow is paired with its inflow proportionally:
+  F_ij = out_i · in_j / Σin · min(1, Σin/Σout).
+  The observed matrix T_q is the sum over managers, on the top 2,000 tickers by 13F value.
+- **Dropped positions.** A position is dropped (and counted) when its value/shares is 100x or more off the
+  lake price, because that is a SHARES or VALUE filing error that would otherwise become a phantom flow.
+- **Splits.** A split is accepted only when the holders' share counts confirm it; unconfirmed candidates are
+  listed.
+- **Estimate.** The estimate is the pipeline's exact per-bar flux summed over the quarter's bars, warmed up on at
+  least 60 prior returns, and restricted to the same node set.
+
+**Data (run of 2026-10-02).**
+- **Download.** 43 SEC ZIPs (2.65 GB), 42 quarters 2016Q1-2026Q2: 4,253-8,900 managers and 1.05M-2.40M
+  holdings per quarter, $21T (2016Q1) to $75T (2026Q2) after the unit repair.
+- **Mapping.** OpenFIGI mapped 23,554 CUSIPs (10,034 to a ticker). This covers every CUSIP with a holding of at
+  least $10M; no top-3,000 CUSIP falls below that.
+- **Coverage.** In the latest quarter, 2026Q2, **94.4%** of 13F dollar value maps to a ticker in the current
+  10,000-ticker universe. The share falls steadily going back: 72.2% in 2016Q1, 84.2% in 2019Q4, 89.4% in
+  2022Q4, 87.5% over all quarters. The universe holds only today's tickers, so delisted names are missing.
+- **Quarters compared.** 39, 2016Q4-2026Q2. 2016Q1-Q3 lack a previous quarter or warm-up.
+- **Observed flows per quarter.** 4,300-9,000 managers and 3.1M-3.7M observed edges. Paired flow runs from
+  $0.9T to $3.4T per quarter.
+- **Grid.** 6 configurations (λ ∈ {0, 0.5, 1} × pressure ∈ {dollar, sqrt}), 23.5 min, 7 GB peak memory.
+
+**Agreement.** The table below is for the base preset (λ = 1, dollar pressure). Values are mean ± sd over 39
+quarters. Lift = estimate − null:
+- the **placebo** is the same configuration's estimate of another quarter (q−4, else q+1);
+- **gravity** is out·inᵀ/total built from the estimate's own marginals;
+- **perm** is 100 random relabellings.
+
+| metric | estimate | lift vs placebo | lift vs gravity | lift vs perm | quarters with placebo lift > 0 |
+|---|---|---|---|---|---|
+| edge Spearman, observed top-5000 | 0.162 ± 0.059 | +0.036 ± 0.032 | −0.024 ± 0.008 | +0.163 ± 0.058 | 34/39 |
+| edge Spearman, all pairs | 0.357 ± 0.019 | +0.015 ± 0.022 | −0.065 ± 0.010 | +0.358 ± 0.019 | 28/39 |
+| row cosine | 0.182 ± 0.043 | +0.010 ± 0.041 | −0.050 ± 0.020 | +0.152 ± 0.042 | 24/39 |
+| π Spearman | 0.613 ± 0.030 | +0.044 ± 0.031 | +0.001 ± 0.002 | +0.614 ± 0.030 | 35/39 |
+| π top-50 overlap | 0.432 ± 0.064 | +0.048 ± 0.063 | +0.015 ± 0.026 | +0.406 ± 0.063 | 26/39 |
+
+**Size baselines for π.**
+- Observed π vs quarter ADV: Spearman **0.896 ± 0.015**.
+- Observed π vs 13F value: 0.871 ± 0.017.
+- Estimated π vs observed π: 0.613.
+- Estimated π vs ADV: 0.687.
+
+Estimated π agrees with observed π (0.613) about as well as estimated inflow agrees with observed inflow (0.621),
+and its gravity lift is 0.001. Here π is a function of the marginals.
+
+**Calibration.**
+- **Winner.** By mean placebo lift on π the winner is **λ = 1, sqrt pressure**: +0.046 ± 0.034 (range −0.025
+  to +0.112). It beats the base λ = 1 dollar by 0.002, far inside the quarter-to-quarter sd.
+- **The other metrics.** The winners differ by metric and are all ties (margins ≤ 0.002):
+  - λ = 0 dollar for observed top-5000;
+  - λ = 1 dollar for all pairs;
+  - λ = 0 sqrt for row cosine.
+- **Dollar vs sqrt.** Dollar pressure has clearly higher raw agreement than sqrt (π 0.613 vs 0.523; observed
+  top-5000 edge 0.162 vs 0.117).
+- **λ.** λ moves the metrics by ≤ 0.04 on π and ≤ 0.007 on edges.
+- **Verdict.** The data do not support changing the preset.
+
+**Unconfirmed split candidates.** There are 1,262 over 39 quarters, against 607 confirmed splits. The large ones
+are spin-offs and mergers that the lake's adjustment factors reflect but holders' share counts do not, for
+example:
+- APD, MET and HPE (spin-offs; share ratio 1.00);
+- RTX in 2020Q2 (merger; price ratio 0.50, share ratio 1.67);
+- HLT in 2017Q1 (reverse split plus spin-offs).
+
+They are treated as no split and listed in the report. 15,999 positions ($276B in total) were dropped as
+inconsistent.
+
+**What this means.**
+- **Beyond the marginals, nothing.** Every primary metric clears the permutation null by a wide margin, but
+  almost all of that is size and the marginals. On all three edge metrics the estimate's own rank-1 gravity null
+  (its marginals, with its pairing structure discarded) agrees with 13F **better** than the estimate itself, in
+  39 of 39 quarters. Measured against observed institutional pairing, the correlation-tilted pairing adds
+  nothing beyond the marginals, and on these metrics it subtracts a little.
+- **A small timing signal.** The temporal placebo lift is small but mostly positive: 0.01-0.05, positive in
+  24-35 of 39 quarters. So the estimate for the right quarter carries a little quarter-specific information that
+  another quarter's estimate lacks.
+- **ADV is better.** For π, plain ADV ranks the observed 13F π far better (0.90) than estimated π does (0.61).
+
+**Honest limits.**
+- **Coverage of the market.** 13F is quarterly, long-only, institutional and filed with a 45-day lag. It omits
+  shorts, retail, options and intra-quarter round trips. Fund inflows and outflows show up as unpaired cash, not
+  pairs: unpaired dollars are often as large as the paired ones.
+- **Close to rank-1 by construction.** Proportional pairing makes the observed T_q a sum of per-manager rank-1
+  matrices, out_m in_mᵀ / Σin_m. That sum is close to rank-1 in practice: a product of marginals alone (the
+  gravity null) matches it better than the estimate does. Agreement on edges is therefore largely agreement on
+  the marginals. The gravity lift is the honest measure of structure, and it is negative. The comparison cannot
+  reward pairing structure that 13F's proportional pairing does not itself contain.
+- **Trade prices.** They are unknown, so d uses the quarter's mean close.
+- **Survivorship.** The universe is today's, which lowers coverage in early years.
+- **Data cleaning.** The unit repair and the 100x position filter are heuristics against a per-CUSIP
+  consensus.
+
 ## Build and test
 
 ```bash
