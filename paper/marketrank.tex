@@ -5,6 +5,7 @@
 \usepackage{algorithm,algorithmicx, algpseudocode}
 \usepackage{amsmath,amssymb}
 \usepackage{caption}
+\usepackage{subcaption}
 \captionsetup[table]{font=small,skip=0pt,singlelinecheck=off}
 
 \usepackage{multicol}
@@ -452,14 +453,31 @@ loose & 22 & 11 & 9 & Fin.\ 44\% & Staples 11\%\\
 \end{table}
 
 \paragraph{Landscape} Figure~\ref{Figure:landscape} shows the real landscape on 2026-10-01 with flux-community territories, the strongest flux arcs and the portfolio holdings.
-% TODO(fig-timelapse): add a 2x2 figure* (label Figure:timelapse) of the landscape on four dates about a quarter
-% apart (controller will supply the images), then uncomment the paragraph below.
-% \paragraph{Time-lapse} Figure~\ref{Figure:timelapse} shows the landscape on four dates about a quarter apart.
-% Three things are worth looking for. First, the territories persist: the flux communities keep their labels and
-% their place on the lattice, so the map itself stays recognizable from quarter to quarter. Second, the peaks
-% rotate: within those territories the mountains and craters move as money concentrates in different names.
-% Third, the holdings move with the terrain: each holding stays pinned to its exact value, so it rises and falls
-% with the surface as its share of the money changes.
+\begin{figure*}[t]
+\centering
+\begin{subfigure}[t]{0.49\textwidth}\centering
+\includegraphics[width=\linewidth,trim=330 120 0 0,clip]{figs/tl-1.png}
+\caption{2026-01-02}\label{Figure:tl1}
+\end{subfigure}\hfill
+\begin{subfigure}[t]{0.49\textwidth}\centering
+\includegraphics[width=\linewidth,trim=330 120 0 0,clip]{figs/tl-2.png}
+\caption{2026-04-01}\label{Figure:tl2}
+\end{subfigure}
+
+\medskip
+\begin{subfigure}[t]{0.49\textwidth}\centering
+\includegraphics[width=\linewidth,trim=330 120 0 0,clip]{figs/tl-3.png}
+\caption{2026-07-01}\label{Figure:tl3}
+\end{subfigure}\hfill
+\begin{subfigure}[t]{0.49\textwidth}\centering
+\includegraphics[width=\linewidth,trim=330 120 0 0,clip]{figs/tl-4.png}
+\caption{2026-10-01}\label{Figure:tl4}
+\end{subfigure}
+\caption{\FS\ time-lapse on four real bars about a quarter apart, \MR\ preset, height $\log(\pi/s)$, flux-community territories, holdings pinned to the surface (green rings). The control panel is cropped; each panel keeps its exact top-10 table. Active names: 5,645, 5,879, 6,142 and 6,188.}
+\label{Figure:timelapse}
+\end{figure*}
+
+\paragraph{Time-lapse} Figure~\ref{Figure:timelapse} shows the landscape on four dates about a quarter apart. On 2026-01-02 a single tall ridge in the upper left stands over a deep basin, and TSLA leads ($\pi N$ 454.3). By 2026-04-01 the relief is flatter, with broader lobes, and SNDK is on top. On 2026-07-01 two red masses stand with hollows between them; MU and SNDK lead, and SOXS enters the top 5. On 2026-10-01 the ridge in the upper left is back, joined by a large red dome on the right. The number of communities stays at 4 throughout, while modularity drifts down from 0.179 to 0.153, 0.123 and 0.109, so the partition is stable in count but grows weaker. The semiconductor and memory complex (MU, SNDK, NVDA, TSLA) stays at the top throughout while its order rotates: TSLA, NVDA, \dots, MU fifth in January; SNDK, TSLA, NVDA, MU in April; MU, SNDK, TSLA, NVDA in July; MU, SNDK, NVDA, TSLA in October. The holdings stay pinned to their exact values and rise and fall with the terrain.
 
 \paragraph{Stability} Measured over the real replay (245 landscape frames, 48 re-clusters): between re-clusters the median jump of a stock is 0 cells (p90 also 0) and 85\% of stocks keep their cell on average (96\% on bars where the lattice size is unchanged), against a 13-cell median jump and 4\% kept before hysteresis and spiral ordering. At a re-cluster 39\% keep their cell (median jump 15 cells). Community labels persist for 74\% of stocks per re-cluster (median 76\%, worst 47\%), against about 52\% before the warm start and matching. Mountains and craters stay coherent: the median Spearman correlation of value against distance from the territory centre is 0.98.
 
@@ -477,7 +495,7 @@ The 60-bar, 16-configuration evaluation runs in 5\,min\,07\,s.
 \section{Walk-forward evaluation protocol}
 \label{Section:wf}
 
-Section~\ref{Section:results} shows that \MR\ measures structure but that its level does not forecast next-day returns. Whether its signals can nonetheless inform portfolio moves is a different question: \emph{had we followed them month by month, would the portfolio have beaten simply holding the current mix, after trading costs?} We answer it with a walk-forward protocol that was fixed, defaults and pass/fail thresholds included, before any of its results were seen. \textbf{The results are pending.} They will be reported whichever way they come out.
+Section~\ref{Section:results} shows that \MR\ measures structure but that its level does not forecast next-day returns. Whether its signals can nonetheless inform portfolio moves is a different question: \emph{had we followed them week by week, would the portfolio have beaten simply holding the current mix, after trading costs?} We answer it with a walk-forward protocol that was fixed, defaults and pass/fail thresholds included, before any of its results were seen. \textbf{The results are pending.} They will be reported whichever way they come out.
 
 \paragraph{Backfill and universe} Daily SIP bars are backfilled to 2016-01-01, about 2,450 bars per ticker. Each month uses a \emph{point-in-time} universe: the top names by trailing median dollar volume, computed only from bars available up to that month, never today's snapshot. Survivorship bias remains, because the data provider lists only today's tickers, so stocks delisted earlier are missing, and that favours strategies that held survivors. We report it as a limitation and re-run the whole test on a large-cap sub-universe (the point-in-time top 500), where delistings are rare. An edge that exists only in small names is treated as suspect.
 
@@ -491,9 +509,11 @@ Section~\ref{Section:results} shows that \MR\ measures structure but that its le
 \item the existing forecast score.
 \end{itemize}
 
-\paragraph{IC research table} For every signal and horizon $h\in\{1,5,20\}$ trading days, the harness reports the mean information coefficient against the open-to-open forward return (signal known at the close of $t$, entry at the open of $t+1$, exit at the open of $t+1+h$), its $t$-statistic, and its stability by calendar year. Samples are taken every $h$ bars, so they do not overlap.
+\paragraph{Weekly as the primary test} The primary test rebalances weekly, on the last trading day of each ISO week, and executes at the next open; a monthly run (the last trading day of each month) is kept as a secondary comparison. Flow-induced pressure, if it carries information, should show within about a week; beyond that horizon, flows mix with unrelated news. Weekly trading raises turnover, which makes the cost-sensitivity runs below more important.
 
-\paragraph{Strategy} The base is the current mix (AAPL 60\%, VOO 15\%, NVDA 7\%, LLY 6\%, NVO 5\%, NKE 3.5\%, F 3.5\%), held fixed over history. At each monthly rebalance (the last trading day of the month), a tilt of 20\% of portfolio value goes in equal weight to the top 10 eligible names by the signal, funded pro rata from the base. The rules are:
+\paragraph{IC research table} For every signal and horizon $h\in\{1,2,5\}$ trading days, with $h=20$ kept only as a decay diagnostic, the harness reports the mean information coefficient against the open-to-open forward return (signal known at the close of $t$, entry at the open of $t+1$, exit at the open of $t+1+h$), its $t$-statistic, and its stability by calendar year. Samples are taken every $h$ bars, so they do not overlap.
+
+\paragraph{Strategy} The base is the current mix (AAPL 60\%, VOO 15\%, NVDA 7\%, LLY 6\%, NVO 5\%, NKE 3.5\%, F 3.5\%), held fixed over history. At each weekly rebalance, a tilt of 20\% of portfolio value goes in equal weight to the top 10 eligible names by the signal, funded pro rata from the base. The rules are:
 \begin{itemize}
 \item long-only, with at most 10\% of portfolio value in any single tilt name;
 \item a name is eligible only with a trailing median dollar volume of at least \$50M;
@@ -501,13 +521,13 @@ Section~\ref{Section:results} shows that \MR\ measures structure but that its le
 \item trades execute at the next day's open, and holdings are marked at each close;
 \item costs are 10\,bps per side, with sensitivity runs at 0 and 25\,bps.
 \end{itemize}
-The simulator also checks its own bookkeeping: after every trade, the value of what the portfolio owns plus its cash must equal what it had just before the trade, minus the trading fee. So it can neither create nor lose money through an accounting slip; any gain or loss comes only from prices and costs. The benchmarks are buy-and-hold of the base mix, the base mix rebalanced monthly (with costs), and VOO.
+The simulator also checks its own bookkeeping: after every trade, the value of what the portfolio owns plus its cash must equal what it had just before the trade, minus the trading fee. So it can neither create nor lose money through an accounting slip; any gain or loss comes only from prices and costs. The benchmarks are buy-and-hold of the base mix, the base mix rebalanced on the same weekly calendar (with costs), and VOO.
 
-\paragraph{Gated blend} A simplex-weighted blend of the signals is learned on a trailing 36-month window with a 1-month embargo, so that no training label overlaps the month being decided. Each weight is the positive part of that signal's mean training IC, normalized to sum to 1. The blend is used only while its own out-of-sample IC over the previous 24 months has $t>2$, with at least 12 months required; otherwise the strategy holds the base with no tilt. A dead signal therefore costs nothing beyond the trades the gate avoids.
+\paragraph{Gated blend} A simplex-weighted blend of the signals is learned on a trailing 156-week window with a 1-week embargo, so that no training label overlaps the week being decided. Each weight is the positive part of that signal's mean training IC, normalized to sum to 1. The blend is used only while its own out-of-sample IC over the previous 104 weeks has $t>2$, with at least 52 weeks required; otherwise the strategy holds the base with no tilt. A dead signal therefore costs nothing beyond the trades the gate avoids.
 
-\paragraph{Metrics and multiple testing} The harness reports the annualized return, volatility and Sharpe ratio, the excess return over each benchmark, the information ratio, the maximum drawdown, turnover, cost drag and the hit rate by calendar year. The 95\% interval on annualized excess return comes from a block bootstrap with 1-month blocks. Every configuration ever run is appended to a registry, and the deflated Sharpe ratio uses the registry's trial count and variance, so trying many variants is paid for rather than hidden.
+\paragraph{Metrics and multiple testing} The harness reports the annualized return, volatility and Sharpe ratio, the excess return over each benchmark, the information ratio, the maximum drawdown, turnover, cost drag and the hit rate by calendar year. The 95\% interval on annualized excess return comes from a block bootstrap with 21-day blocks. Every configuration ever run is appended to a registry, and the deflated Sharpe ratio uses the registry's trial count and variance, so trying many variants is paid for rather than hidden.
 
-\paragraph{Decision gate} The answer is ``yes, consistently'' only if all of the following hold (spec \S3):
+\paragraph{Decision gate} The gate judges the weekly strategy. The answer is ``yes, consistently'' only if all of the following hold (spec \S3):
 \begin{enumerate}
 \item annualized excess return over buy-and-hold of the base mix $>0$ at 10\,bps, with a bootstrap 95\% interval above 0;
 \item excess return positive in at least 60\% of calendar years;
@@ -545,9 +565,9 @@ Anything less is ``no''.
 
 \paragraph{It measures a real structural quantity} $\pi$ locates where estimated money concentrates, and it is stable from frame to frame: the median stock does not move between re-clusters. The graph behind it is not noise, since stock-to-stock flow stays within a sector 2.35 times as often as chance.
 
-\paragraph{Its changes, not its level, are the natural predictors} The level of $\pi$ does not forecast next-day returns. The one significant predictive pattern found so far is the reversal in hotness, with $t\approx-11$ under relative pressure, and it survives tradeable open-to-open timing. That is consistent with the documented price pressure and subsequent reversal that follow flow-induced trading~\cite{covalstafford}. It points to \emph{changes} in concentration as the predictors, and the walk-forward signal set (heartbeats over 1, 5 and 20 bars, negated hotness, inflow momentum) targets exactly those.
+\paragraph{Its changes, not its level, are the natural predictors} The level of $\pi$ does not forecast next-day returns. The one significant predictive pattern found so far is the reversal in hotness, with $t\approx-11$ under relative pressure, and it survives tradeable open-to-open timing. That is consistent with the documented price pressure and subsequent reversal that follow flow-induced trading~\cite{covalstafford}. It points to \emph{changes} in concentration as the predictors, and the walk-forward signal set (heartbeats over 1, 5 and 20 bars, negated hotness, inflow momentum) targets exactly those. Because such pressure should show within about a week, the primary test trades weekly.
 
-\paragraph{The question is now falsifiable} The walk-forward protocol of Section~\ref{Section:wf} turns ``is it useful?'' into a test fixed in advance. It is causal and after costs, it is measured against buy-and-hold of the actual portfolio, and multiple testing is controlled by a registry of every configuration run and the deflated Sharpe ratio. Whatever the five-criterion gate decides is informative.
+\paragraph{The question is now falsifiable} The walk-forward protocol of Section~\ref{Section:wf} turns ``is it useful?'' into a test fixed in advance. It is causal, weekly and after costs, with cost-sensitivity runs for the higher turnover, it is measured against buy-and-hold of the actual portfolio, and multiple testing is controlled by a registry of every configuration run and the deflated Sharpe ratio. Whatever the five-criterion gate decides is informative.
 
 \paragraph{Both outcomes lead somewhere} If the answer is ``yes, consistently'', the next step is an optimizer and a shadow ledger that paper-tracks its proposals before anyone relies on them. If it is ``no'', the work turns to observed flows: ETF creation and redemption, 13F pairing of managers' cuts and adds, and signed order flow. Each raises the information content of $T$ itself, and each is re-tested with the same harness.
 
