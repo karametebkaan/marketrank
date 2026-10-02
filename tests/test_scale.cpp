@@ -28,8 +28,8 @@ Panel synthetic_panel(int sectors, int per_sector, int bars, const std::string& 
 }
 }  // namespace
 
-TEST_CASE("results are bit-identical with 1 thread and with many threads") {
-  const Panel panel = synthetic_panel(10, 30, 90, "determinism");
+namespace {
+void check_thread_determinism(const Panel& panel) {
   for (const CoreParams& params : {CoreParams{}, CoreParams::legacy()}) {
     const int saved = omp_get_max_threads();
     omp_set_num_threads(1);
@@ -37,11 +37,31 @@ TEST_CASE("results are bit-identical with 1 thread and with many threads") {
     omp_set_num_threads(std::max(saved, 4));
     const Frame many = run_panel_last(panel, params);
     omp_set_num_threads(saved);
-    CHECK(one.pi == many.pi);
+    CHECK(one.active == many.active);
+    CHECK(test::same_values(one.pi, many.pi));
+    CHECK(test::same_values(one.h, many.h));
+    CHECK(one.P.row_ptr == many.P.row_ptr);
     CHECK(one.P.col == many.P.col);
-    CHECK(one.P.val == many.P.val);
-    CHECK(one.forecasts.front().score == many.forecasts.front().score);
+    CHECK(test::same_values(one.P.val, many.P.val));
+    CHECK(one.P_fast.col == many.P_fast.col);
+    CHECK(test::same_values(one.P_fast.val, many.P_fast.val));
+    REQUIRE(one.forecasts.size() == many.forecasts.size());
+    for (std::size_t k = 0; k < one.forecasts.size(); ++k) {
+      INFO("forecast " << k);
+      CHECK(one.forecasts[k].k == many.forecasts[k].k);
+      CHECK(test::same_values(one.forecasts[k].score, many.forecasts[k].score));
+      CHECK(test::same_values(one.forecasts[k].pi_k, many.forecasts[k].pi_k));
+    }
   }
+}
+}  // namespace
+
+TEST_CASE("results are bit-identical with 1 thread and with many threads") {
+  check_thread_determinism(synthetic_panel(10, 30, 90, "determinism"));
+}
+
+TEST_CASE("results are bit-identical across thread counts at N = 2000") {
+  check_thread_determinism(synthetic_panel(40, 50, 40, "determinism2k"));
 }
 
 TEST_CASE("bench: 10,000-node synthetic daily frame under 1 s" * doctest::skip()) {
