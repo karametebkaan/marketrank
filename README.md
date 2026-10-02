@@ -6,6 +6,25 @@ to j, and a stock's score is its stationary probability π_i: the long-run share
 follows the money spends at that stock. (PageRank is the best-known instance of the same idea, with links in
 place of dollars; here it is only an analogy.) Fluxscape is its 3D landscape view.
 
+## What we are trying to find out
+
+MarketRank shows where money concentrates. The goal is to learn whether following it makes money, and to learn that honestly. It takes two steps:
+
+- **Backfill**: download more past data. Today the model has about one year of daily prices. That is too short to tell a real pattern from luck, because in a single year almost any rule can look smart by accident. A backfill fetches 5–10 earlier years from the same data source into our lake. Nothing about the model changes; it just gets a much longer memory.
+- **Walk-forward**: test the way you would actually trade, never peeking at the future.
+  1. Stand at a past date and decide the rule using only data up to that day.
+  2. Trade the next month and record the result.
+  3. Step one month forward and repeat, until today.
+
+  Every result therefore comes from a period the model had never seen.
+
+**How they fit together.** The backfill gives us many years to walk through. The walk-forward then answers one plain question: if we had followed MarketRank's signals month by month, would the portfolio have beaten simply holding the current mix, after trading costs?
+
+- **If yes, consistently:** we build the optimizer that moves the portfolio, and paper-track it before anyone trusts it.
+- **If no:** we have learned that cheaply, without risking money, and we look for better flow data, such as ETF flows or 13F.
+
+This is milestone 3. Its spec is `docs/superpowers/specs/2026-10-02-marketrank-m3-design.md`.
+
 Stocks are ranked by their MarketRank score π·N (1 = an average active stock) and, optionally, by hotness.
 Design: `docs/superpowers/specs/2026-10-01-marketrank-design.md`.
 
