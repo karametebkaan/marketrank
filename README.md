@@ -38,10 +38,11 @@ not observed order flow.
 1. **Universe.** Start from every tradable US stock on Alpaca. Drop warrants, units, rights and
    ETF-like products. Rank what's left by median daily dollar volume and keep the top N (default
    10,000). Your portfolio holdings are always included.
-2. **Buying and selling pressure.** For each bar, each stock's pressure is its return times how
-   unusual its volume is compared with its own normal (`r · V / ADV`). Positive pressure means
-   net buying (a sink); negative means net selling (a source). Comparing a stock's volume with its
-   own normal stops mega-caps from dominating just because they're big.
+2. **Buying and selling pressure.** For each bar, each stock's pressure is its return times the
+   square root of its dollar volume (`r · √(V · VWAP)`, the default). Positive pressure means net
+   buying (a sink); negative means net selling (a source). `--pressure relative` instead uses how
+   unusual volume is against its own normal (`r · V / ADV`, with V/ADV capped at 5). Stocks whose
+   median dollar volume is under $1M stay out of the graph.
 3. **Money flux, with no fitted model.** Each source's outflow is split across the sinks in
    proportion to their pressure, and tilted toward stocks it moves with (rolling return
    correlation). The result is a directed, weighted graph: edge i→j is the estimated money moving

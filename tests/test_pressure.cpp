@@ -52,3 +52,21 @@ TEST_CASE("pressure mode strings") {
   CHECK_THROWS_AS(parse_pressure_mode("cap"), std::invalid_argument);
   CHECK_THROWS_AS(PressureModel(1, PressureMode::Relative, 0), std::invalid_argument);
 }
+
+TEST_CASE("relative pressure caps V/ADV at max_volume_ratio; 0 means uncapped") {
+  auto run = [](double cap) {
+    PressureModel m(1, PressureMode::Relative, 3, cap);
+    m.step(std::vector<double>{0.01}, std::vector<double>{100}, std::vector<double>{10.0});
+    return m.step(std::vector<double>{0.02}, std::vector<double>{5000}, std::vector<double>{10.0})[0];
+  };
+  CHECK(run(5.0) == doctest::Approx(0.02 * 5.0));
+  CHECK(run(0.0) == doctest::Approx(0.02 * 50.0));
+  // Below the cap the ratio is untouched, and dollar/sqrt ignore the cap.
+  PressureModel lo(1, PressureMode::Relative, 3, 5.0);
+  lo.step(std::vector<double>{0.01}, std::vector<double>{100}, std::vector<double>{10.0});
+  CHECK(lo.step(std::vector<double>{0.02}, std::vector<double>{300}, std::vector<double>{10.0})[0] ==
+        doctest::Approx(0.02 * 3.0));
+  PressureModel sq(1, PressureMode::Sqrt, 3, 5.0);
+  CHECK(sq.step(std::vector<double>{0.02}, std::vector<double>{100}, std::vector<double>{10.0})[0] ==
+        doctest::Approx(0.02 * std::sqrt(1000.0)));
+}

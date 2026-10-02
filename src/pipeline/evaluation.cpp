@@ -218,6 +218,11 @@ std::vector<EvalConfig> evaluation_grid() {
   g.push_back({"defaults", CoreParams{}});
   {
     CoreParams p;
+    p.pressure = PressureMode::Relative;
+    g.push_back({"defaults relative", p});
+  }
+  {
+    CoreParams p;
     p.h_ref = HotRef::LongRun;
     g.push_back({"defaults+longrun", p});
   }

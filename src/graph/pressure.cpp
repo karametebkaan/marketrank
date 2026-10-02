@@ -23,10 +23,12 @@ std::string_view to_string(PressureMode m) {
   return "?";
 }
 
-PressureModel::PressureModel(std::size_t n, PressureMode mode, std::size_t adv_window)
+PressureModel::PressureModel(std::size_t n, PressureMode mode, std::size_t adv_window,
+                             double max_volume_ratio)
     : n_(n),
       w_(adv_window),
       mode_(mode),
+      max_ratio_(max_volume_ratio),
       vol_(n * adv_window, 0.0),
       dollar_(n * adv_window, 0.0),
       count_(n, 0),
@@ -59,7 +61,11 @@ std::vector<double> PressureModel::step(std::span<const double> returns,
         case PressureMode::Relative:
           if (count_[i] > 0) {
             const double adv = median_of(&vol_[i * w_], count_[i]);
-            if (adv > 0) p[i] = r * v / adv;
+            if (adv > 0) {
+              double ratio = v / adv;
+              if (max_ratio_ > 0) ratio = std::min(ratio, max_ratio_);
+              p[i] = r * ratio;
+            }
           }
           break;
       }

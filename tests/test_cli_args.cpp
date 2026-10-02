@@ -51,6 +51,22 @@ TEST_CASE("model, universe and eval flags") {
   CHECK(a.top == 7);
 }
 
+TEST_CASE("liquidity floor and volume cap flags") {
+  CliArgs d = parse_cli({});
+  CHECK(d.params.min_dollar_volume == 1e6);
+  CHECK(d.params.max_volume_ratio == 5.0);
+  CHECK(describe(d.params).find("min_dv=1e+06 max_vr=5") != std::string::npos);
+  CliArgs a = parse_cli({"--min-dollar-volume", "250000", "--max-volume-ratio", "3.5"});
+  CHECK(a.params.min_dollar_volume == 250000.0);
+  CHECK(a.params.max_volume_ratio == 3.5);
+  CliArgs l = parse_cli({"--legacy"});
+  CHECK(l.params.min_dollar_volume == 0.0);
+  CHECK(l.params.max_volume_ratio == 0.0);
+  CHECK_THROWS_AS(parse_cli({"--min-dollar-volume", "abc"}), std::invalid_argument);
+  CHECK_THROWS_AS(parse_cli({"--max-volume-ratio", "-1"}), std::invalid_argument);
+  CHECK_THROWS_AS(parse_cli({"--max-volume-ratio"}), std::invalid_argument);
+}
+
 TEST_CASE("bad cli values throw") {
   CHECK_THROWS_AS(parse_cli({"--mode", "live"}), std::invalid_argument);
   CHECK_THROWS_AS(parse_cli({"--lift", "max"}), std::invalid_argument);

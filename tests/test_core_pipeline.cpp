@@ -15,6 +15,16 @@
 using namespace fx;
 
 namespace {
+// The small hand-built panels trade a few thousand dollars per bar; the $1M liquidity floor would
+// deactivate every node, and these tests are about other behaviour.
+CoreParams no_floor() {
+  CoreParams p;
+  p.min_dollar_volume = 0;
+  return p;
+}
+}  // namespace
+
+namespace {
 void check_rotation(const CoreParams& params) {
   SyntheticConfig cfg;
   BarStore store(test::temp_dir("pipeline"));
@@ -80,7 +90,7 @@ Panel small_panel(bool dead_node) {
 
 TEST_CASE("a ticker with no bars is inactive and takes no part in the solve") {
   Panel p = small_panel(true);
-  Frame f = run_panel_last(p, CoreParams{});
+  Frame f = run_panel_last(p, no_floor());
   REQUIRE(f.active.size() == 4);
   CHECK(f.active == std::vector<bool>{true, true, false, true});
   CHECK(f.pi[2] == 0.0);
@@ -119,17 +129,17 @@ TEST_CASE("frame carries raw pruned weights and the fast matrix") {
 
 TEST_CASE("step rejects out-of-range t and mismatched panels") {
   Panel p = small_panel(false);
-  CorePipeline pipe(4, CoreParams{});
+  CorePipeline pipe(4, no_floor());
   CHECK_THROWS_AS(pipe.step(p, 0), std::invalid_argument);
   CHECK_THROWS_AS(pipe.step(p, p.T()), std::invalid_argument);
-  CorePipeline wrong(5, CoreParams{});
+  CorePipeline wrong(5, no_floor());
   CHECK_THROWS_AS(wrong.step(p, 1), std::invalid_argument);
   CHECK_NOTHROW(pipe.step(p, 1));
 }
 
 TEST_CASE("hotness references size and longrun give finite relative hotness") {
   for (HotRef ref : {HotRef::Size, HotRef::LongRun}) {
-    CoreParams p;
+    CoreParams p = no_floor();
     p.h_ref = ref;
     Frame f = run_panel_last(small_panel(false), p);
     CHECK(f.solve.converged);
@@ -195,7 +205,7 @@ TEST_CASE("size reference is neutral for a ticker with no volume history yet") {
       p.vwap.push_back(missing ? nan : c);
     }
   }
-  CoreParams params;
+  CoreParams params = no_floor();
   params.h_ref = HotRef::Size;
   Frame f = run_panel_last(p, params);
   CHECK(f.active[3]);
@@ -284,7 +294,7 @@ TEST_CASE("a late listing becomes active only once it trades") {
   Panel p = presence_panel(12, 5, [](std::size_t t, std::size_t i) {
     return i == 2 ? false : (i != 3 || t >= 6);
   });
-  CorePipeline pipe(p.N(), CoreParams{});
+  CorePipeline pipe(p.N(), no_floor());
   for (std::size_t t = 1; t < p.T(); ++t) {
     const Frame f = pipe.step(p, t);
     INFO("t = " << t);
@@ -305,7 +315,7 @@ TEST_CASE("a late listing becomes active only once it trades") {
 TEST_CASE("a stale ticker drops out after stale_bars") {
   // Ticker 1 trades at bars 0..3 only.
   Panel p = presence_panel(10, 4, [](std::size_t t, std::size_t i) { return i != 1 || t <= 3; });
-  CoreParams params;
+  CoreParams params = no_floor();
   params.stale_bars = 2;
   CorePipeline pipe(p.N(), params);
   for (std::size_t t = 1; t < p.T(); ++t) {
@@ -325,7 +335,7 @@ TEST_CASE("affinity at bar t uses only the returns before t") {
   // At t = 2 the window before the bar holds one return, too few for a correlation, so the
   // affinity must be neutral and the frame must equal the lambda = 0 frame exactly.
   Panel p = presence_panel(6, 6, [](std::size_t, std::size_t) { return true; });
-  CoreParams with;
+  CoreParams with = no_floor();
   with.flux.lambda = 1.0;
   CoreParams without = with;
   without.flux.lambda = 0.0;
@@ -345,12 +355,75 @@ TEST_CASE("affinity at bar t uses only the returns before t") {
 }
 
 TEST_CASE("the frame surfaces the long-run solve") {
-  CoreParams p;
+  CoreParams p = no_floor();
   p.h_ref = HotRef::LongRun;
   const Frame f = run_panel_last(small_panel(false), p);
   CHECK(f.solve_long.converged);
   CHECK(f.solve_long.iterations > 0);
-  const Frame u = run_panel_last(small_panel(false), CoreParams{});
+  const Frame u = run_panel_last(small_panel(false), no_floor());
   CHECK_FALSE(u.solve_long.converged);
   CHECK(u.solve_long.pi.empty());
+}
+
+namespace {
+// Node 0 trades about `low` dollars per bar until bar `rise`, then `high`; nodes 1.. trade ~1e8.
+Panel liquidity_panel(std::size_t T, std::size_t N, double low, double high, std::size_t rise) {
+  Panel p = presence_panel(T, N, [](std::size_t, std::size_t) { return true; });
+  for (std::size_t t = 0; t < T; ++t)
+    for (std::size_t i = 0; i < N; ++i) {
+      const double c = p.close[p.idx(t, i)];
+      const double dv = i == 0 ? (t < rise ? low : high) : 1e8;
+      p.volume[p.idx(t, i)] = dv / c;
+      p.vwap[p.idx(t, i)] = c;
+    }
+  return p;
+}
+}  // namespace
+
+TEST_CASE("liquidity floor deactivates an illiquid node; min_dollar_volume = 0 keeps it") {
+  Panel p = liquidity_panel(30, 5, 1e4, 1e4, 1000);
+  CoreParams off;
+  off.min_dollar_volume = 0;
+  const Frame fd = run_panel_last(p, CoreParams{});
+  const Frame fo = run_panel_last(p, off);
+  CHECK_FALSE(fd.active[0]);
+  CHECK(fd.pi[0] == 0.0);
+  CHECK(std::isnan(fd.h[0]));
+  CHECK(fd.active[1]);
+  CHECK(fo.active[0]);
+}
+
+TEST_CASE("liquidity floor is causal: a node is inactive until its median clears the floor") {
+  // Dollar volume jumps from 1e4 to 1e8 at bar 20. The trailing 20-bar median (incl. bar t) only
+  // exceeds 1e6 once half the window is high: first at t = 29
+  // (10 low + 10 high bars: the even-count median is their mean).
+  Panel p = liquidity_panel(40, 5, 1e4, 1e8, 20);
+  CorePipeline pipe(p.N(), CoreParams{});
+  for (std::size_t t = 1; t < p.T(); ++t) {
+    const Frame f = pipe.step(p, t);
+    INFO("t = " << t);
+    CHECK(f.active[0] == (t >= 29));
+  }
+  // The same data, truncated: frames before the jump do not change when later bars differ.
+  Panel q = liquidity_panel(40, 5, 1e4, 1e4, 20);
+  CorePipeline pipe2(q.N(), CoreParams{});
+  for (std::size_t t = 1; t < 30; ++t) CHECK_FALSE(pipe2.step(q, t).active[0]);
+}
+
+TEST_CASE("validate rejects bad liquidity floor and volume cap") {
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  const double inf = std::numeric_limits<double>::infinity();
+  for (double bad : {-1.0, nan, inf}) {
+    CoreParams a;
+    a.min_dollar_volume = bad;
+    CHECK_THROWS_AS(a.validate(), std::invalid_argument);
+    CoreParams b;
+    b.max_volume_ratio = bad;
+    CHECK_THROWS_AS(b.validate(), std::invalid_argument);
+  }
+  CHECK(CoreParams{}.pressure == PressureMode::Sqrt);
+  CHECK(CoreParams{}.min_dollar_volume == 1e6);
+  CHECK(CoreParams{}.max_volume_ratio == 5.0);
+  CHECK(CoreParams::legacy().min_dollar_volume == 0);
+  CHECK(CoreParams::legacy().max_volume_ratio == 0);
 }

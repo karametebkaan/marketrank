@@ -49,9 +49,14 @@ TEST_CASE("floor share and sector coherence on a hand-built frame") {
 
 TEST_CASE("evaluation grid covers legacy, each switch and the defaults") {
   auto g = evaluation_grid();
-  REQUIRE(g.size() == 9);
+  REQUIRE(g.size() == 10);
   CHECK(g.front().name == "legacy");
   CHECK(g[7].name == "defaults");
+  CHECK(g[8].name == "defaults relative");
+  CHECK(g[8].params.pressure == PressureMode::Relative);
+  CHECK(g[8].params.max_volume_ratio == 5.0);
+  CHECK(g[1].name == "+A relative");
+  CHECK(g[1].params.max_volume_ratio == 0.0);
   for (const auto& c : g) CHECK_NOTHROW(c.params.validate());
 }
 

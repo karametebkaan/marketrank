@@ -62,6 +62,8 @@ CoreParams CoreParams::legacy() {
   p.transition.k_in = 0;
   p.transition.retention = 0.0;
   p.h_ref = HotRef::Uniform;
+  p.min_dollar_volume = 0;
+  p.max_volume_ratio = 0;
   return p;
 }
 
@@ -84,6 +86,10 @@ void CoreParams::validate() const {
   for (int k : horizons)
     if (k < 1) fail("horizons must be >= 1");
   if (corr_window < 2) fail("corr_window must be >= 2");
+  if (!(std::isfinite(min_dollar_volume) && min_dollar_volume >= 0))
+    fail("min_dollar_volume must be finite and >= 0");
+  if (!(std::isfinite(max_volume_ratio) && max_volume_ratio >= 0))
+    fail("max_volume_ratio must be finite and >= 0");
   if (adv_window < 1) fail("adv_window must be >= 1");
   if (stale_bars < 1) fail("stale_bars must be >= 1");
   if (flux.sinks_per_source < 1 || flux.sink_candidates < flux.sinks_per_source)
@@ -94,7 +100,7 @@ void CoreParams::validate() const {
 CorePipeline::CorePipeline(std::size_t n, CoreParams params)
     : n_(n),
       params_(validated(params)),
-      pressure_(n, params_.pressure, params_.adv_window),
+      pressure_(n, params_.pressure, params_.adv_window, params_.max_volume_ratio),
       window_(n, params_.corr_window),
       slow_(n, params_.halflife_slow, params_.row_cap),
       fast_(n, params_.halflife_fast, params_.row_cap),
@@ -117,15 +123,6 @@ Frame CorePipeline::step(const Panel& panel, std::size_t t) {
     for (std::size_t i = 0; i < n_; ++i)
       if (std::isfinite(panel.close[panel.idx(s, i)])) last_close_[i] = s;
   next_bar_ = t + 1;
-  std::vector<bool> active(n_, false);
-  std::vector<std::size_t> map(n_, kNone);
-  std::size_t n_active = 0;
-  for (std::size_t i = 0; i < n_; ++i) {
-    active[i] = last_close_[i] != kNone && t - last_close_[i] <= stale;
-    if (active[i]) map[i] = n_active++;
-  }
-  if (n_active == 0) throw std::runtime_error("no nodes with data");
-
   std::vector<double> returns(n_, nan), volume(n_, nan), vwap(n_, nan);
   for (std::size_t i = 0; i < n_; ++i) {
     const double c = panel.close[panel.idx(t, i)];
@@ -135,6 +132,21 @@ Frame CorePipeline::step(const Panel& panel, std::size_t t) {
     vwap[i] = panel.vwap[panel.idx(t, i)];
   }
   const std::vector<double> pressure = pressure_.step(returns, volume, vwap);
+
+  // Active mask: traded within stale_bars AND above the liquidity floor. The floor uses the
+  // trailing median dollar volume computed after the step, so it covers bars up to and including
+  // t only (causal).
+  std::vector<bool> active(n_, false);
+  std::vector<std::size_t> map(n_, kNone);
+  std::size_t n_active = 0;
+  std::vector<double> mdv;
+  if (params_.min_dollar_volume > 0) mdv = pressure_.median_dollar_volume();
+  for (std::size_t i = 0; i < n_; ++i) {
+    active[i] = last_close_[i] != kNone && t - last_close_[i] <= stale &&
+                (params_.min_dollar_volume <= 0 || mdv[i] >= params_.min_dollar_volume);
+    if (active[i]) map[i] = n_active++;
+  }
+  if (n_active == 0) throw std::runtime_error("no nodes with data");
   // Affinity from the window before this bar: bar t's own return must not lower the correlation
   // of today's opposite-sign movers. The flux is built before the push, so `unit` stays valid.
   std::span<const double> unit;

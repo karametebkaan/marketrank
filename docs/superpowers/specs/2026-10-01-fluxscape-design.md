@@ -85,15 +85,16 @@ US Eastern time handling uses an explicit DST rule (2nd Sunday of March → 1st 
 
 ## 5. Flux graph model
 
-Each of the switches A–E below is a `CoreParams` field. Strategy versions (§8.4) record them, so they can be compared side by side. `CoreParams::legacy()` gives the milestone-1 behaviour (dollar pressure, no lift, no inbound pruning, no retention, uniform reference).
+Each of the switches A–E below is a `CoreParams` field. Strategy versions (§8.4) record them, so they can be compared side by side. `CoreParams::legacy()` gives the milestone-1 behaviour (dollar pressure, no lift, no inbound pruning, no retention, uniform reference; the liquidity floor and the volume-ratio cap are off).
 
 For each bar *t* and stock *i* with return `r_i = C/C⁻ − 1`, volume V and VWAP:
 
-- **(A) Pressure** (`pressure`, default `relative`):
+- **(A) Pressure** (`pressure`, default `sqrt`):
   - `dollar`: `p_i = r_i · V_i · VWAP_i`
   - `sqrt`: `p_i = r_i · √(V_i · VWAP_i)`
-  - `relative`: `p_i = r_i · V_i / ADV_i`, where ADV_i is the median volume of the previous 20 bars (not including this one); p = 0 until a stock has history. This removes the size bias: a stock's pressure reflects how unusual its participation is, not how big it is.
+  - `relative`: `p_i = r_i · V_i / ADV_i`, where ADV_i is the median volume of the previous 20 bars (not including this one); p = 0 until a stock has history. V/ADV is capped at `max_volume_ratio` (default 5; 0 = uncapped), so a single volume spike cannot dominate. This removes the size bias: a stock's pressure reflects how unusual its participation is, not how big it is.
   - `p_i < 0` → net selling (source); `p_i > 0` → net buying (sink). Missing data gives p = 0.
+- **Liquidity floor:** a node is active only while its trailing 20-bar median dollar volume is ≥ `min_dollar_volume` (default $1M); computed causally per bar, as part of the active mask.
 - **Affinity:** `a_ij = 1 + λ·ρ_ij`, λ ∈ [0, 1], where ρ is the Pearson correlation of returns over the last W = 60 bars. It is computed as a dot product of unit-length centered return vectors u_i, so no N×N matrix is stored. (Milestone 1 used `1 + λ·max(0, ρ)`; the linear form keeps the normalizer exact in O(N·W).)
 - **Per-bar flux** for source *i*, sink *j*: `f_ij = |p_i| · p_j · a_ij / D_i` with `D_i = Σ_sinks p_k a_ik = P + λ·u_i·g`, where `P = Σ p_k` and `g = Σ p_k u_k`. Each source distributes exactly its own outflow. Exact row totals `out_i = |p_i|` and column totals `in_j = p_j·(Σ_i a_i + λ·u_j·Σ_i a_i u_i)` (with `a_i = |p_i| / D_i`) are computed in O(N·W).
 - **Sparse edges:** each source stores edges only to its top M = 64 sinks by `p_j·a_ij`, chosen from the C = 256 sinks with the largest p_j, with their exact shares. The row and column totals above remain exact.

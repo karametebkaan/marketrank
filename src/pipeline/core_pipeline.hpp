@@ -16,9 +16,11 @@
 namespace fx {
 
 struct CoreParams {
-  PressureMode pressure = PressureMode::Relative;  // (A)
+  PressureMode pressure = PressureMode::Sqrt;  // (A)
   std::size_t adv_window = 20;
   std::size_t corr_window = 60;
+  double min_dollar_volume = 1e6;  // active only if trailing median dollar volume >= this; 0 = off
+  double max_volume_ratio = 5.0;   // relative pressure caps V/ADV here; 0 = uncapped
   std::size_t stale_bars = 5;  // active iff the last finite close is at most this many bars old
   SparseFluxParams flux;  // lambda, sink_candidates, sinks_per_source
   double halflife_slow = 20;
@@ -37,7 +39,7 @@ struct CoreParams {
 
 struct Frame {
   TimePoint t = 0;
-  std::vector<bool> active;         // size n; causal: a finite close within stale_bars of t
+  std::vector<bool> active;         // size n; causal: a recent close and the liquidity floor
   std::vector<double> pi, h;        // inactive: pi = 0, h = NaN
   SolveResult solve;
   SolveResult solve_long;           // h_ref == LongRun only (pi full size n); else default
