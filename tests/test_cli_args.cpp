@@ -129,4 +129,7 @@ TEST_CASE("malformed --shock values throw") {
   CHECK_THROWS_AS(parse_cli({"--shock", "NVDA:"}), std::invalid_argument);
   CHECK_THROWS_AS(parse_cli({"--shock", "NVDA:5x"}), std::invalid_argument);
   CHECK_THROWS_AS(parse_cli({"--shock"}), std::invalid_argument);
+  CHECK_THROWS_AS(parse_cli({"--shock", "NVDA:nan"}), std::invalid_argument);
+  CHECK_THROWS_AS(parse_cli({"--shock", "NVDA:inf"}), std::invalid_argument);
+  CHECK_THROWS_AS(parse_cli({"--shock", "NVDA:-inf"}), std::invalid_argument);
 }

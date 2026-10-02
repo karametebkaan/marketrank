@@ -51,8 +51,8 @@ struct Frame {
   double compute_ms = 0;
 };
 
-// Counterfactual jolt: replaces the pressure of an active node with size x median(|p|) over the
-// active nodes with non-zero pressure on that bar (size < 0 sells off, size > 0 is a buying surge).
+// Counterfactual jolt: an extra size% return at the node's normal volume, added to the bar's actual
+// pressure (units of the active pressure mode; duplicate shocks on a node add up).
 struct Shock {
   std::size_t node;
   double size;

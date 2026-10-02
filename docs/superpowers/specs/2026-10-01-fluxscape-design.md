@@ -127,7 +127,7 @@ For each bar *t* and stock *i* with return `r_i = C/C⁻ − 1`, volume V and VW
 - the mean frame time in ms
 
 ### 5.3 Shock mode (counterfactual)
-`fluxscape --shock TICKER:SIZE [--shock ...] --top N` runs the pipeline over bars 1..T−2, copies it, then steps the original (baseline) and the copy (shocked) at the last bar T−1. A shock replaces the pressure of a shocked active node, after the liquidity floor and active masking, with `SIZE × median(|p_j|)` over active nodes with p_j ≠ 0 on that bar (SIZE < 0 sell-off/source, SIZE > 0 buying surge/sink). Everything else (bar, flux rules, accumulators, transitions, solve) is identical. An unknown or inactive shocked ticker is an error.
+`fluxscape --shock TICKER:SIZE [--shock ...] --top N` runs the pipeline over bars 1..T−2, copies it, then steps the original (baseline) and the copy (shocked) at the last bar T−1. A shock `TICKER:SIZE` adds an extra SIZE% return at the stock's normal volume to the bar's actual pressure, after the liquidity floor and active masking: `p_X += (SIZE/100) × vol_term`, with vol_term = mdv (dollar), √mdv (sqrt) or 1 (relative, applied after the volume-ratio cap), where mdv is the trailing median dollar volume (SIZE < 0 sell-off/source, SIZE > 0 buying surge/sink; duplicate shocks on a node add). Everything else (bar, flux rules, accumulators, transitions, solve) is identical. An unknown or inactive shocked ticker is an error.
 The report gives the shocked nodes' Δh and Δπ, the top-N receivers and losers by Δh among active nodes (with Δπ and Δscore(+1)), the total |Δπ| (L1) and the portfolio holdings' Δh.
 
 ## 6. Geometry — layout, lattice, landscape

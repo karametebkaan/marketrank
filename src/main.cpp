@@ -146,7 +146,7 @@ int run_shock(const fx::CliArgs& args, const fx::Panel& panel, const fx::Univers
               std::string(fx::to_string(args.tf)).c_str(), panel.N(), panel.T(),
               fx::format_rfc3339(base.t).c_str(), omp_get_max_threads());
   std::printf("params: %s\n", fx::describe(args.params).c_str());
-  std::printf("SHOCK at the last bar (pressure = SIZE x median |pressure|; <0 sell-off, >0 buying surge)\n");
+  std::printf("SHOCK at the last bar (extra SIZE%% return at normal volume; <0 sell-off, >0 buying surge)\n");
   std::printf("%-7s %9s %10s %12s\n", "ticker", "size", "dh", "dpi");
   for (const auto& s : shocks)
     std::printf("%-7s %+9.2f %+10.4f %+12.3e\n", nodes[s.node].ticker.c_str(), s.size, d.dh[s.node],

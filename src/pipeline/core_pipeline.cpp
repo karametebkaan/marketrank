@@ -162,20 +162,26 @@ Frame CorePipeline::step(const Panel& panel, std::size_t t, const std::vector<Sh
   for (std::size_t i = 0; i < n_; ++i)
     if (!active[i]) pressure[i] = 0.0;
   if (!shocks.empty()) {
-    for (const Shock& s : shocks)
+    // Extra SIZE% return at the stock's normal volume, added to the bar's actual pressure. The
+    // volume term is in the pressure mode's units; duplicate shocks on a node add their sizes.
+    std::vector<double> extra(n_, 0.0);
+    std::vector<bool> hit(n_, false);
+    for (const Shock& s : shocks) {
       if (s.node >= n_ || !active[s.node])
         throw std::invalid_argument("CorePipeline::step: shocked node is unknown or inactive");
-    std::vector<double> mag;
-    for (std::size_t i = 0; i < n_; ++i)
-      if (active[i] && pressure[i] != 0.0 && std::isfinite(pressure[i]))
-        mag.push_back(std::fabs(pressure[i]));
-    double med = 0.0;
-    if (!mag.empty()) {
-      std::sort(mag.begin(), mag.end());
-      const std::size_t m = mag.size();
-      med = m % 2 ? mag[m / 2] : 0.5 * (mag[m / 2 - 1] + mag[m / 2]);
+      extra[s.node] += s.size;
+      hit[s.node] = true;
     }
-    for (const Shock& s : shocks) pressure[s.node] = s.size * med;
+    const std::vector<double> mdv_s = pressure_.median_dollar_volume();
+    for (std::size_t i = 0; i < n_; ++i) {
+      if (!hit[i]) continue;
+      if (!(std::isfinite(mdv_s[i]) && mdv_s[i] > 0))
+        throw std::invalid_argument("CorePipeline::step: shocked node has no normal volume");
+      double vol_term = 1.0;  // Relative: the ratio at normal volume
+      if (params_.pressure == PressureMode::Dollar) vol_term = mdv_s[i];
+      else if (params_.pressure == PressureMode::Sqrt) vol_term = std::sqrt(mdv_s[i]);
+      pressure[i] += (extra[i] / 100.0) * vol_term;
+    }
   }
   // Affinity from the window before this bar: bar t's own return must not lower the correlation
   // of today's opposite-sign movers. The flux is built before the push, so `unit` stays valid.

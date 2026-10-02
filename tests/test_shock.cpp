@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -90,4 +91,59 @@ TEST_CASE("an unknown or inactive node throws") {
   CoreParams strict = params();
   strict.min_dollar_volume = 1e18;  // deactivates every node
   CHECK_THROWS(run_with_shock(m.panel, strict, {{0, -1.0}}));
+}
+
+namespace {
+// n nodes, T bars of noisy returns; node 0 trades 100x the dollar volume and falls on the last bar.
+Panel heavy_panel(std::size_t n = 12, std::size_t T = 40) {
+  Panel p;
+  p.tickers.resize(n);
+  for (std::size_t i = 0; i < n; ++i) p.tickers[i] = "T" + std::to_string(i);
+  std::mt19937 rng(7);
+  std::normal_distribution<double> nd(0.0, 0.01);
+  std::vector<double> px(n, 100.0);
+  for (std::size_t t = 0; t < T; ++t) {
+    p.times.push_back(static_cast<TimePoint>(t) * 86400);
+    for (std::size_t i = 0; i < n; ++i) {
+      double r = nd(rng);
+      if (i == 0 && t + 1 == T) r = -0.03;
+      px[i] *= 1.0 + r;
+      p.open.push_back(px[i]);
+      p.high.push_back(px[i]);
+      p.low.push_back(px[i]);
+      p.close.push_back(px[i]);
+      p.volume.push_back(i == 0 ? 1e6 : 1e4);
+      p.vwap.push_back(px[i]);
+    }
+  }
+  return p;
+}
+}  // namespace
+
+TEST_CASE("a heavy seller gets more selling from a sell shock") {
+  const Panel panel = heavy_panel();
+  const auto [base, shocked] = run_with_shock(panel, params(), {{0, -10.0}});
+  const ShockDelta d = shock_response(base, shocked);
+  CHECK(d.dh[0] < 0);
+  CHECK(shocked.inflow[0] <= base.inflow[0]);
+  CHECK(d.l1_dpi > 0);
+}
+
+TEST_CASE("a buy shock raises the node's hotness") {
+  const Panel panel = heavy_panel();
+  for (std::size_t i : {std::size_t{0}, std::size_t{5}}) {
+    const auto [base, shocked] = run_with_shock(panel, params(), {{i, 10.0}});
+    CHECK(shock_response(base, shocked).dh[i] > 0);
+  }
+}
+
+TEST_CASE("duplicate shocks add their sizes") {
+  const Panel panel = heavy_panel();
+  const auto [b1, s1] = run_with_shock(panel, params(), {{3, -5.0}, {3, -5.0}});
+  const auto [b2, s2] = run_with_shock(panel, params(), {{3, -10.0}});
+  const ShockDelta d1 = shock_response(b1, s1), d2 = shock_response(b2, s2);
+  for (std::size_t i = 0; i < d1.dh.size(); ++i) {
+    CHECK(same_bits(d1.dh[i], d2.dh[i]));
+    CHECK(same_bits(d1.dpi[i], d2.dpi[i]));
+  }
 }
