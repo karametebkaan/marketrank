@@ -40,6 +40,7 @@ struct Frame {
   std::vector<bool> active;         // size n; causal: a finite close within stale_bars of t
   std::vector<double> pi, h;        // inactive: pi = 0, h = NaN
   SolveResult solve;
+  SolveResult solve_long;           // h_ref == LongRun only (pi full size n); else default
   std::vector<Forecast> forecasts;  // parallel to CoreParams::horizons
   Csr P;                            // slow (equilibrium) transition matrix
   Csr P_fast;                       // fast transition matrix

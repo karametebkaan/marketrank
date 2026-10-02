@@ -183,12 +183,12 @@ Frame CorePipeline::step(const Panel& panel, std::size_t t) {
     }
     case HotRef::LongRun: {
       const Csr Pl = compact(build_transition(*long_, params_.transition, active), map, n_active);
-      const SolveResult lr =
-          stationary(Pl, params_.alpha, remap_warm(prev_long_pi_, active, n_active));
+      f.solve_long = stationary(Pl, params_.alpha, remap_warm(prev_long_pi_, active, n_active));
+      h_a = relative_hotness(pi_a, f.solve_long.pi);
       prev_long_pi_.assign(n_, 0.0);
       for (std::size_t i = 0; i < n_; ++i)
-        if (active[i]) prev_long_pi_[i] = lr.pi[map[i]];
-      h_a = relative_hotness(pi_a, lr.pi);
+        if (active[i]) prev_long_pi_[i] = f.solve_long.pi[map[i]];
+      f.solve_long.pi = prev_long_pi_;
       break;
     }
   }

@@ -343,3 +343,14 @@ TEST_CASE("affinity at bar t uses only the returns before t") {
   fb = b.step(p, 3);
   CHECK_FALSE(fa.P.raw == fb.P.raw);
 }
+
+TEST_CASE("the frame surfaces the long-run solve") {
+  CoreParams p;
+  p.h_ref = HotRef::LongRun;
+  const Frame f = run_panel_last(small_panel(false), p);
+  CHECK(f.solve_long.converged);
+  CHECK(f.solve_long.iterations > 0);
+  const Frame u = run_panel_last(small_panel(false), CoreParams{});
+  CHECK_FALSE(u.solve_long.converged);
+  CHECK(u.solve_long.pi.empty());
+}
