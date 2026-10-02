@@ -31,6 +31,7 @@ class SignalTracker {
 
 // Cross-sectional z-score over the finite entries inside the mask: (x - mean) / sd (population sd), winsorized
 // at +-3. Outside the mask or non-finite: NaN. sd == 0: all (finite masked) values 0.
+// Throws std::invalid_argument if mask.size() != x.size().
 std::vector<double> zscore(std::span<const double> x, const std::vector<bool>& mask);
 
 }  // namespace mr

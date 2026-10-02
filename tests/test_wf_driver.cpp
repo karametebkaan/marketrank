@@ -346,6 +346,7 @@ TEST_CASE("walkforward_params: blend windows follow the rebalance calendar unles
   CHECK(w.largecap_run == "lc");
   CHECK_THROWS_AS(with({"--wf-blend", "10/2/8"}), std::invalid_argument);
   CHECK_THROWS_AS(with({"--wf-blend", "0/1/8/4"}), std::invalid_argument);
+  CHECK_THROWS_AS(with({"--wf-blend", "10/0/8/4"}), std::invalid_argument);  // embargo >= 1: label(m) is future
 }
 
 TEST_CASE("cli: walk-forward flag validation") {

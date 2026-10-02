@@ -71,6 +71,7 @@ std::array<std::vector<double>, kSignals> SignalTracker::update(const Frame& f) 
 
 std::vector<double> zscore(std::span<const double> x, const std::vector<bool>& mask) {
   const std::size_t n = x.size();
+  if (mask.size() != n) throw std::invalid_argument("zscore: mask size != x size");
   std::vector<double> z(n, kNaN);
   double sum = 0;
   std::size_t m = 0;

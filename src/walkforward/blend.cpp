@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <limits>
+#include <cmath>
 #include <span>
+#include <stdexcept>
 
 #include "walkforward/stats.hpp"
 
@@ -13,6 +15,8 @@ constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
 }
 
 std::vector<BlendStep> run_blend(const std::vector<MonthRecord>& months, const BlendParams& p) {
+  if (p.embargo < 1)
+    throw std::invalid_argument("run_blend: embargo must be >= 1 (label(m) ends at the next execution)");
   const std::size_t M = months.size();
   std::vector<BlendStep> out(M);
   // ic[s][j] = spearman(z_s(j), label(j)); depends on label(j), only read for j <= m - embargo - 1.

@@ -4,6 +4,7 @@
 #include <limits>
 #include <random>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 #include "walkforward/backtest.hpp"
@@ -225,4 +226,66 @@ TEST_CASE("wf backtest: rebalanced base and single benchmarks") {
   CHECK(s.trades_csv.size() == 1);
   CHECK_THROWS_AS(simulate(p, bp, ds, BenchKind::Single, "nope"), std::invalid_argument);
   CHECK(simulate(p, bp, {}).value.empty());
+}
+
+TEST_CASE("wf backtest: rebalanced base with costs and a binding turnover cap") {
+  const Panel p = make_panel();
+  BacktestParams bp;
+  bp.base = {{"A", 0.5}, {"B", 0.5}};
+  bp.cost_bps = 10;
+  bp.max_turnover = 0.001;  // binds: the drift from 50/50 by bar 21 is larger
+  const std::vector<Decision> ds = {{0, {}, {}}, {20, {}, {}}};
+  const EquityCurve r = simulate(p, bp, ds, BenchKind::RebalancedBase);
+  // Initial funding (exempt from the cap): gross 1, cost 0.001, positions scaled by 0.999.
+  const double sa = 0.5 * 0.999 / O(p, 1, 0), sb = 0.5 * 0.999 / O(p, 1, 1);
+  const double V = sa * O(p, 21, 0) + sb * O(p, 21, 1);
+  const double da = 0.5 * V - sa * O(p, 21, 0), db = 0.5 * V - sb * O(p, 21, 1);
+  const double raw = (std::abs(da) + std::abs(db)) / (2 * V);
+  REQUIRE(raw > bp.max_turnover);
+  const double s = bp.max_turnover / raw;
+  const double gross = s * (std::abs(da) + std::abs(db)), cost = 1e-3 * gross;
+  check_rel(r.costs, 0.001 + cost);
+  check_rel(r.turnover, bp.max_turnover);
+  const double f = (V - cost) / V;
+  const double na = (sa * O(p, 21, 0) + s * da) * f, nb = (sb * O(p, 21, 1) + s * db) * f;
+  check_rel(r.value[19], sa * C(p, 20, 0) + sb * C(p, 20, 1));
+  check_rel(r.value[20], na / O(p, 21, 0) * C(p, 21, 0) + nb / O(p, 21, 1) * C(p, 21, 1));
+  check_rel(r.value.back(), na / O(p, 21, 0) * C(p, kT - 1, 0) + nb / O(p, 21, 1) * C(p, kT - 1, 1));
+}
+
+TEST_CASE("wf backtest: no look-ahead - bars after an execution open do not change the curve or trades before it") {
+  const Panel p = make_panel();
+  BacktestParams bp;
+  bp.base = {{"A", 0.4}, {"D", 0.4}};
+  bp.k = 2;
+  bp.max_turnover = 0.3;
+  std::mt19937_64 rng(7);
+  std::uniform_real_distribution<double> u(0.0, 1.0);
+  std::vector<Decision> ds;
+  for (std::size_t d = 2; d + 1 < kT; d += 5) ds.push_back({d, {u(rng), u(rng), u(rng), u(rng)}, {}});
+  const EquityCurve base = simulate(p, bp, ds);
+  const std::size_t first = ds.front().date + 1;
+  auto trades_through = [&](const EquityCurve& c, std::size_t bar) {
+    std::vector<std::string> out;
+    for (const auto& row : c.trades_csv)
+      if (std::stoll(row.substr(0, row.find(','))) <= p.times[bar]) out.push_back(row);
+    return out;
+  };
+  for (const Decision& d : ds) {
+    const std::size_t e = d.date + 1;  // execution bar of this decision
+    // (a) every bar after e perturbed: the curve through e's close and every trade through e are unchanged.
+    Panel q = p;
+    for (std::size_t t = e + 1; t < kT; ++t)
+      for (std::size_t i = 0; i < q.N(); ++i)
+        for (auto* v : {&q.open, &q.high, &q.low, &q.close, &q.volume, &q.vwap})
+          (*v)[q.idx(t, i)] *= 1.0 + 0.3 * u(rng);
+    const EquityCurve a = simulate(q, bp, ds);
+    for (std::size_t t = first; t <= e; ++t) CHECK(a.value[t - first] == base.value[t - first]);
+    CHECK(trades_through(a, e) == trades_through(base, e));
+    // (b) also e's close (everything after its open): the trades at e's open are still unchanged.
+    for (std::size_t i = 0; i < q.N(); ++i) q.close[q.idx(e, i)] *= 1.25;
+    const EquityCurve b = simulate(q, bp, ds);
+    CHECK(trades_through(b, e) == trades_through(base, e));
+    for (std::size_t t = first; t < e; ++t) CHECK(b.value[t - first] == base.value[t - first]);
+  }
 }

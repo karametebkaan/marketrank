@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include <stdexcept>
+
 #include <cmath>
 #include <limits>
 #include <vector>
@@ -101,6 +103,8 @@ TEST_CASE("zscore") {
   big[0] = 1000;
   const auto zb = zscore(big, std::vector<bool>(101, true));
   CHECK(zb[0] == 3.0);
+  CHECK_THROWS_AS(zscore(x, {true, true, true}), std::invalid_argument);  // mask size != x size
+  CHECK_THROWS_AS(zscore(x, {}), std::invalid_argument);
 }
 
 TEST_CASE("Pulse1 equals Frame::pulse on a real pipeline") {

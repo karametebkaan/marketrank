@@ -4,6 +4,7 @@
 #include <cstring>
 #include <limits>
 #include <random>
+#include <stdexcept>
 #include <vector>
 
 #include "walkforward/blend.hpp"
@@ -103,4 +104,10 @@ TEST_CASE("blend: weights are non-negative and sum to 1 or 0") {
       CHECK((sum == 0 || std::abs(sum - 1) < 1e-12));
     }
   }
+}
+
+TEST_CASE("blend: an embargo below 1 is rejected (label(m) is only known after the next execution)") {
+  const auto ms = make_months(10, false, 3);
+  CHECK_THROWS_AS(run_blend(ms, BlendParams{36, 0, 24, 12, 2.0}), std::invalid_argument);
+  CHECK_NOTHROW(run_blend(ms, BlendParams{36, 1, 24, 12, 2.0}));
 }

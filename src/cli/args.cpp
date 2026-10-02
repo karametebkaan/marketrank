@@ -55,8 +55,8 @@ BlendParams to_blend(const std::string& flag, const std::string& v) {
     if (slash == std::string::npos) break;
     start = slash + 1;
   }
-  if (x.size() != 4 || x[0] == 0 || x[2] == 0 || x[3] == 0)
-    throw std::invalid_argument(flag + " expects TRAIN/EMBARGO/GATE/MIN periods (TRAIN, GATE, MIN >= 1), got '" + v + "'");
+  if (x.size() != 4 || x[0] == 0 || x[1] == 0 || x[2] == 0 || x[3] == 0)
+    throw std::invalid_argument(flag + " expects TRAIN/EMBARGO/GATE/MIN periods (all >= 1), got '" + v + "'");
   BlendParams b;
   b.train_months = x[0], b.embargo = x[1], b.gate_months = x[2], b.gate_min = x[3];
   return b;

@@ -26,6 +26,8 @@ TEST_CASE("mean_t and normal functions") {
   CHECK(norm_cdf(0) == doctest::Approx(0.5));
   CHECK(norm_cdf(1.96) == doctest::Approx(0.9750021).epsilon(1e-6));
   CHECK(norm_inv(0.975) == doctest::Approx(1.959964).epsilon(1e-6));
+  CHECK(norm_inv(0.99) == doctest::Approx(2.326348).epsilon(1e-6));  // upper tail (p > 0.97575 branch)
+  CHECK(norm_inv(0.999) == doctest::Approx(3.090232).epsilon(1e-6));
   CHECK(norm_inv(norm_cdf(-2.3)) == doctest::Approx(-2.3).epsilon(1e-8));
 }
 
