@@ -411,6 +411,11 @@ async function refreshTimes() {
   S.times = await getJSON('/api/times');
   const s = $('scrub');
   s.max = Math.max(0, S.times.length - 1);
+  if (S.selftest && Q.has('t')) { // ?selftest=1&t=<unix s>: open the bar nearest t, not the latest
+    const t = Number(Q.get('t'));
+    $('follow').checked = false;
+    s.value = S.times.reduce((b, x, i) => (Math.abs(x - t) < Math.abs(S.times[b] - t) ? i : b), 0);
+  }
   if ($('follow').checked) s.value = s.max;
   updateShockEnabled();
 }
