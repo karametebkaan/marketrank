@@ -135,10 +135,12 @@ Frame CorePipeline::step(const Panel& panel, std::size_t t) {
     vwap[i] = panel.vwap[panel.idx(t, i)];
   }
   const std::vector<double> pressure = pressure_.step(returns, volume, vwap);
-  window_.push(returns);
+  // Affinity from the window before this bar: bar t's own return must not lower the correlation
+  // of today's opposite-sign movers. The flux is built before the push, so `unit` stays valid.
   std::span<const double> unit;
   if (params_.flux.lambda > 0) unit = window_.unit_vectors();
   const BarFlux bar = bar_flux_sparse(pressure, unit, window_.window(), params_.flux);
+  window_.push(returns);
   slow_.add(bar);
   fast_.add(bar);
   if (long_) long_->add(bar);

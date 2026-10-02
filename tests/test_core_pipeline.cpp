@@ -320,3 +320,26 @@ TEST_CASE("a stale ticker drops out after stale_bars") {
   bad.stale_bars = 0;
   CHECK_THROWS_AS(bad.validate(), std::invalid_argument);
 }
+
+TEST_CASE("affinity at bar t uses only the returns before t") {
+  // At t = 2 the window before the bar holds one return, too few for a correlation, so the
+  // affinity must be neutral and the frame must equal the lambda = 0 frame exactly.
+  Panel p = presence_panel(6, 6, [](std::size_t, std::size_t) { return true; });
+  CoreParams with;
+  with.flux.lambda = 1.0;
+  CoreParams without = with;
+  without.flux.lambda = 0.0;
+  CorePipeline a(p.N(), with), b(p.N(), without);
+  Frame fa, fb;
+  for (std::size_t t = 1; t <= 2; ++t) {
+    fa = a.step(p, t);
+    fb = b.step(p, t);
+  }
+  CHECK(fa.P.col == fb.P.col);
+  CHECK(fa.P.raw == fb.P.raw);
+  CHECK(test::same_values(fa.pi, fb.pi));
+  // One bar later the window holds two returns and the affinity takes effect.
+  fa = a.step(p, 3);
+  fb = b.step(p, 3);
+  CHECK_FALSE(fa.P.raw == fb.P.raw);
+}
