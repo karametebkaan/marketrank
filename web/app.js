@@ -516,9 +516,9 @@ async function setShowEtf(on) {
   return r.generation;
 }
 
-// ---- A stock's path: level log(π / size share) (x) against 5-bar momentum Δlog π·N (y), one point per bar over the
-// last PATH_BARS cached bars ending at the displayed bar. These coordinates mean the same on every bar, unlike the
-// stock's place on the map (which follows the re-clustered layout). The strip under the chart colours each bar by
+// ---- A stock's path over time: its level log(π / size share) per bar over the last PATH_BARS cached bars ending at
+// the displayed bar (the slope is its momentum). This value means the same on every bar, unlike the stock's place on
+// the map (which follows the re-clustered layout). The strip under the chart colours each bar by
 // the stock's flux community; frequent changes mean it has no stable group.
 const PATH_BARS = 60;
 function svgEl(tag, attrs, text) {
@@ -545,60 +545,72 @@ function closePath() { S.pathTicker = null; S.pathSeq = (S.pathSeq || 0) + 1; $(
 function drawPath(r) {
   const svg = $('pathSvg');
   svg.replaceChildren();
-  const W = 360, H = 250, padL = 34, padR = 8, padT = 8, stripH = 8, padB = 34 + stripH;
-  const pts = r.points.filter((p) => p.level !== null && p.momentum !== null);
-  const days = r.points.length;
-  $('pathTitle').textContent = `${r.ticker} · ${sectorAbbr(r.sector)} · path over ${days} bars`;
-  if (pts.length < 2) {
+  const W = 360, H = 250, padL = 40, padR = 10, padT = 10, stripH = 8, padB = 30 + stripH;
+  const P = r.points, days = P.length;
+  $('pathTitle').textContent = `${r.ticker} · ${sectorAbbr(r.sector)} · last ${days} bars`;
+  const act = P.filter((p) => p.level !== null);
+  if (act.length < 2) {
     svg.append(svgEl('text', { x: W / 2, y: H / 2, 'text-anchor': 'middle' }, 'not enough active bars'));
     $('pathNote').textContent = '';
     return;
   }
-  // Symmetric ranges around 0, so the axes cross in the middle and the quadrants keep their meaning.
-  const xm = Math.max(1e-6, ...pts.map((p) => Math.abs(p.level))) * 1.1;
-  const ym = Math.max(1e-6, ...pts.map((p) => Math.abs(p.momentum))) * 1.1;
-  const X = (v) => padL + (v + xm) / (2 * xm) * (W - padL - padR);
-  const Y = (v) => padT + (ym - v) / (2 * ym) * (H - padT - padB);
-  const x0 = X(0), y0 = Y(0), bottom = H - padB;
+  // Level log(π / size share) over time; 0 = exactly what its size predicts. The y range always includes 0.
+  const lo = Math.min(0, ...act.map((p) => p.level)), hi = Math.max(0, ...act.map((p) => p.level));
+  const padY = 0.08 * Math.max(hi - lo, 1e-6), y0v = lo - padY, y1v = hi + padY;
+  const bottom = H - padB;
+  const X = (k) => padL + (days === 1 ? 0 : k / (days - 1)) * (W - padL - padR);
+  const Y = (v) => padT + (y1v - v) / (y1v - y0v) * (bottom - padT);
+  const zy = Y(0);
   svg.append(
-    svgEl('rect', { x: padL, y: padT, width: W - padL - padR, height: bottom - padT, fill: '#fbfbfa', stroke: '#e4e4df' }),
-    svgEl('line', { x1: x0, y1: padT, x2: x0, y2: bottom, stroke: '#c8c8c2' }),
-    svgEl('line', { x1: padL, y1: y0, x2: W - padR, y2: y0, stroke: '#c8c8c2' }),
-    svgEl('text', { x: W - padR - 3, y: padT + 11, 'text-anchor': 'end', class: 'q' }, 'above size · rising'),
-    svgEl('text', { x: W - padR - 3, y: bottom - 4, 'text-anchor': 'end', class: 'q' }, 'above size · falling'),
-    svgEl('text', { x: padL + 3, y: padT + 11, class: 'q' }, 'below size · rising'),
-    svgEl('text', { x: padL + 3, y: bottom - 4, class: 'q' }, 'below size · falling'),
-    svgEl('text', { x: (padL + W - padR) / 2, y: bottom + stripH + 24, 'text-anchor': 'middle' }, 'level: log(π / size share)'),
-    svgEl('text', { x: 10, y: (padT + bottom) / 2, 'text-anchor': 'middle', transform: `rotate(-90 10 ${(padT + bottom) / 2})` }, 'momentum: Δ5 log π·N'),
-    svgEl('text', { x: padL, y: bottom + stripH + 12 }, (-xm).toFixed(2)),
-    svgEl('text', { x: W - padR, y: bottom + stripH + 12, 'text-anchor': 'end' }, `+${xm.toFixed(2)}`),
-    svgEl('text', { x: padL - 3, y: padT + 9, 'text-anchor': 'end' }, `+${ym.toFixed(2)}`),
-    svgEl('text', { x: padL - 3, y: bottom, 'text-anchor': 'end' }, (-ym).toFixed(2)),
+    svgEl('rect', { x: padL, y: padT, width: W - padL - padR, height: bottom - padT, fill: '#fbfbfc', stroke: '#e6e8ee' }),
+    svgEl('defs', {}),
   );
-  // Segments fade from old (light) to new (dark).
-  for (let k = 1; k < pts.length; k++) {
-    const a = pts[k - 1], b = pts[k], age = k / (pts.length - 1);
-    svg.append(svgEl('line', { x1: X(a.level), y1: Y(a.momentum), x2: X(b.level), y2: Y(b.momentum),
-      stroke: `rgba(29, 29, 27, ${(0.12 + 0.75 * age).toFixed(2)})`, 'stroke-width': 1.5 }));
+  const defs = svg.lastChild;
+  defs.innerHTML = `<clipPath id="pcAbove"><rect x="${padL}" y="${padT}" width="${W - padL - padR}" height="${Math.max(0, zy - padT)}"/></clipPath>` +
+    `<clipPath id="pcBelow"><rect x="${padL}" y="${zy}" width="${W - padL - padR}" height="${Math.max(0, bottom - zy)}"/></clipPath>`;
+  // Gridlines with labels: 0, the range ends.
+  for (const v of [y1v - padY, 0, y0v + padY]) {
+    svg.append(svgEl('line', { x1: padL, y1: Y(v), x2: W - padR, y2: Y(v), stroke: v === 0 ? '#b8bcc6' : '#eceef2', 'stroke-dasharray': v === 0 ? '' : '3 3' }),
+      svgEl('text', { x: padL - 4, y: Y(v) + 3, 'text-anchor': 'end' }, `${v > 0 ? '+' : ''}${v.toFixed(2)}`));
   }
-  const first = pts[0], last = pts[pts.length - 1];
-  const c = (p) => `${p.time.slice(0, 10)} · level ${fmtSigned(p.level, 3)} · momentum ${fmtSigned(p.momentum, 4)} · π·N ${fmt(p.mr, 3)}`;
-  const f0 = svgEl('circle', { cx: X(first.level), cy: Y(first.momentum), r: 3, fill: '#fff', stroke: '#6b6b66' });
-  f0.append(svgEl('title', {}, `start ${c(first)}`));
-  const l0 = svgEl('circle', { cx: X(last.level), cy: Y(last.momentum), r: 5, fill: 'rgb(0, 200, 80)', stroke: '#fff', 'stroke-width': 1.5 });
-  l0.append(svgEl('title', {}, `now ${c(last)}`));
-  svg.append(f0, l0);
-  // Community strip: one cell per bar (all bars of the window, active or not).
-  const cw = (W - padL - padR) / days;
-  r.points.forEach((p, k) => {
-    const rc = svgEl('rect', { x: padL + k * cw, y: bottom + 2, width: Math.max(cw, 0.5) + 0.3, height: stripH, fill: groupColor(p.group) });
+  // Line and area, broken where the stock was inactive.
+  const runs = [];
+  let cur = [];
+  P.forEach((p, k) => { if (p.level === null) { if (cur.length) runs.push(cur); cur = []; } else cur.push([X(k), Y(p.level)]); });
+  if (cur.length) runs.push(cur);
+  for (const run of runs) {
+    const line = run.map(([x, y], j) => `${j ? 'L' : 'M'}${x.toFixed(1)},${y.toFixed(1)}`).join('');
+    const area = `${line}L${run[run.length - 1][0].toFixed(1)},${zy.toFixed(1)}L${run[0][0].toFixed(1)},${zy.toFixed(1)}Z`;
+    svg.append(svgEl('path', { d: area, fill: 'rgba(200, 29, 58, .18)', 'clip-path': 'url(#pcAbove)' }),
+      svgEl('path', { d: area, fill: 'rgba(36, 99, 196, .18)', 'clip-path': 'url(#pcBelow)' }),
+      svgEl('path', { d: line, fill: 'none', stroke: '#141821', 'stroke-width': 1.6, 'stroke-linejoin': 'round' }));
+  }
+  // Hover targets: one invisible column per bar with the exact values.
+  const cw = (W - padL - padR) / Math.max(1, days - 1);
+  P.forEach((p, k) => {
+    const hit = svgEl('rect', { x: X(k) - cw / 2, y: padT, width: cw, height: bottom - padT, fill: 'transparent' });
+    hit.append(svgEl('title', {}, `${p.time.slice(0, 10)} · level ${p.level === null ? 'n/a' : fmtSigned(p.level, 3)} · π·N ${fmt(p.mr, 3)} · Δ5 log π·N ${fmtSigned(p.momentum, 4)}`));
+    svg.append(hit);
+  });
+  const last = P[days - 1];
+  if (last.level !== null) svg.append(svgEl('circle', { cx: X(days - 1), cy: Y(last.level), r: 4.5, fill: 'rgb(0, 200, 80)', stroke: '#fff', 'stroke-width': 1.5 }));
+  // Community strip, aligned with the time axis.
+  const sw = (W - padL - padR) / days;
+  P.forEach((p, k) => {
+    const rc = svgEl('rect', { x: padL + k * sw, y: bottom + 3, width: sw + 0.3, height: stripH, fill: groupColor(p.group) });
     rc.append(svgEl('title', {}, `${p.time.slice(0, 10)} · community ${p.group === null || p.group < 0 ? 'none' : p.group}`));
     svg.append(rc);
   });
-  const groups = r.points.map((p) => p.group);
+  svg.append(
+    svgEl('text', { x: padL, y: bottom + stripH + 16 }, P[0].time.slice(0, 10)),
+    svgEl('text', { x: W - padR, y: bottom + stripH + 16, 'text-anchor': 'end' }, last.time.slice(0, 10)),
+    svgEl('text', { x: 10, y: (padT + bottom) / 2, 'text-anchor': 'middle', transform: `rotate(-90 10 ${(padT + bottom) / 2})` }, 'log(π / size share)'),
+    svgEl('text', { x: padL + 4, y: padT + 11, class: 'q' }, 'more money than size predicts'),
+    svgEl('text', { x: padL + 4, y: bottom - 4, class: 'q' }, 'less'),
+  );
   let changes = 0;
-  for (let k = 1; k < groups.length; k++) if (groups[k] !== groups[k - 1]) changes++;
-  $('pathNote').textContent = `${first.time.slice(0, 10)} → ${last.time.slice(0, 10)} · open dot = start, green = now · community changed ${changes}× in ${days} bars`;
+  for (let k = 1; k < days; k++) if (P[k].group !== P[k - 1].group) changes++;
+  $('pathNote').textContent = `now: level ${last.level === null ? 'n/a' : fmtSigned(last.level, 3)} · π·N ${fmt(last.mr, 3)} · 5-bar Δlog π·N ${fmtSigned(last.momentum, 4)} · community changed ${changes}× in ${days} bars`;
 }
 
 function wire() {
