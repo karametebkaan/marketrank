@@ -2,6 +2,8 @@
 #include <httplib.h>
 
 #include <chrono>
+#include <future>
+#include <iostream>
 #include <nlohmann/json.hpp>
 #include <thread>
 
@@ -21,7 +23,7 @@ struct Fixture {
   std::unique_ptr<FluxServer> server;
   std::thread th;
   int port = 0;
-  Fixture() {
+  explicit Fixture(bool start = true) {
     SyntheticConfig cfg;
     cfg.bars = 80;
     cfg.rotation_start = 40;
@@ -31,8 +33,8 @@ struct Fixture {
     for (auto& s : secs) tickers.push_back(s.ticker);
     store = std::make_unique<FrameStore>(build_panel(bars, tickers, cfg.tf), secs, CoreParams::money_flow(),
                                          LandscapeParams{}, 10);
-    store->start();
-    for (int k = 0; k < 600 && !store->status().ready; ++k) std::this_thread::sleep_for(50ms);
+    if (start) store->start();
+    for (int k = 0; start && k < 600 && !store->status().ready; ++k) std::this_thread::sleep_for(50ms);
     test::write_file(web / "index.html", "hello");
     server = std::make_unique<FluxServer>(*store, std::nullopt, "synthetic 1d");
     ServerOptions o;
@@ -105,9 +107,121 @@ TEST_CASE("server: stop releases an open SSE stream without hanging") {
   });
   for (int k = 0; k < 100 && !got_status; ++k) std::this_thread::sleep_for(50ms);
   CHECK(got_status.load());
-  const auto t0 = std::chrono::steady_clock::now();
-  fx_.reset();  // stops the server, joins the listener, then destroys the frame store
-  CHECK(std::chrono::steady_clock::now() - t0 < 5s);
+  auto fut = std::async(std::launch::async, [&] { fx_.reset(); });  // stops, joins, destroys the store
+  const bool finished = fut.wait_for(5s) == std::future_status::ready;
+  CHECK(finished);
+  if (!finished) {
+    std::cerr << "shutdown hung; aborting\n";
+    std::_Exit(1);  // the stuck future would otherwise block its destructor forever
+  }
   reader.join();
   CHECK(done.load());
+}
+
+TEST_CASE("server: stop right after start is not lost") {
+  for (int rep = 0; rep < 20; ++rep) {
+    Fixture f;  // listen thread already started
+    f.server->stop();
+    f.th.join();
+    f.th = std::thread([] {});  // destructor joins this
+  }
+  Fixture g;  // stop issued before listen even begins
+  g.server->stop();
+  g.th.join();
+  auto sv = std::make_unique<FluxServer>(*g.store, std::nullopt, "x");
+  ServerOptions o;
+  o.port = 0;
+  o.web_root = g.web;
+  sv->bind(o);
+  sv->stop();
+  auto fut = std::async(std::launch::async, [&] { sv->listen(); });
+  CHECK(fut.wait_for(5s) == std::future_status::ready);
+  g.th = std::thread([] {});
+}
+
+TEST_CASE("server: 503 before ready, shock grid 404, node field order") {
+  {
+    Fixture f(false);
+    httplib::Client cli("127.0.0.1", f.port);
+    CHECK(cli.Get("/api/status")->status == 200);
+    CHECK(cli.Get("/api/frame")->status == 503);
+    CHECK(cli.Get("/api/frame/grid")->status == 503);
+    CHECK(cli.Get("/api/frame?t=1")->status == 503);
+    CHECK(cli.Post("/api/shock", R"({"shocks":[{"ticker":"S000","size":1}]})", "application/json")->status >= 400);
+  }
+  Fixture f;
+  httplib::Client cli("127.0.0.1", f.port);
+  CHECK(cli.Get("/api/shock/grid")->status == 404);
+  auto fr = json::parse(cli.Get("/api/frame")->body);
+  const auto& n0 = fr["nodes"][0];
+  REQUIRE(n0.size() == 10);
+  CHECK(n0[0].is_number_integer());
+  CHECK(n0[1].is_string());
+  CHECK(n0[2].is_string());
+  CHECK(n0[3].is_number_integer());
+  CHECK(n0[4].is_number());
+  CHECK(n0[5].is_number());
+  CHECK(fr["nodes"][0][1] == f.store->nodes()[n0[0].get<std::size_t>()].ticker);
+  CHECK(fr["nodes"][0][2] == f.store->nodes()[n0[0].get<std::size_t>()].sector);
+  const std::string ticker = n0[1];
+  auto r = cli.Post("/api/shock", json{{"shocks", {{{"ticker", ticker}, {"size", -5}}}}}.dump(), "application/json");
+  REQUIRE(r->status == 200);
+  auto b = json::parse(r->body);
+  auto g = cli.Get("/api/shock/grid");
+  CHECK(g->status == 200);
+  CHECK(g->body.size() == b["raster"]["w"].get<std::size_t>() * b["raster"]["h"].get<std::size_t>() * 4);
+}
+
+TEST_CASE("server: bad shock bodies are 400") {
+  Fixture f;
+  httplib::Client cli("127.0.0.1", f.port);
+  auto post = [&](const std::string& body) { return cli.Post("/api/shock", body, "application/json")->status; };
+  CHECK(post("{not json") == 400);
+  CHECK(post(R"({"shocks":[]})") == 400);
+  CHECK(post(R"({})") == 400);
+  CHECK(post(R"({"shocks":[{"ticker":"X","size":1e999}]})") == 400);
+  const std::string t = f.store->nodes()[0].ticker;
+  CHECK(post(R"({"shocks":[{"ticker":")" + t + R"(","size":"big"}]})") == 400);
+  CHECK(cli.Post("/api/params", "{oops", "application/json")->status == 400);
+}
+
+TEST_CASE("server: invalid params are 400 and change nothing") {
+  Fixture f;
+  httplib::Client cli("127.0.0.1", f.port);
+  const auto before = json::parse(cli.Get("/api/status")->body);
+  const std::vector<std::string> bad = {
+      R"({"idw_radius":-1})",      R"({"idw_radius":17})",      R"({"idw_radius":2.5})",
+      R"({"idw_power":0})",        R"({"idw_power":9})",        R"({"idw_power":-1})",
+      R"({"idw_power":1e999})",    R"({"subdivision":0})",      R"({"subdivision":9})",
+      R"({"subdivision":2.5})",    R"({"k_in":-1})",            R"({"k_out":-3})",
+      R"({"k_out":1.5})",          R"({"k_in":"x"})",           R"({"retention":1e999})",
+      R"({"lambda":1e999})",       R"({"retention":"a"})",      R"({"vol_scale":"yes"})",
+      R"({"preset":"bogus"})",     R"({"height":"cubic"})",     R"({"h_ref":"nope"})",
+      R"({"retention":-5})",       R"({"lambda":-1})",          R"({"k_out":0})"};
+  for (const auto& b : bad) {
+    INFO(b);
+    CHECK(cli.Post("/api/params", b, "application/json")->status == 400);
+  }
+  const auto after = json::parse(cli.Get("/api/status")->body);
+  CHECK(after["generation"] == before["generation"]);
+  CHECK(after["params"] == before["params"]);
+  CHECK(cli.Post("/api/params", R"({"subdivision":2,"idw_radius":4,"idw_power":3})", "application/json")->status == 202);
+}
+
+TEST_CASE("server: POST guards (content type, origin, size)") {
+  Fixture f;
+  httplib::Client cli("127.0.0.1", f.port);
+  CHECK(cli.Post("/api/params", R"({"preset":"defaults"})", "text/plain")->status == 415);
+  CHECK(cli.Post("/api/shock", "{}", "application/x-www-form-urlencoded")->status == 415);
+  const std::string port = std::to_string(f.port);
+  httplib::Headers evil{{"Origin", "http://evil.example"}};
+  CHECK(cli.Post("/api/params", evil, R"({"preset":"defaults"})", "application/json")->status == 403);
+  httplib::Headers ok1{{"Origin", "http://localhost:" + port}};
+  CHECK(cli.Post("/api/params", ok1, R"({"preset":"money-flow"})", "application/json")->status == 202);
+  httplib::Headers ok2{{"Origin", "http://127.0.0.1:" + port}};
+  CHECK(cli.Post("/api/params", ok2, R"({"preset":"money-flow"})", "application/json")->status == 202);
+  const std::string big = R"({"preset":"defaults","pad":")" + std::string(70 * 1024, 'a') + "\"}";
+  auto r = cli.Post("/api/params", big, "application/json");
+  REQUIRE(r);
+  CHECK(r->status == 413);
 }

@@ -1,8 +1,10 @@
 #include "server/http_server.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <chrono>
 #include <cmath>
+#include <limits>
 #include <map>
 #include <stdexcept>
 #include <nlohmann/json.hpp>
@@ -27,8 +29,34 @@ void send_json(httplib::Response& res, int status, const json& j) {
 }
 
 void send_raster(httplib::Response& res, const Raster& r) {
+  static_assert(std::endian::native == std::endian::little, "grid payload is little-endian float32");
   std::string body(reinterpret_cast<const char*>(r.z.data()), r.z.size() * sizeof(float));
   res.set_content(std::move(body), "application/octet-stream");
+}
+
+// Strict JSON field readers: wrong type, non-finite or out-of-range values throw invalid_argument.
+double get_num(const json& b, const char* key, double lo, double hi, bool lo_open = false) {
+  const json& v = b.at(key);
+  if (!v.is_number()) throw std::invalid_argument(std::string(key) + " must be a number");
+  const double x = v.get<double>();
+  if (!std::isfinite(x) || x > hi || x < lo || (lo_open && x <= lo))
+    throw std::invalid_argument(std::string(key) + " out of range");
+  return x;
+}
+
+long long get_int(const json& b, const char* key, long long lo, long long hi) {
+  const json& v = b.at(key);
+  if (!v.is_number_integer()) throw std::invalid_argument(std::string(key) + " must be an integer");
+  if (v.is_number_unsigned() && v.get<std::uint64_t>() > static_cast<std::uint64_t>(hi))
+    throw std::invalid_argument(std::string(key) + " out of range");
+  const long long x = v.get<long long>();
+  if (x < lo || x > hi) throw std::invalid_argument(std::string(key) + " out of range");
+  return x;
+}
+
+std::string get_str(const json& b, const char* key) {
+  if (!b.at(key).is_string()) throw std::invalid_argument(std::string(key) + " must be a string");
+  return b.at(key).get<std::string>();
 }
 
 json raster_meta(const Raster& r) { return {{"w", r.w}, {"h", r.h}, {"zmin", r.zmin}, {"zmax", r.zmax}}; }
@@ -59,16 +87,60 @@ int FluxServer::bind(const ServerOptions& opts) {
     svr_.set_mount_point("/", opts.web_root.string());
   const int port = opts.port == 0 ? svr_.bind_to_any_port(opts.host) : (svr_.bind_to_port(opts.host, opts.port) ? opts.port : -1);
   if (port < 0) throw std::runtime_error("cannot bind " + opts.host + ":" + std::to_string(opts.port));
+  const std::string p = ":" + std::to_string(port);
+  allowed_origins_ = {"http://" + opts.host + p, "http://localhost" + p, "http://127.0.0.1" + p};
   return port;
 }
 
-void FluxServer::listen() { svr_.listen_after_bind(); }
+bool FluxServer::listen() {
+  listen_active_ = true;
+  bool ok = false;
+  if (!stopping_) ok = svr_.listen_after_bind();
+  listen_active_ = false;
+  return ok;
+}
+
 void FluxServer::stop() {
   stopping_ = true;
+  // httplib's stop() is a no-op until the accept loop is running. If listen() has been entered but is not
+  // running yet, keep nudging until it has stopped (listen() re-checks stopping_ before it starts).
   svr_.stop();
+  while (listen_active_) {
+    svr_.stop();
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+}
+
+bool FluxServer::guard_post(const httplib::Request& req, httplib::Response& res) const {
+  if (const auto origin = req.get_header_value("Origin"); !origin.empty()) {
+    const bool same_host = origin == "http://" + req.get_header_value("Host");
+    if (!same_host && std::find(allowed_origins_.begin(), allowed_origins_.end(), origin) == allowed_origins_.end()) {
+      send_json(res, 403, {{"error", "cross-origin request refused"}});
+      return false;
+    }
+  }
+  const auto ct = req.get_header_value("Content-Type");
+  if (ct.rfind("application/json", 0) != 0) {
+    send_json(res, 415, {{"error", "Content-Type must be application/json"}});
+    return false;
+  }
+  return true;
 }
 
 void FluxServer::routes() {
+  svr_.set_payload_max_length(64 * 1024);
+  svr_.set_exception_handler([](const httplib::Request&, httplib::Response& res, std::exception_ptr ep) {
+    std::string what = "internal error";
+    try {
+      if (ep) std::rethrow_exception(ep);
+    } catch (const std::exception& e) {
+      what = e.what();
+    } catch (...) {
+    }
+    res.status = 500;
+    res.set_content(json{{"error", what}}.dump(), "application/json");
+  });
+
   svr_.Get("/api/status", [this](const httplib::Request&, httplib::Response& res) {
     send_json(res, 200, status_json(store_, label_));
   });
@@ -84,7 +156,7 @@ void FluxServer::routes() {
     } catch (const std::exception&) {
       return send_json(res, 400, {{"error", "bad t"}});
     }
-    if (!f) return send_json(res, req.has_param("t") ? 404 : 503, {{"error", "no such frame"}});
+    if (!f) return send_json(res, req.has_param("t") && !store_.times().empty() ? 404 : 503, {{"error", "no such frame"}});
     const auto& nodes = store_.nodes();
     json jn = json::array();
     for (const auto& n : f->nodes)
@@ -113,50 +185,62 @@ void FluxServer::routes() {
     } catch (const std::exception&) {
       return send_json(res, 400, {{"error", "bad t"}});
     }
-    if (!f) return send_json(res, req.has_param("t") ? 404 : 503, {{"error", "no such frame"}});
+    if (!f) return send_json(res, req.has_param("t") && !store_.times().empty() ? 404 : 503, {{"error", "no such frame"}});
     send_raster(res, f->raster);
   });
 
   svr_.Post("/api/params", [this](const httplib::Request& req, httplib::Response& res) {
+    if (!guard_post(req, res)) return;
     try {
       const json b = json::parse(req.body);
+      if (!b.is_object()) throw std::invalid_argument("body must be a JSON object");
       CoreParams p;
-      const std::string preset = b.value("preset", std::string("money-flow"));
+      const std::string preset = b.contains("preset") ? get_str(b, "preset") : std::string("money-flow");
       if (preset == "money-flow") p = CoreParams::money_flow();
       else if (preset == "legacy") p = CoreParams::legacy();
       else if (preset == "defaults") p = CoreParams{};
       else throw std::invalid_argument("unknown preset: " + preset);
-      if (b.contains("h_ref")) p.h_ref = parse_hot_ref(b["h_ref"].get<std::string>());
-      if (b.contains("pressure")) p.pressure = parse_pressure_mode(b["pressure"].get<std::string>());
-      if (b.contains("lift")) p.transition.lift = parse_lift_mode(b["lift"].get<std::string>());
-      if (b.contains("k_out")) p.transition.k_out = b["k_out"].get<std::size_t>();
-      if (b.contains("k_in")) p.transition.k_in = b["k_in"].get<std::size_t>();
-      if (b.contains("retention")) p.transition.retention = b["retention"].get<double>();
-      if (b.contains("lambda")) p.flux.lambda = b["lambda"].get<double>();
-      if (b.contains("vol_scale")) p.vol_scale = b["vol_scale"].get<bool>();
+      constexpr long long kMaxK = 1000000;
+      if (b.contains("h_ref")) p.h_ref = parse_hot_ref(get_str(b, "h_ref"));
+      if (b.contains("pressure")) p.pressure = parse_pressure_mode(get_str(b, "pressure"));
+      if (b.contains("lift")) p.transition.lift = parse_lift_mode(get_str(b, "lift"));
+      if (b.contains("k_out")) p.transition.k_out = static_cast<std::size_t>(get_int(b, "k_out", 0, kMaxK));
+      if (b.contains("k_in")) p.transition.k_in = static_cast<std::size_t>(get_int(b, "k_in", 0, kMaxK));
+      constexpr double kInf = std::numeric_limits<double>::max();
+      if (b.contains("retention")) p.transition.retention = get_num(b, "retention", -kInf, kInf);
+      if (b.contains("lambda")) p.flux.lambda = get_num(b, "lambda", -kInf, kInf);
+      if (b.contains("vol_scale")) {
+        if (!b["vol_scale"].is_boolean()) throw std::invalid_argument("vol_scale must be a boolean");
+        p.vol_scale = b["vol_scale"].get<bool>();
+      }
       LandscapeParams lp = store_.landscape_params();
-      if (b.contains("height")) lp.height = parse_height_mode(b["height"].get<std::string>());
-      if (b.contains("idw_power")) lp.idw.power = b["idw_power"].get<double>();
-      if (b.contains("idw_radius")) lp.idw.radius_cells = b["idw_radius"].get<int>();
-      if (b.contains("subdivision")) lp.idw.subdivision = std::clamp(b["subdivision"].get<int>(), 1, 8);
+      if (b.contains("height")) lp.height = parse_height_mode(get_str(b, "height"));
+      if (b.contains("idw_power")) lp.idw.power = get_num(b, "idw_power", 0.0, 8.0, true);
+      if (b.contains("idw_radius")) lp.idw.radius_cells = static_cast<int>(get_int(b, "idw_radius", 0, 16));
+      if (b.contains("subdivision")) lp.idw.subdivision = static_cast<int>(get_int(b, "subdivision", 1, 8));
       p.validate();
-      store_.set_params(p, lp);
-      send_json(res, 202, {{"generation", store_.status().generation}});
+      const std::uint64_t gen = store_.set_params(p, lp);
+      {
+        std::lock_guard<std::mutex> lk(shock_m_);
+        last_shock_.reset();
+      }
+      send_json(res, 202, {{"generation", gen}});
     } catch (const std::exception& e) {
       send_json(res, 400, {{"error", e.what()}});
     }
   });
 
   svr_.Post("/api/shock", [this](const httplib::Request& req, httplib::Response& res) {
+    if (!guard_post(req, res)) return;
     std::vector<Shock> shocks;
     std::vector<std::string> names;
     try {
       const json b = json::parse(req.body);
       const auto& nodes = store_.nodes();
+      if (!b.at("shocks").is_array()) throw std::invalid_argument("shocks must be an array");
       for (const auto& s : b.at("shocks")) {
-        const std::string t = s.at("ticker").get<std::string>();
-        const double size = s.at("size").get<double>();
-        if (!std::isfinite(size)) throw std::invalid_argument("size must be finite");
+        const std::string t = get_str(s, "ticker");
+        const double size = get_num(s, "size", -std::numeric_limits<double>::max(), std::numeric_limits<double>::max());
         auto it = std::find_if(nodes.begin(), nodes.end(), [&](const Security& x) { return x.ticker == t; });
         if (it == nodes.end()) throw std::invalid_argument("unknown ticker: " + t);
         shocks.push_back({static_cast<std::size_t>(it - nodes.begin()), size});
@@ -166,13 +250,15 @@ void FluxServer::routes() {
     } catch (const std::exception& e) {
       return send_json(res, 400, {{"error", e.what()}});
     }
+    if (!store_.status().ready) return send_json(res, 503, {{"error", "landscapes are still being computed"}});
     FrameStore::ShockResult r;
     try {
       r = store_.shock(shocks);
     } catch (const std::invalid_argument& e) {
       return send_json(res, 400, {{"error", e.what()}});
     } catch (const std::exception& e) {
-      return send_json(res, 503, {{"error", e.what()}});
+      // Only "not ready" is a 503: re-check in case parameters changed since the pre-check.
+      return send_json(res, store_.status().ready ? 500 : 503, {{"error", e.what()}});
     }
     const auto& nodes = store_.nodes();
     std::vector<std::size_t> act;

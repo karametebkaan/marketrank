@@ -6,6 +6,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "market/universe.hpp"
 #include "server/frame_store.hpp"
@@ -22,7 +23,7 @@ class FluxServer {
  public:
   FluxServer(FrameStore& store, std::optional<PortfolioSpec> portfolio, std::string label);
   int bind(const ServerOptions& opts);
-  void listen();
+  bool listen();  // false if the socket failed (or stop() came first)
   void stop();
 
  private:
@@ -31,7 +32,10 @@ class FluxServer {
   std::optional<PortfolioSpec> portfolio_;
   std::string label_;
   httplib::Server svr_;
-  std::atomic<bool> stopping_{false};  // lets SSE loops exit so listen() can join its workers
+  bool guard_post(const httplib::Request& req, httplib::Response& res) const;
+  std::atomic<bool> stopping_{false};
+  std::atomic<bool> listen_active_{false};
+  std::vector<std::string> allowed_origins_;  // lets SSE loops exit so listen() can join its workers
   std::mutex shock_m_;
   std::optional<Raster> last_shock_;
 };

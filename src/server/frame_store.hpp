@@ -41,7 +41,8 @@ class FrameStore {
   FrameStore& operator=(const FrameStore&) = delete;
 
   void start();
-  void set_params(CoreParams core, LandscapeParams land);
+  // Returns the generation the new parameters run under.
+  std::uint64_t set_params(CoreParams core, LandscapeParams land);
   Status status() const;
   std::vector<TimePoint> times() const;
   std::shared_ptr<const LandscapeFrame> landscape(std::optional<TimePoint> t) const;
@@ -56,7 +57,7 @@ class FrameStore {
 
  private:
   void stop_worker();                  // call with control_m_ held and m_ NOT held (it joins)
-  void launch_locked(std::optional<CoreParams> core, std::optional<LandscapeParams> land, int threads);
+  std::uint64_t launch_locked(std::optional<CoreParams> core, std::optional<LandscapeParams> land, int threads);
   // (launch_locked: call with control_m_ held and m_ NOT held)
   void run(std::uint64_t gen, CoreParams core, LandscapeParams land, int threads);
   void bump();  // version++ and notify (call with m_ held)

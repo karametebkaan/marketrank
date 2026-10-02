@@ -30,7 +30,7 @@ void FrameStore::stop_worker() {
   if (worker_.joinable()) worker_.join();
 }
 
-void FrameStore::launch_locked(std::optional<CoreParams> core, std::optional<LandscapeParams> land,
+std::uint64_t FrameStore::launch_locked(std::optional<CoreParams> core, std::optional<LandscapeParams> land,
                                int threads) {
   std::lock_guard<std::mutex> lk(m_);
   if (core) core_ = std::move(*core);
@@ -52,6 +52,7 @@ void FrameStore::launch_locked(std::optional<CoreParams> core, std::optional<Lan
     status_.error = std::string("thread launch failed: ") + e.what();
     bump();
   }
+  return gen;
 }
 
 void FrameStore::start() {
@@ -61,12 +62,12 @@ void FrameStore::start() {
   launch_locked(std::nullopt, std::nullopt, threads);
 }
 
-void FrameStore::set_params(CoreParams core, LandscapeParams land) {
+std::uint64_t FrameStore::set_params(CoreParams core, LandscapeParams land) {
   core.validate();
   const int threads = omp_get_max_threads();
   std::lock_guard<std::mutex> ck(control_m_);
   stop_worker();
-  launch_locked(std::move(core), land, threads);
+  return launch_locked(std::move(core), land, threads);
 }
 
 void FrameStore::run(std::uint64_t gen, CoreParams core, LandscapeParams land, int threads) {

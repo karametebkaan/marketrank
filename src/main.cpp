@@ -1,5 +1,9 @@
 #include <omp.h>
 
+#include <atomic>
+#include <csignal>
+#include <thread>
+
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -29,6 +33,9 @@
 
 namespace {
 namespace fs = std::filesystem;
+
+std::atomic<bool> g_signalled{false};  // lock-free atomic: safe to set from a signal handler
+extern "C" void on_signal(int) { g_signalled.store(true); }
 
 fx::TimePoint now_utc() {
   return std::chrono::duration_cast<std::chrono::seconds>(
@@ -365,9 +372,24 @@ int main(int argc, char** argv) {
       fx::FrameStore frames(panel, universe.nodes(), args.params, fx::LandscapeParams{});
       frames.start();
       fx::FluxServer server(frames, portfolio, args.mode + " " + std::string(fx::to_string(args.tf)));
+      if (!fs::is_directory(args.web))
+        std::cerr << "warning: web root '" << args.web.string() << "' not found; static files will 404\n";
       const int port = server.bind({args.host, args.port, args.web});
       std::cerr << "serving http://" << args.host << ":" << port << "  (Ctrl-C to stop)\n";
-      server.listen();
+      std::signal(SIGINT, on_signal);
+      std::signal(SIGTERM, on_signal);
+      std::atomic<bool> finished{false};
+      std::thread watcher([&] {  // does the non-async-signal-safe work outside the handler
+        while (!finished && !g_signalled) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        if (g_signalled) server.stop();
+      });
+      const bool ok = server.listen();
+      finished = true;
+      watcher.join();
+      if (!ok && !g_signalled) {
+        std::cerr << "fluxscape: server failed to listen\n";
+        return 1;
+      }
       return 0;
     }
     if (args.eval) return run_eval(args, panel, universe);
