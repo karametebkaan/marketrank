@@ -51,10 +51,17 @@ struct Frame {
   double compute_ms = 0;
 };
 
+// Counterfactual jolt: replaces the pressure of an active node with size x median(|p|) over the
+// active nodes with non-zero pressure on that bar (size < 0 sells off, size > 0 is a buying surge).
+struct Shock {
+  std::size_t node;
+  double size;
+};
+
 class CorePipeline {
  public:
   CorePipeline(std::size_t n, CoreParams params);
-  Frame step(const Panel& panel, std::size_t t);
+  Frame step(const Panel& panel, std::size_t t, const std::vector<Shock>& shocks = {});
 
  private:
   std::size_t n_;

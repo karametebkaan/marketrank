@@ -33,6 +33,13 @@ double to_double(const std::string& flag, const std::string& v) {
   return x;
 }
 
+std::pair<std::string, double> to_shock(const std::string& flag, const std::string& v) {
+  const auto colon = v.rfind(':');
+  if (colon == std::string::npos || colon == 0)
+    throw std::invalid_argument(flag + " expects TICKER:SIZE, got '" + v + "'");
+  return {v.substr(0, colon), to_double(flag, v.substr(colon + 1))};
+}
+
 }  // namespace
 
 CliArgs parse_cli(const std::vector<std::string>& args) {
@@ -78,6 +85,7 @@ CliArgs parse_cli(const std::vector<std::string>& args) {
     else if (flag == "--min-dollar-volume") a.params.min_dollar_volume = to_double(flag, value());
     else if (flag == "--max-volume-ratio") a.params.max_volume_ratio = to_double(flag, value());
     else if (flag == "--lambda") a.params.flux.lambda = to_double(flag, value());
+    else if (flag == "--shock") a.shocks.push_back(to_shock(flag, value()));
     else if (flag == "--help" || flag == "-h") a.help = true;
     else throw std::invalid_argument("unknown flag " + flag);
   }
@@ -104,6 +112,7 @@ std::string cli_usage() {
          "                 [--legacy | --money-flow] [--pressure dollar|sqrt|relative] [--lift off|excess|ratio]\n"
          "                 [--k-out N] [--k-in N] [--retention X] [--h-ref uniform|size|longrun|netflow]\n"
          "                 [--lambda X] [--min-dollar-volume X] [--max-volume-ratio X]\n"
+         "                 [--shock TICKER:SIZE ...]\n"
          "                 [--migrate-cache [DIR]] [--maintain]\n";
 }
 

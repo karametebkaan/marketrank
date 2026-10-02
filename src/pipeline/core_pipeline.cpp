@@ -118,7 +118,7 @@ CorePipeline::CorePipeline(std::size_t n, CoreParams params)
   if (params_.h_ref == HotRef::LongRun) long_.emplace(n, params_.halflife_long, params_.row_cap);
 }
 
-Frame CorePipeline::step(const Panel& panel, std::size_t t) {
+Frame CorePipeline::step(const Panel& panel, std::size_t t, const std::vector<Shock>& shocks) {
   if (t == 0 || t >= panel.T()) throw std::invalid_argument("CorePipeline::step: t out of range");
   if (panel.N() != n_) throw std::invalid_argument("CorePipeline::step: panel size mismatch");
   const auto t0 = std::chrono::steady_clock::now();
@@ -161,6 +161,22 @@ Frame CorePipeline::step(const Panel& panel, std::size_t t) {
   // no outflow shares, no row/column totals.
   for (std::size_t i = 0; i < n_; ++i)
     if (!active[i]) pressure[i] = 0.0;
+  if (!shocks.empty()) {
+    for (const Shock& s : shocks)
+      if (s.node >= n_ || !active[s.node])
+        throw std::invalid_argument("CorePipeline::step: shocked node is unknown or inactive");
+    std::vector<double> mag;
+    for (std::size_t i = 0; i < n_; ++i)
+      if (active[i] && pressure[i] != 0.0 && std::isfinite(pressure[i]))
+        mag.push_back(std::fabs(pressure[i]));
+    double med = 0.0;
+    if (!mag.empty()) {
+      std::sort(mag.begin(), mag.end());
+      const std::size_t m = mag.size();
+      med = m % 2 ? mag[m / 2] : 0.5 * (mag[m / 2 - 1] + mag[m / 2]);
+    }
+    for (const Shock& s : shocks) pressure[s.node] = s.size * med;
+  }
   // Affinity from the window before this bar: bar t's own return must not lower the correlation
   // of today's opposite-sign movers. The flux is built before the push, so `unit` stays valid.
   std::span<const double> unit;

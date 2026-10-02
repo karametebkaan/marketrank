@@ -21,6 +21,7 @@ cp .env.example .env                                        # add Alpaca keys
 ./build/fluxscape --mode replay                             # cached data, latest snapshot (or --universe sp500)
 ./build/fluxscape --mode replay --eval --eval-bars 120      # compare A-E settings (floor, Gini, coherence, IC)
 ./build/fluxscape --mode replay --legacy                    # milestone-1 behaviour
+./build/fluxscape --mode replay --shock NVDA:-10 --top 8       # counterfactual: jolt NVDA's pressure at the last bar, see who absorbs it
 ./build/fluxscape --help                                    # all switches (--pressure, --lift, --k-in, ...)
 ./build/fluxscape --migrate-cache                           # one-time: import the old data/cache CSVs into data/lake
 ./build/fluxscape --maintain                                # compact partitions and apply data/lake/retention.json
@@ -68,3 +69,5 @@ not observed order flow.
     snapped to a grid, with inverse-distance-weighted terrain drawn in deck.gl. Then the portfolio
     optimizer moves your holdings "uphill", and the hourly, daily and weekly suggestions are
     paper-traded so their real profit and loss is tracked.
+
+Shock mode (`--shock TICKER:SIZE`) replays the last bar twice, once as is and once with the named stocks' pressure replaced by SIZE × the median pressure, and reports which stocks gain or lose hotness.

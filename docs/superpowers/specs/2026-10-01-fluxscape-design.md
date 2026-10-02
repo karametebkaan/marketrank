@@ -126,6 +126,10 @@ For each bar *t* and stock *i* with return `r_i = C/C⁻ − 1`, volume V and VW
 - **IC:** the mean Spearman correlation between each bar's +1 forecast score and the next bar's return, and its t-statistic; **IC(h):** the same for hotness h, which is where the D settings show up
 - the mean frame time in ms
 
+### 5.3 Shock mode (counterfactual)
+`fluxscape --shock TICKER:SIZE [--shock ...] --top N` runs the pipeline over bars 1..T−2, copies it, then steps the original (baseline) and the copy (shocked) at the last bar T−1. A shock replaces the pressure of a shocked active node, after the liquidity floor and active masking, with `SIZE × median(|p_j|)` over active nodes with p_j ≠ 0 on that bar (SIZE < 0 sell-off/source, SIZE > 0 buying surge/sink). Everything else (bar, flux rules, accumulators, transitions, solve) is identical. An unknown or inactive shocked ticker is an error.
+The report gives the shocked nodes' Δh and Δπ, the top-N receivers and losers by Δh among active nodes (with Δπ and Δscore(+1)), the total |Δπ| (L1) and the portfolio holdings' Δh.
+
 ## 6. Geometry — layout, lattice, landscape
 
 1. **Force-directed layout** (Fruchterman–Reingold, O(N²) per iteration — fine at N ≈ 500) on the symmetrized pruned flux graph (attraction ∝ F_ij + F_ji, global repulsion). Warm-started from the previous frame's positions; 50–200 iterations with cooling.

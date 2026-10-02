@@ -20,6 +20,7 @@
 #include "market/universe.hpp"
 #include "pipeline/core_pipeline.hpp"
 #include "pipeline/evaluation.hpp"
+#include "pipeline/shock.hpp"
 #include "storage/csv_migration.hpp"
 #include "storage/lake.hpp"
 
@@ -126,6 +127,57 @@ int run_eval(const fx::CliArgs& args, const fx::Panel& panel, const fx::Universe
                 m.floor_share, m.gini, m.sector_coherence, m.structure_gain, m.ic_mean, m.ic_t, m.ic_h_mean,
                 m.ic_h_t, m.mean_frame_ms);
     std::fflush(stdout);
+  }
+  return 0;
+}
+
+int run_shock(const fx::CliArgs& args, const fx::Panel& panel, const fx::Universe& universe,
+              const std::optional<fx::PortfolioSpec>& portfolio) {
+  std::vector<fx::Shock> shocks;
+  for (const auto& [ticker, size] : args.shocks) {
+    const auto i = universe.index_of(ticker);
+    if (!i) throw std::invalid_argument("--shock: unknown ticker " + ticker);
+    shocks.push_back({*i, size});
+  }
+  const auto [base, shocked] = fx::run_with_shock(panel, args.params, shocks);  // throws if inactive
+  const fx::ShockDelta d = fx::shock_response(base, shocked);
+  const auto& nodes = universe.nodes();
+  std::printf("mode=%s timeframe=%s nodes=%zu bars=%zu last=%s threads=%d\n", args.mode.c_str(),
+              std::string(fx::to_string(args.tf)).c_str(), panel.N(), panel.T(),
+              fx::format_rfc3339(base.t).c_str(), omp_get_max_threads());
+  std::printf("params: %s\n", fx::describe(args.params).c_str());
+  std::printf("SHOCK at the last bar (pressure = SIZE x median |pressure|; <0 sell-off, >0 buying surge)\n");
+  std::printf("%-7s %9s %10s %12s\n", "ticker", "size", "dh", "dpi");
+  for (const auto& s : shocks)
+    std::printf("%-7s %+9.2f %+10.4f %+12.3e\n", nodes[s.node].ticker.c_str(), s.size, d.dh[s.node],
+                d.dpi[s.node]);
+  std::printf("total |dpi| (L1) = %.4e\n\n", d.l1_dpi);
+
+  std::vector<std::size_t> idx;
+  for (std::size_t i = 0; i < panel.N(); ++i)
+    if (base.active[i] && shocked.active[i]) idx.push_back(i);
+  std::sort(idx.begin(), idx.end(), [&](auto a, auto b) {
+    return d.dh[a] > d.dh[b] || (d.dh[a] == d.dh[b] && nodes[a].ticker < nodes[b].ticker);
+  });
+  const std::size_t top = std::min(args.top, idx.size());
+  auto row = [&](std::size_t i) {
+    std::printf("  %-7s %-24.24s %+10.4f %+12.3e %+10.4f\n", nodes[i].ticker.c_str(),
+                nodes[i].sector.c_str(), d.dh[i], d.dpi[i], d.dscore[i]);
+  };
+  std::printf("RECEIVERS (largest dh)\n  %-7s %-24s %10s %12s %10s\n", "ticker", "sector", "dh", "dpi",
+              "dscore+1");
+  for (std::size_t r = 0; r < top; ++r) row(idx[r]);
+  std::printf("\nLOSERS (largest drop in dh)\n");
+  for (std::size_t r = 0; r < top; ++r) row(idx[idx.size() - 1 - r]);
+  if (portfolio) {
+    std::printf("\nPORTFOLIO HOLDINGS (dh)\n");
+    for (const auto& hld : portfolio->holdings) {
+      const auto i = universe.index_of(hld.ticker);
+      if (i && base.active[*i] && shocked.active[*i])
+        std::printf("  %-6s %5.1f%%  dh %+10.4f\n", hld.ticker.c_str(), hld.weight * 100, d.dh[*i]);
+      else
+        std::printf("  %-6s %5.1f%%  (no data or fund)\n", hld.ticker.c_str(), hld.weight * 100);
+    }
   }
   return 0;
 }
@@ -253,7 +305,9 @@ int main(int argc, char** argv) {
 
     const fx::Panel panel = fx::build_panel(store, universe.node_tickers(), args.tf, window_start, end);
     if (panel.T() < 2) throw std::runtime_error("not enough cached bars; run with --mode alpaca first");
-    return args.eval ? run_eval(args, panel, universe) : run_rank(args, panel, universe, portfolio);
+    if (args.eval) return run_eval(args, panel, universe);
+    if (!args.shocks.empty()) return run_shock(args, panel, universe, portfolio);
+    return run_rank(args, panel, universe, portfolio);
   } catch (const std::exception& e) {
     std::cerr << "fluxscape: " << e.what() << "\n";
     return 1;
