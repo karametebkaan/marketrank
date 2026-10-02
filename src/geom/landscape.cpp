@@ -32,6 +32,24 @@ double display_height(double h, HeightMode m) {
   return h >= 0 ? std::log1p(h) : -std::log1p(-h);
 }
 
+Smoother parse_smoother(std::string_view s) {
+  if (s == "cvt") return Smoother::Cvt;
+  if (s == "gaussian") return Smoother::Gaussian;
+  if (s == "none") return Smoother::None;
+  throw std::invalid_argument("unknown smoother: " + std::string(s));
+}
+
+std::string_view to_string(Smoother s) { return s == Smoother::Cvt ? "cvt" : s == Smoother::Gaussian ? "gaussian" : "none"; }
+
+Raster apply_smoother(Raster r, const LandscapeParams& p) {
+  switch (p.smoother) {
+    case Smoother::Gaussian: return smooth_raster(r, p.smooth, p.idw.subdivision);
+    case Smoother::Cvt: cvt_smooth(r, p.cvt); return r;
+    case Smoother::None: break;
+  }
+  return r;
+}
+
 LandscapeValue parse_landscape_value(std::string_view s) {
   if (s == "pi") return LandscapeValue::Pi;
   if (s == "hotness") return LandscapeValue::Hotness;
@@ -61,7 +79,7 @@ Raster node_raster(const LandscapeFrame& f, const LandscapeParams& p) {
     cell[nd.i] = nd.cell;
     v[nd.i] = nd.hdisp;
   }
-  return smooth_raster(idw_raster(cell, v, f.size, p.idw), p.smooth, p.idw.subdivision);
+  return apply_smoother(idw_raster(cell, v, f.size, p.idw), p);
 }
 }  // namespace
 
@@ -103,7 +121,7 @@ Raster delta_raster(const LandscapeFrame& base, const std::vector<double>& delta
     cell[nd.i] = nd.cell;
     v[nd.i] = display_height(delta[nd.i], p.height);
   }
-  return smooth_raster(idw_raster(cell, v, base.size, p.idw), p.smooth, p.idw.subdivision);
+  return apply_smoother(idw_raster(cell, v, base.size, p.idw), p);
 }
 
 LandscapeBuilder::LandscapeBuilder(std::size_t n, LandscapeParams params, std::vector<std::uint32_t> group)
@@ -116,6 +134,8 @@ LandscapeBuilder::LandscapeBuilder(std::size_t n, LandscapeParams params, std::v
     throw std::invalid_argument("LandscapeBuilder: rank_tolerance must be finite and >= 0");
   if (!(std::isfinite(p_.smooth) && p_.smooth >= 0.0))
     throw std::invalid_argument("LandscapeBuilder: smooth must be finite and >= 0");
+  if (p_.cvt.iterations < 0 || !(p_.cvt.lambda > 0 && p_.cvt.lambda <= 1) || !(p_.cvt.eps_frac > 0 && p_.cvt.eps_frac <= 10))
+    throw std::invalid_argument("LandscapeBuilder: cvt parameters out of range");
 }
 
 LandscapeFrame LandscapeBuilder::build(const Frame& f) {

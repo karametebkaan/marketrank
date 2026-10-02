@@ -137,4 +137,55 @@ Raster smooth_raster(const Raster& r, double sigma_cells, int subdivision) {
   return out;
 }
 
+void cvt_smooth(Raster& r, const CvtParams& p) {
+  if (p.iterations < 0 || !(std::isfinite(p.lambda) && p.lambda > 0 && p.lambda <= 1) ||
+      !(std::isfinite(p.eps_frac) && p.eps_frac > 0 && p.eps_frac <= 10))
+    throw std::invalid_argument("cvt: iterations >= 0, lambda in (0, 1], eps_frac in (0, 10] required");
+  if (p.iterations == 0 || r.z.empty()) return;
+  const long W = static_cast<long>(r.w), H = static_cast<long>(r.h);
+  const std::size_t n = r.z.size();
+  std::vector<double> a(n), b(n), rho(n), rz(n);
+  std::vector<double> mag(n);
+  for (std::size_t i = 0; i < n; ++i) {
+    a[i] = r.z[i];
+    mag[i] = std::fabs(a[i]);
+  }
+  const std::size_t k = static_cast<std::size_t>(0.9 * static_cast<double>(n - 1));
+  std::nth_element(mag.begin(), mag.begin() + static_cast<std::ptrdiff_t>(k), mag.end());
+  const double v = mag[k];
+  const double eps = v > 0 ? p.eps_frac * v : 1.0;
+  const double lam = p.lambda;
+  for (int it = 0; it < p.iterations; ++it) {
+#pragma omp parallel for schedule(static)
+    for (long i = 0; i < static_cast<long>(n); ++i) {
+      rho[static_cast<std::size_t>(i)] = eps + std::fabs(a[static_cast<std::size_t>(i)]);
+      rz[static_cast<std::size_t>(i)] = rho[static_cast<std::size_t>(i)] * a[static_cast<std::size_t>(i)];
+    }
+#pragma omp parallel for schedule(static)
+    for (long y = 0; y < H; ++y)
+      for (long x = 0; x < W; ++x) {
+        double num = 0, den = 0;
+        for (long dy = -1; dy <= 1; ++dy) {
+          const long yy = y + dy;
+          if (yy < 0 || yy >= H) continue;
+          for (long dx = -1; dx <= 1; ++dx) {
+            const long xx = x + dx;
+            if (xx < 0 || xx >= W) continue;
+            const double w = (dx != 0 && dy != 0) ? 0.5 : 1.0;
+            const std::size_t j = static_cast<std::size_t>(yy * W + xx);
+            num += w * rz[j];
+            den += w * rho[j];
+          }
+        }
+        const std::size_t i = static_cast<std::size_t>(y * W + x);
+        b[i] = (1.0 - lam) * a[i] + lam * (num / den);
+      }
+    a.swap(b);
+  }
+  for (std::size_t i = 0; i < n; ++i) r.z[i] = static_cast<float>(a[i]);
+  const auto [mn, mx] = std::minmax_element(r.z.begin(), r.z.end());
+  r.zmin = *mn;
+  r.zmax = *mx;
+}
+
 }  // namespace mr

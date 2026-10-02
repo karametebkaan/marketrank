@@ -287,6 +287,7 @@ TEST_CASE("a display-only parameter change re-renders the cached frames without 
   for (auto t : times) before[t] = fs.landscape(t);
   const auto gen0 = fs.status().generation;
   LandscapeParams lp;
+  lp.smoother = Smoother::Gaussian;
   lp.smooth = 2.5;
   lp.height = HeightMode::Linear;
   lp.idw.radius_cells = 4;

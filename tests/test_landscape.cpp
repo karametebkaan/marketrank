@@ -49,7 +49,7 @@ TEST_CASE("landscape build: one cell per active node, raster sized from the latt
   const Frame f = synthetic_frame();
   LandscapeParams p;
   p.max_arcs = 50;
-  p.smooth = 0;  // exactness of the IDW mesh vertices is checked without display smoothing
+  p.smoother = Smoother::None;  // exactness of the IDW mesh vertices is checked without display smoothing
   LandscapeBuilder b(f.active.size(), p);
   LandscapeFrame lf = b.build(f);
   std::size_t n_active = 0;
@@ -92,7 +92,7 @@ TEST_CASE("delta raster uses the base cells") {
   std::vector<double> delta(f.active.size(), 0.0);
   delta[lf.nodes.front().i] = 1.0;
   LandscapeParams exact;
-  exact.smooth = 0;  // unsmoothed: exact at the base cells
+  exact.smoother = Smoother::None;  // unsmoothed: exact at the base cells
   Raster r = delta_raster(lf, delta, exact);
   CHECK(r.w == lf.raster.w);
   CHECK(r.zmax > 0.0f);
@@ -238,7 +238,7 @@ TEST_CASE("lattice neighbours have correlated heights: territories beat a shuffl
     for (TerritoryMode mode : {TerritoryMode::Flux, TerritoryMode::Sector}) {
       LandscapeParams p;
       p.territory = mode;
-      p.smooth = 0;
+      p.smoother = Smoother::None;
       p.idw.subdivision = 1;
       LandscapeBuilder b(n, p, synthetic_groups(n));
       LandscapeFrame lf = b.build(f);
@@ -284,8 +284,10 @@ TEST_CASE("territory placement is stable: identical rebuilds, and 1% hotness noi
 TEST_CASE("display smoothing: base and delta rasters are Gaussian-smoothed, node values stay exact") {
   const Frame f = synthetic_frame();
   LandscapeParams p0, p1;
-  p0.smooth = 0;
+  p0.smoother = Smoother::None;
+  p1.smoother = Smoother::Gaussian;
   CHECK(LandscapeParams{}.smooth == 1.0);
+  CHECK(LandscapeParams{}.smoother == Smoother::Cvt);
   const auto groups = synthetic_groups(f.active.size());
   LandscapeBuilder b0(f.active.size(), p0, groups), b1(f.active.size(), p1, groups);
   const LandscapeFrame a = b0.build(f), s = b1.build(f);
@@ -551,4 +553,36 @@ TEST_CASE("planted flux communities A-B-C: each one contiguous, trading partners
   for (const auto& nd : lf.nodes) first[comm(nd.i)] = std::min(first[comm(nd.i)], at[static_cast<std::size_t>(nd.cell)]);
   const bool abc = first[0] < first[1] && first[1] < first[2], cba = first[2] < first[1] && first[1] < first[0];
   CHECK((abc || cba));
+}
+
+TEST_CASE("smoother: default is CVT, none/gaussian/cvt differ, delta raster follows, mass change is reported") {
+  const Frame f = synthetic_frame();
+  const auto groups = synthetic_groups(f.active.size());
+  LandscapeParams pn, pg, pc;
+  pn.smoother = Smoother::None;
+  pg.smoother = Smoother::Gaussian;
+  CHECK(pc.smoother == Smoother::Cvt);
+  CHECK(pc.cvt.iterations == 12);
+  CHECK(pc.cvt.lambda == 0.6);
+  CHECK(pc.cvt.eps_frac == 0.1);
+  LandscapeBuilder bn(f.active.size(), pn, groups), bc(f.active.size(), pc, groups);
+  const LandscapeFrame n = bn.build(f), c = bc.build(f);
+  Raster expect = n.raster;
+  cvt_smooth(expect, pc.cvt);
+  CHECK(c.raster.z == expect.z);
+  for (std::size_t k = 0; k < n.nodes.size(); ++k) CHECK(c.nodes[k].hdisp == n.nodes[k].hdisp);  // node values stay exact
+  std::vector<double> delta(f.active.size(), 0.0);
+  delta[n.nodes.front().i] = 1.0;
+  Raster d = delta_raster(n, delta, pn);
+  cvt_smooth(d, pc.cvt);
+  CHECK(delta_raster(n, delta, pc).z == d.z);
+  auto mean = [](const Raster& r) { double s = 0; for (float z : r.z) s += z; return s / static_cast<double>(r.z.size()); };
+  MESSAGE("synthetic frame mean(z): none " << mean(n.raster) << ", cvt " << mean(c.raster));
+  CHECK(parse_smoother("cvt") == Smoother::Cvt);
+  CHECK(parse_smoother("gaussian") == Smoother::Gaussian);
+  CHECK(parse_smoother("none") == Smoother::None);
+  CHECK_THROWS_AS(parse_smoother("x"), std::invalid_argument);
+  LandscapeParams bad;
+  bad.cvt.lambda = 0;
+  CHECK_THROWS_AS(LandscapeBuilder(f.active.size(), bad), std::invalid_argument);
 }

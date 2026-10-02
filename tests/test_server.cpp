@@ -207,7 +207,10 @@ TEST_CASE("server: invalid params are 400 and change nothing") {
       R"({"preset":"bogus"})",     R"({"height":"cubic"})",     R"({"h_ref":"nope"})",
       R"({"retention":-5})",       R"({"lambda":-1})",          R"({"k_out":0})",
       R"({"smooth":-1})",          R"({"smooth":5})",           R"({"smooth":NaN})",
-       R"({"territory":"hex"})",    R"({"territory":3})",        R"({"smooth":"x"})",         R"({"smooth":1e999})"};
+       R"({"territory":"hex"})",    R"({"territory":3})",        R"({"smooth":"x"})",         R"({"smooth":1e999})",
+      R"({"smoother":"box"})",     R"({"smoother":1})",         R"({"cvt_iterations":-1})",  R"({"cvt_iterations":51})",
+      R"({"cvt_iterations":2.5})", R"({"cvt_lambda":0})",       R"({"cvt_lambda":1.01})",    R"({"cvt_lambda":"a"})",
+      R"({"cvt_eps":0})",          R"({"cvt_eps":10.5})",       R"({"cvt_eps":-1})"};
   for (const auto& b : bad) {
     INFO(b);
     CHECK(cli.Post("/api/params", b, "application/json")->status == 400);
@@ -402,6 +405,30 @@ TEST_CASE("server: requests with a foreign Host are refused (DNS rebinding)") {
   CHECK(is_loopback_host("::1"));
   CHECK_FALSE(is_loopback_host("0.0.0.0"));
   CHECK_FALSE(is_loopback_host("192.168.1.5"));
+}
+
+TEST_CASE("server: smoother params are echoed and take the restyle path (cells kept)") {
+  Fixture f;
+  httplib::Client c("127.0.0.1", f.port);
+  const auto st0 = json::parse(c.Get("/api/status")->body);
+  CHECK(st0["smoother"] == "cvt");
+  CHECK(st0["cvt_iterations"] == 12);
+  CHECK(st0["cvt_lambda"].get<double>() == 0.6);
+  CHECK(st0["cvt_eps"].get<double>() == 0.1);
+  const auto steps = f.store->pipeline_steps();
+  const auto before = f.store->landscape(std::nullopt);
+  CHECK(c.Post("/api/params", R"({"smoother":"gaussian","cvt_iterations":20,"cvt_lambda":0.8,"cvt_eps":0.5})", "application/json")->status == 202);
+  for (int k = 0; k < 600 && !f.store->status().ready; ++k) std::this_thread::sleep_for(10ms);
+  const auto st = json::parse(c.Get("/api/status")->body);
+  CHECK(st["smoother"] == "gaussian");
+  CHECK(st["cvt_iterations"] == 20);
+  CHECK(st["cvt_lambda"].get<double>() == 0.8);
+  CHECK(st["cvt_eps"].get<double>() == 0.5);
+  CHECK(f.store->pipeline_steps() == steps);
+  const auto after = f.store->landscape(std::nullopt);
+  REQUIRE(before->nodes.size() == after->nodes.size());
+  for (std::size_t k = 0; k < before->nodes.size(); ++k) CHECK(before->nodes[k].cell == after->nodes[k].cell);
+  CHECK(before->raster.z != after->raster.z);
 }
 
 TEST_CASE("server: a display-only POST redraws without re-running the pipeline") {

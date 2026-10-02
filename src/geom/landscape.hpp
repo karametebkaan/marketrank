@@ -33,11 +33,19 @@ std::string_view to_string(LandscapeValue v);
 // display_height(h, height).
 double landscape_value(double h, double pi, std::size_t n_active, LandscapeValue v, HeightMode height);
 
+// Display smoother applied to the IDW raster (and the shock delta raster): CVT-weighted relaxation (default),
+// Gaussian (LandscapeParams::smooth sigma) or none. Display-only: the cached frames are redrawn, not recomputed.
+enum class Smoother { Gaussian, Cvt, None };
+Smoother parse_smoother(std::string_view s);  // "gaussian" | "cvt" | "none"
+std::string_view to_string(Smoother s);
+
 struct LandscapeParams {
   LandscapeValue value = LandscapeValue::Hotness;  // Pi is the default under the marketrank preset (main, server)
   IdwParams idw{1, 2.0, 3};  // subdivision 1: raster = lattice mesh vertices
   HeightMode height = HeightMode::SignedLog;
-  double smooth = 1.0;            // display smoothing: Gaussian sigma in lattice cells after IDW (0 = off)
+  Smoother smoother = Smoother::Cvt;
+  CvtParams cvt;                  // used when smoother == Cvt
+  double smooth = 1.0;            // Gaussian sigma in lattice cells after IDW; used only when smoother == Gaussian (0 = off)
   double order_smoothing = 0.5;  // weight on the previous frame's hotness when ranking nodes inside a territory
   double rank_tolerance = 0.15;  // cell hysteresis: keep the cell while the spiral slot moves <= this x territory
                                  // size (at least 2 slots); see territory_layout
@@ -81,6 +89,8 @@ struct LandscapeFrame {
 // radius, subdivision) only change how a frame is drawn; everything else (value, territory, ranking, clustering,
 // arcs, warm-up) is placement. The value is placement because it orders the stocks inside a territory.
 bool same_placement(const LandscapeParams& a, const LandscapeParams& b);
+// IDW raster -> display raster under p.smoother.
+Raster apply_smoother(Raster r, const LandscapeParams& p);
 // The frame redrawn with display parameters p: hdisp recomputed (landscape_value with p.value), the raster
 // rebuilt from (cell, hdisp).
 LandscapeFrame restyle(const LandscapeFrame& f, const LandscapeParams& p);

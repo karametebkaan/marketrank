@@ -105,7 +105,9 @@ json status_json(const FrameStore& s, const std::string& label) {
           {"height", std::string(to_string(lp.height))},
           {"value", std::string(to_string(lp.value))},
           {"label", label},          {"nodes", s.nodes().size()},
-          {"smooth", lp.smooth},     {"idw_power", lp.idw.power},
+          {"smooth", lp.smooth},     {"smoother", std::string(to_string(lp.smoother))},
+          {"cvt_iterations", lp.cvt.iterations}, {"cvt_lambda", lp.cvt.lambda}, {"cvt_eps", lp.cvt.eps_frac},
+          {"idw_power", lp.idw.power},
           {"idw_radius", lp.idw.radius_cells}, {"subdivision", lp.idw.subdivision},
           {"territory", std::string(to_string(lp.territory))}};
 }
@@ -327,6 +329,10 @@ void FluxServer::routes() {
       if (b.contains("idw_radius")) lp.idw.radius_cells = static_cast<int>(get_int(b, "idw_radius", 0, 16));
       if (b.contains("subdivision")) lp.idw.subdivision = static_cast<int>(get_int(b, "subdivision", 1, 8));
       if (b.contains("smooth")) lp.smooth = get_num(b, "smooth", 0.0, 4.0);
+      if (b.contains("smoother")) lp.smoother = parse_smoother(get_str(b, "smoother"));
+      if (b.contains("cvt_iterations")) lp.cvt.iterations = static_cast<int>(get_int(b, "cvt_iterations", 0, 50));
+      if (b.contains("cvt_lambda")) lp.cvt.lambda = get_num(b, "cvt_lambda", 0.0, 1.0, true);
+      if (b.contains("cvt_eps")) lp.cvt.eps_frac = get_num(b, "cvt_eps", 0.0, 10.0, true);
       if (b.contains("territory")) lp.territory = parse_territory_mode(get_str(b, "territory"));
       p.validate();
       const std::uint64_t gen = store_.set_params(p, lp);

@@ -381,6 +381,16 @@ function initControls(st) {
   if (st.value) $('value').value = st.value;
   $('idwPower').value = st.idw_power; $('idwRadius').value = st.idw_radius; $('subdiv').value = st.subdivision;
   $('smooth').value = st.smooth; $('smoothLabel').textContent = $('smooth').value;
+  if (st.smoother) $('smoother').value = st.smoother;
+  if (st.cvt_iterations !== undefined) { $('cvtIt').value = st.cvt_iterations; $('cvtItLabel').textContent = $('cvtIt').value; }
+  if (st.cvt_lambda !== undefined) { $('cvtLam').value = st.cvt_lambda; $('cvtLamLabel').textContent = $('cvtLam').value; }
+  showSmootherRows();
+}
+
+// CVT sliders only under CVT, the Gaussian sigma only under Gaussian.
+function showSmootherRows() {
+  const m = $('smoother').value;
+  $('cvtItRow').hidden = m !== 'cvt'; $('cvtLamRow').hidden = m !== 'cvt'; $('smoothRow').hidden = m !== 'gaussian';
 }
 
 async function onStatus(st) {
@@ -439,13 +449,16 @@ function wire() {
   ['hscale', 'labels'].forEach((id) => $(id).addEventListener('input', render));
   $('arcs').addEventListener('input', () => { setArcsLabel(); render(); });
   $('smooth').addEventListener('input', () => { $('smoothLabel').textContent = $('smooth').value; });
+  $('smoother').addEventListener('change', showSmootherRows);
+  $('cvtIt').addEventListener('input', () => { $('cvtItLabel').textContent = $('cvtIt').value; });
+  $('cvtLam').addEventListener('input', () => { $('cvtLamLabel').textContent = $('cvtLam').value; });
   $('preset').addEventListener('change', () => { S.presetDirty = $('preset').value !== 'custom'; });
   $('href').addEventListener('change', () => { S.hrefDirty = true; });
   $('value').addEventListener('change', () => { S.valueDirty = true; });
   $('byPi').addEventListener('click', () => setTopBy('pi'));
   $('byH').addEventListener('click', () => setTopBy('h'));
   $('apply').addEventListener('click', async () => {
-    const body = { height: $('height').value, idw_power: Number($('idwPower').value), idw_radius: Number($('idwRadius').value), subdivision: Number($('subdiv').value), smooth: Number($('smooth').value), territory: $('territory').value };
+    const body = { height: $('height').value, idw_power: Number($('idwPower').value), idw_radius: Number($('idwRadius').value), subdivision: Number($('subdiv').value), smooth: Number($('smooth').value), smoother: $('smoother').value, cvt_iterations: Number($('cvtIt').value), cvt_lambda: Number($('cvtLam').value), territory: $('territory').value };
     if (S.presetDirty) body.preset = $('preset').value;
     if (S.hrefDirty && $('href').value) body.h_ref = $('href').value;
     // Sent only when changed: otherwise a preset brings its own value (π under marketrank).
