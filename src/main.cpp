@@ -13,6 +13,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "cli/args.hpp"
@@ -321,59 +322,62 @@ int main(int argc, char** argv) {
       maintain_lake(lake_store, args.data, args.lookback_days, args.tf);
       return 0;
     }
-    fx::BarStore store(args.data / "lake");
     const auto [window_start, end] = fx::data_window(args, now_utc());
     fx::Universe universe;
     std::optional<fx::PortfolioSpec> portfolio;
-
-    if (args.mode == "synthetic") {
-      fx::SyntheticConfig cfg;
-      cfg.tf = args.tf;
-      universe = fx::Universe::from_securities(fx::generate_synthetic(cfg, store));
-    } else {
-      portfolio = fx::load_portfolio(args.data / "portfolio.json");
-      const fs::path dir = args.data / "universe";
-      std::optional<fx::AlpacaConfig> cfg;
-      std::optional<fx::AlpacaClient> client;
-      if (args.mode == "alpaca") {
-        fx::load_dotenv(".env");
-        cfg = fx::alpaca_config_from_env();
-        if (!cfg) throw std::runtime_error("APCA_API_KEY_ID / APCA_API_SECRET_KEY not set (.env)");
-        client.emplace(*cfg);
+    fx::Panel panel;
+    {
+      // The bar store (and the lake's DuckDB lock) lives only until the panel is built, so a long-running
+      // --serve does not block other replay runs or keep a second copy of every bar in memory.
+      fx::BarStore store(args.data / "lake");
+      if (args.mode == "synthetic") {
+        fx::SyntheticConfig cfg;
+        cfg.tf = args.tf;
+        universe = fx::Universe::from_securities(fx::generate_synthetic(cfg, store));
+      } else {
+        portfolio = fx::load_portfolio(args.data / "portfolio.json");
+        const fs::path dir = args.data / "universe";
+        std::optional<fx::AlpacaConfig> cfg;
+        std::optional<fx::AlpacaClient> client;
+        if (args.mode == "alpaca") {
+          fx::load_dotenv(".env");
+          cfg = fx::alpaca_config_from_env();
+          if (!cfg) throw std::runtime_error("APCA_API_KEY_ID / APCA_API_SECRET_KEY not set (.env)");
+          client.emplace(*cfg);
+        }
+        std::optional<fs::path> snapshot;
+        if (args.universe != fx::UniverseSource::Sp500) {
+          snapshot = args.mode == "alpaca" ? ensure_snapshot(args, *cfg, *client, store, *portfolio)
+                                           : fx::latest_snapshot(dir);
+          if (!snapshot && args.universe == fx::UniverseSource::Snapshot)
+            throw std::runtime_error("no universe snapshot; run --mode alpaca first");
+        }
+        universe = snapshot ? fx::load_snapshot(*snapshot, dir / "funds.csv")
+                            : sp500_universe(args.data);
+        fill_sectors(universe, args.data);
+        universe.add_extras(*portfolio);
+        store.load_range(universe.price_tickers(), args.tf, window_start, end);
+        if (client) {
+          const fx::TimePoint start = window_start;
+          std::cerr << (args.refetch_full ? "refetching full history of " : "syncing ")
+                    << universe.price_tickers().size() << " tickers (" << fx::to_string(args.tf) << ") from "
+                    << fx::format_rfc3339(start) << " (or earlier stored history)...\n";
+          const auto stale = fx::sync_bars(*client, store, universe.price_tickers(), args.tf, start, end,
+                                           args.refetch_full);
+          if (!stale.empty()) std::cerr << stale.size() << " stale tickers\n";
+          store.flush();
+          maintain_lake(store, args.data, args.lookback_days, args.tf);
+        }
       }
-      std::optional<fs::path> snapshot;
-      if (args.universe != fx::UniverseSource::Sp500) {
-        snapshot = args.mode == "alpaca" ? ensure_snapshot(args, *cfg, *client, store, *portfolio)
-                                         : fx::latest_snapshot(dir);
-        if (!snapshot && args.universe == fx::UniverseSource::Snapshot)
-          throw std::runtime_error("no universe snapshot; run --mode alpaca first");
-      }
-      universe = snapshot ? fx::load_snapshot(*snapshot, dir / "funds.csv")
-                          : sp500_universe(args.data);
-      fill_sectors(universe, args.data);
-      universe.add_extras(*portfolio);
-      store.load_range(universe.price_tickers(), args.tf, window_start, end);
-      if (client) {
-        const fx::TimePoint start = window_start;
-        std::cerr << (args.refetch_full ? "refetching full history of " : "syncing ")
-                  << universe.price_tickers().size() << " tickers (" << fx::to_string(args.tf) << ") from "
-                  << fx::format_rfc3339(start) << " (or earlier stored history)...\n";
-        const auto stale = fx::sync_bars(*client, store, universe.price_tickers(), args.tf, start, end,
-                                         args.refetch_full);
-        if (!stale.empty()) std::cerr << stale.size() << " stale tickers\n";
-        store.flush();
-        maintain_lake(store, args.data, args.lookback_days, args.tf);
-      }
+      panel = fx::build_panel(store, universe.node_tickers(), args.tf, window_start, end);
     }
-
-    const fx::Panel panel = fx::build_panel(store, universe.node_tickers(), args.tf, window_start, end);
     if (panel.T() < 2) throw std::runtime_error("not enough cached bars; run with --mode alpaca first");
     if (args.serve) {
       if (!fx::is_loopback_host(args.host))
         std::cerr << "warning: --host " << args.host
                   << " is not a loopback address: the server (which has no authentication) is reachable from the "
                      "network\n";
-      fx::FrameStore frames(panel, universe.nodes(), args.params, fx::LandscapeParams{});
+      fx::FrameStore frames(std::move(panel), universe.nodes(), args.params, fx::LandscapeParams{});
       frames.start();
       fx::FluxServer server(frames, portfolio, args.mode + " " + std::string(fx::to_string(args.tf)));
       if (!fs::is_directory(args.web))
