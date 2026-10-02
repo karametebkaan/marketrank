@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cmath>
 #include <limits>
+#include <set>
 #include <stdexcept>
 #include <string>
 
@@ -14,6 +15,14 @@ HeightMode parse_height_mode(std::string_view s) {
   if (s == "linear") return HeightMode::Linear;
   throw std::invalid_argument("unknown height mode: " + std::string(s));
 }
+
+TerritoryMode parse_territory_mode(std::string_view s) {
+  if (s == "flux") return TerritoryMode::Flux;
+  if (s == "sector") return TerritoryMode::Sector;
+  throw std::invalid_argument("unknown territory mode: " + std::string(s));
+}
+
+std::string_view to_string(TerritoryMode m) { return m == TerritoryMode::Flux ? "flux" : "sector"; }
 
 std::string_view to_string(HeightMode m) { return m == HeightMode::SignedLog ? "signed-log" : "linear"; }
 
@@ -58,7 +67,8 @@ Raster delta_raster(const LandscapeFrame& base, const std::vector<double>& delta
 }
 
 LandscapeBuilder::LandscapeBuilder(std::size_t n, LandscapeParams params, std::vector<std::uint32_t> group)
-    : n_(n), p_(params), group_(std::move(group)), s_prev_(n, 0.0), has_prev_(n, 0) {
+    : n_(n), p_(params), group_(std::move(group)), s_prev_(n, 0.0), has_prev_(n, 0),
+      tracker_(n, params.recluster_bars) {
   if (!group_.empty() && group_.size() != n) throw std::invalid_argument("LandscapeBuilder: group size mismatch");
   if (!(p_.order_smoothing >= 0.0 && p_.order_smoothing <= 1.0))
     throw std::invalid_argument("LandscapeBuilder: order_smoothing must be in [0, 1]");
@@ -88,7 +98,9 @@ LandscapeFrame LandscapeBuilder::build(const Frame& f) {
     s_prev_[i] = rank[i];
     has_prev_[i] = 1;
   }
-  const std::vector<std::int32_t> cells = territory_layout(f.active, group_, rank, size).cell;
+  const bool flux = p_.territory == TerritoryMode::Flux;
+  const std::vector<std::uint32_t>& grp = flux ? tracker_.update(f.P, f.active) : group_;
+  const std::vector<std::int32_t> cells = territory_layout(f.active, grp, rank, size).cell;
 
   LandscapeFrame lf;
   lf.t = f.t;
@@ -103,10 +115,21 @@ LandscapeFrame LandscapeBuilder::build(const Frame& f) {
     values[i] = hd;
     lf.nodes.push_back({static_cast<std::uint32_t>(i), cells[static_cast<std::size_t>(i)],
                         static_cast<float>((cells[i] % cols + 0.5) / static_cast<double>(size.cols)),
-                        static_cast<float>((cells[i] / cols + 0.5) / static_cast<double>(size.rows)), f.h[i], hd, f.pi[i], score[i]});
+                        static_cast<float>((cells[i] / cols + 0.5) / static_cast<double>(size.rows)), f.h[i], hd, f.pi[i], score[i],
+                        flux ? tracker_.node_group()[i] : (group_.empty() ? 0 : static_cast<std::int32_t>(group_[i]))});
   }
   lf.raster = smooth_raster(idw_raster(cells, values, size, p_.idw), p_.smooth, p_.idw.subdivision);
   lf.arcs = top_arcs(f.P, f.active, p_.max_arcs);
+  if (flux) {
+    lf.communities = tracker_.communities();
+    lf.modularity = tracker_.modularity();
+    lf.loose = tracker_.loose_nodes();
+    lf.cluster_ms = tracker_.cluster_ms();
+  } else {
+    std::set<std::int32_t> ids;
+    for (const auto& nd : lf.nodes) ids.insert(nd.group);
+    lf.communities = static_cast<int>(ids.size());
+  }
   lf.compute_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
   return lf;
 }

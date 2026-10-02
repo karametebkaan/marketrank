@@ -74,7 +74,8 @@ json status_json(const FrameStore& s, const std::string& label) {
           {"params", describe(s.core_params())},
           {"height", std::string(to_string(s.landscape_params().height))},
           {"label", label},          {"nodes", s.nodes().size()},
-          {"smooth", s.landscape_params().smooth}};
+          {"smooth", s.landscape_params().smooth},
+          {"territory", std::string(to_string(s.landscape_params().territory))}};
 }
 
 }  // namespace
@@ -162,7 +163,7 @@ void FluxServer::routes() {
     const auto& nodes = store_.nodes();
     json jn = json::array();
     for (const auto& n : f->nodes)
-      jn.push_back({n.i, nodes[n.i].ticker, nodes[n.i].sector, n.cell, n.fx, n.fy, num(n.h), num(n.hdisp), num(n.pi), num(n.score)});
+      jn.push_back({n.i, nodes[n.i].ticker, nodes[n.i].sector, n.cell, n.fx, n.fy, num(n.h), num(n.hdisp), num(n.pi), num(n.score), n.group});
     json ja = json::array();
     for (const auto& a : f->arcs) ja.push_back({a.a, a.b, a.w});
     json jp = json::array();
@@ -177,7 +178,9 @@ void FluxServer::routes() {
     send_json(res, 200,
               {{"t", f->t}, {"time", format_rfc3339(f->t)}, {"lattice", {{"cols", f->size.cols}, {"rows", f->size.rows}}},
                {"raster", raster_meta(f->raster)}, {"nodes", jn}, {"arcs", ja}, {"portfolio", jp},
-               {"params", describe(store_.core_params())}, {"compute_ms", f->compute_ms}});
+               {"params", describe(store_.core_params())}, {"compute_ms", f->compute_ms},
+               {"communities", {{"count", f->communities}, {"modularity", num(f->modularity)}, {"loose", f->loose},
+                                {"cluster_ms", f->cluster_ms}}}});
   });
 
   svr_.Get("/api/top", [this](const httplib::Request& req, httplib::Response& res) {
@@ -258,6 +261,7 @@ void FluxServer::routes() {
       if (b.contains("idw_radius")) lp.idw.radius_cells = static_cast<int>(get_int(b, "idw_radius", 0, 16));
       if (b.contains("subdivision")) lp.idw.subdivision = static_cast<int>(get_int(b, "subdivision", 1, 8));
       if (b.contains("smooth")) lp.smooth = get_num(b, "smooth", 0.0, 4.0);
+      if (b.contains("territory")) lp.territory = parse_territory_mode(get_str(b, "territory"));
       p.validate();
       const std::uint64_t gen = store_.set_params(p, lp);
       {

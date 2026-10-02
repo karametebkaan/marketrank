@@ -5,6 +5,7 @@
 #include <cmath>
 #include <limits>
 #include <stdexcept>
+#include <map>
 #include <set>
 #include <vector>
 
@@ -188,9 +189,12 @@ TEST_CASE("builder state: lattice size change, unit-range fx/fy, single node") {
   for (float z : s.raster.z) CHECK(std::isfinite(z));
 }
 
-TEST_CASE("lattice neighbours have correlated heights") {
+TEST_CASE("lattice neighbours have correlated heights, in flux and in sector mode") {
+ for (TerritoryMode mode : {TerritoryMode::Flux, TerritoryMode::Sector}) {
   const Frame f = synthetic_frame();
   LandscapeParams p;
+  p.territory = mode;
+  p.smooth = 0;
   p.idw.subdivision = 1;
   LandscapeBuilder b(f.active.size(), p, synthetic_groups(f.active.size()));
   LandscapeFrame lf = b.build(f);
@@ -225,6 +229,7 @@ TEST_CASE("lattice neighbours have correlated heights") {
   const double corr = sxy / std::sqrt(sxx * syy);
   MESSAGE("neighbour correlation = " << corr);
   CHECK(corr >= 0.5);
+ }
 }
 
 TEST_CASE("territory placement is stable: identical rebuilds, and 1% hotness noise moves few nodes") {
@@ -269,4 +274,59 @@ TEST_CASE("display smoothing: base and delta rasters are Gaussian-smoothed, node
   LandscapeParams bad;
   bad.smooth = -1;
   CHECK_THROWS_AS(LandscapeBuilder(f.active.size(), bad), std::invalid_argument);
+}
+
+TEST_CASE("flux territories: contiguous groups, loose last, tracker state survives frames") {
+  const Frame f = synthetic_frame();
+  const std::size_t n = f.active.size();
+  LandscapeParams p;
+  LandscapeBuilder b(n, p, synthetic_groups(n));
+  auto a = b.build(f);
+  CHECK(a.communities >= 1);
+  std::map<std::int32_t, std::vector<std::int32_t>> by_group;
+  for (const auto& nd : a.nodes) by_group[nd.group].push_back(nd.cell);
+  const auto W = static_cast<std::int32_t>(a.size.cols);
+  for (auto& [g, cells] : by_group) {
+    std::set<std::int32_t> rest(cells.begin(), cells.end());
+    std::vector<std::int32_t> st{*rest.begin()};
+    rest.erase(rest.begin());
+    while (!st.empty()) {
+      auto c = st.back();
+      st.pop_back();
+      for (int dy = -1; dy <= 1; ++dy)
+        for (int dx = -1; dx <= 1; ++dx) {
+          const std::int32_t nx = c % W + dx;
+          if (nx < 0 || nx >= W) continue;
+          auto it = rest.find((c / W + dy) * W + nx);
+          if (it != rest.end()) {
+            st.push_back(*it);
+            rest.erase(it);
+          }
+        }
+    }
+    // loose stocks (group -1) are a pool and need not be contiguous
+    if (g >= 0) CHECK(rest.empty());
+  }
+  // a re-cluster on a frame with 1% perturbed fluxes keeps >= 90% of stocks in their old community
+  LandscapeParams q;
+  q.recluster_bars = 1;
+  LandscapeBuilder b2(n, q);
+  auto first = b2.build(f);
+  Frame g = f;
+  for (std::size_t k = 0; k < g.P.raw.size(); ++k) g.P.raw[k] *= 1.0 + 0.01 * ((k % 2) ? 1.0 : -1.0);
+  auto second = b2.build(g);
+  std::size_t same = 0;
+  for (std::size_t k = 0; k < first.nodes.size(); ++k) same += first.nodes[k].group == second.nodes[k].group ? 1 : 0;
+  CHECK(static_cast<double>(same) >= 0.9 * static_cast<double>(first.nodes.size()));
+  // identical rebuilds give identical cells
+  LandscapeBuilder b3(n, p), b4(n, p);
+  auto c3 = b3.build(f), c4 = b4.build(f);
+  for (std::size_t k = 0; k < c3.nodes.size(); ++k) CHECK(c3.nodes[k].cell == c4.nodes[k].cell);
+}
+
+TEST_CASE("territory mode parsing") {
+  CHECK(parse_territory_mode("flux") == TerritoryMode::Flux);
+  CHECK(parse_territory_mode("sector") == TerritoryMode::Sector);
+  CHECK_THROWS_AS(parse_territory_mode("hex"), std::invalid_argument);
+  CHECK(to_string(TerritoryMode::Sector) == "sector");
 }

@@ -112,7 +112,7 @@ function render() {
   const nodes = f.nodes.map((n) => {
     const col = n[3] % L.cols, row = Math.floor(n[3] / L.cols), s = sample(z, meta, L, col, row);
     const zt = heightOf(s.v, scale, clip);
-    return { i: n[0], ticker: n[1], sector: n[2], x: s.x, y: s.y, zt, v: s.v, h: n[6], pi: n[8], score: n[9] };
+    return { i: n[0], ticker: n[1], sector: n[2], x: s.x, y: s.y, zt, v: s.v, h: n[6], pi: n[8], score: n[9], group: n[10] };
   });
   const byI = new Map(nodes.map((n) => [n.i, n]));
   const pos = (n, lift = 0.3) => [n.x, n.y, n.zt + lift];
@@ -174,9 +174,23 @@ function initDeck(lattice) {
     initialViewState: { target: [lattice.cols / 2, lattice.rows / 2, 0], rotationX: 45, rotationOrbit: -25, zoom: Math.log2(Math.min(el.clientWidth, el.clientHeight) / (1.6 * span(lattice))), minZoom: -6, maxZoom: 12 },
     controller: true,
     getTooltip: ({ object }) => (object && object.ticker
-      ? `${object.ticker} · ${object.sector}\nh ${object.h === null ? 'n/a' : object.h.toFixed(3)}  π ${object.pi === null ? 'n/a' : object.pi.toExponential(2)}\nscore+1 ${object.score === null ? 'n/a' : object.score.toFixed(3)}`
+      ? `${object.ticker} · ${object.sector}\n${clusterLine(object)}h ${object.h === null ? 'n/a' : object.h.toFixed(3)}  π ${object.pi === null ? 'n/a' : object.pi.toExponential(2)}\nscore+1 ${object.score === null ? 'n/a' : object.score.toFixed(3)}`
       : null),
   });
+}
+
+// "cluster #k · n stocks" (flux territories) or the sector's group size; loose stocks are the pooled remainder.
+function clusterLine(o) {
+  const f = S.frame;
+  if (!f) return '';
+  if (!S.groupSizes || S.groupSizes.frame !== f) {
+    const m = new Map();
+    f.nodes.forEach((n) => m.set(n[10], (m.get(n[10]) || 0) + 1));
+    S.groupSizes = { frame: f, m };
+  }
+  const k = S.groupSizes.m.get(o.group) || 0;
+  const flux = !S.status || S.status.territory !== 'sector';
+  return o.group < 0 ? `loose · ${k} stocks\n` : `${flux ? 'cluster' : 'sector group'} #${o.group} · ${k} stocks\n`;
 }
 
 function setArcsLabel() { $('arcsLabel').textContent = $('arcs').value; }
@@ -338,6 +352,7 @@ async function onStatus(st) {
   if (!S.smoothInit && typeof st.smooth === 'number') {
     S.smoothInit = true; $('smooth').value = st.smooth; $('smoothLabel').textContent = $('smooth').value;
   }
+  if (!S.terrInit && typeof st.territory === 'string') { S.terrInit = true; $('territory').value = st.territory; }
   showStatus();
   if (!st.ready) return;
   // Reload on a new generation, or (when following the latest bar) when new bars have been computed.
@@ -392,7 +407,7 @@ function wire() {
   $('arcs').addEventListener('input', () => { setArcsLabel(); render(); });
   $('smooth').addEventListener('input', () => { $('smoothLabel').textContent = $('smooth').value; });
   $('apply').addEventListener('click', async () => {
-    const body = { preset: $('preset').value, height: $('height').value, idw_power: Number($('idwPower').value), idw_radius: Number($('idwRadius').value), subdivision: Number($('subdiv').value), smooth: Number($('smooth').value) };
+    const body = { preset: $('preset').value, height: $('height').value, idw_power: Number($('idwPower').value), idw_radius: Number($('idwRadius').value), subdivision: Number($('subdiv').value), smooth: Number($('smooth').value), territory: $('territory').value };
     if ($('href').value) body.h_ref = $('href').value;
     try { await getJSON('/api/params', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); S.deck && S.deck.finalize(); S.deck = null; } catch (e) { fail(e); }
   });

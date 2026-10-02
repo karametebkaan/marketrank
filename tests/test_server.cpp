@@ -156,7 +156,12 @@ TEST_CASE("server: 503 before ready, shock grid 404, node field order") {
   CHECK(cli.Get("/api/shock/grid")->status == 404);
   auto fr = json::parse(cli.Get("/api/frame")->body);
   const auto& n0 = fr["nodes"][0];
-  REQUIRE(n0.size() == 10);
+  REQUIRE(n0.size() == 11);
+  CHECK(n0[10].is_number_integer());
+  REQUIRE(fr.contains("communities"));
+  CHECK(fr["communities"]["count"].is_number_integer());
+  CHECK(fr["communities"].contains("modularity"));
+  CHECK(fr["communities"].contains("loose"));
   CHECK(n0[0].is_number_integer());
   CHECK(n0[1].is_string());
   CHECK(n0[2].is_string());
@@ -201,7 +206,7 @@ TEST_CASE("server: invalid params are 400 and change nothing") {
       R"({"preset":"bogus"})",     R"({"height":"cubic"})",     R"({"h_ref":"nope"})",
       R"({"retention":-5})",       R"({"lambda":-1})",          R"({"k_out":0})",
       R"({"smooth":-1})",          R"({"smooth":5})",           R"({"smooth":NaN})",
-      R"({"smooth":"x"})",         R"({"smooth":1e999})"};
+       R"({"territory":"hex"})",    R"({"territory":3})",        R"({"smooth":"x"})",         R"({"smooth":1e999})"};
   for (const auto& b : bad) {
     INFO(b);
     CHECK(cli.Post("/api/params", b, "application/json")->status == 400);
@@ -212,6 +217,9 @@ TEST_CASE("server: invalid params are 400 and change nothing") {
   CHECK(before["smooth"].get<double>() == 1.0);
   CHECK(cli.Post("/api/params", R"({"subdivision":2,"idw_radius":4,"idw_power":3,"smooth":2.5})", "application/json")->status == 202);
   CHECK(json::parse(cli.Get("/api/status")->body)["smooth"].get<double>() == 2.5);
+  CHECK(json::parse(cli.Get("/api/status")->body)["territory"] == "flux");
+  CHECK(cli.Post("/api/params", R"({"territory":"sector"})", "application/json")->status == 202);
+  CHECK(json::parse(cli.Get("/api/status")->body)["territory"] == "sector");
 }
 
 TEST_CASE("server: POST guards (content type, origin, size)") {
