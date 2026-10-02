@@ -156,3 +156,27 @@ TEST_CASE("CoreParams::validate rejects bad settings") {
   CHECK_NOTHROW(CoreParams::legacy().validate());
   CHECK_THROWS_AS(CorePipeline(4, a), std::invalid_argument);
 }
+
+TEST_CASE("size reference is neutral for a ticker with no volume history yet") {
+  Panel p;
+  const std::size_t T = 8, N = 4;
+  p.tickers = {"A", "B", "C", "D"};
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  for (std::size_t t = 0; t < T; ++t) {
+    p.times.push_back(static_cast<TimePoint>(100 + t));
+    for (std::size_t i = 0; i < N; ++i) {
+      const bool missing = i == 3 && t < 6;
+      const double c = 10.0 + static_cast<double>(i) +
+                       0.5 * static_cast<double>(t) * (i % 2 == 0 ? 1.0 : -0.3);
+      p.close.push_back(missing ? nan : c);
+      p.volume.push_back(missing ? nan : (i == 3 ? 0.0 : 1000.0 * (1.0 + static_cast<double>(i))));
+      p.vwap.push_back(missing ? nan : c);
+    }
+  }
+  CoreParams params;
+  params.h_ref = HotRef::Size;
+  Frame f = run_panel_last(p, params);
+  CHECK(f.active[3]);
+  for (double h : f.h) CHECK(std::isfinite(h));
+  CHECK(std::abs(f.h[3]) < 50);
+}

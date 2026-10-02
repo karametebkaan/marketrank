@@ -1,5 +1,6 @@
 #include "pipeline/core_pipeline.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <limits>
@@ -135,6 +136,16 @@ Frame CorePipeline::step(const Panel& panel, std::size_t t) {
       ref.reserve(n_active);
       for (std::size_t i = 0; i < n_; ++i)
         if (active_[i]) ref.push_back(mdv[i]);
+      // No volume history yet means a neutral size: use the median of the known references.
+      std::vector<double> pos;
+      for (double x : ref)
+        if (std::isfinite(x) && x > 0) pos.push_back(x);
+      if (!pos.empty()) {
+        std::nth_element(pos.begin(), pos.begin() + pos.size() / 2, pos.end());
+        const double med = pos[pos.size() / 2];
+        for (double& x : ref)
+          if (!(std::isfinite(x) && x > 0)) x = med;
+      }
       h_a = relative_hotness(pi_a, ref);
       break;
     }
