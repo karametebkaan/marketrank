@@ -28,6 +28,65 @@ Weekly is the primary test: any edge from flow pressure should show within about
 Stocks are ranked by their MarketRank score π·N (1 = an average active stock) and, optionally, by hotness.
 Design: `docs/superpowers/specs/2026-10-01-marketrank-design.md`.
 
+### Results (M3a, 2026-10-02)
+
+**The answer is no.** Over nine years of out-of-sample weekly decisions, following MarketRank's signals did not
+beat simply holding the current mix, and the pre-registered gate fails.
+
+- **Data.** The backfill reaches 2016-06-27, which gives 2,582 daily bars for 10,000 tickers (a 471 MB lake).
+  After the 252-bar warm-up there are 483 weekly rebalances, from 2017-06-30 to 2026-09-25.
+- **Predictive signal.** There is a small but persistent one: the hotness reversal. Names that are cold today
+  do slightly better over the next 1 to 20 days than hot ones.
+  - IC +0.006 at 1 day (t = 3.2), positive in 8 of 10 years. The large caps give the same, t = 3.4.
+  - The score and π-relative-to-size rank the other way round: π/size has IC −0.009 (t = −4.6) and is
+    negative in 8 of 10 years.
+  - The heartbeats (pulse1, pulse5, pulse20) and the forecast are noise.
+  - The relative-pressure configuration, where the earlier one-year sample showed t ≈ −11, does **not** reproduce
+    it over ten years: t = 1.4 at 1 day.
+- **Portfolio.** The effects are far too small to pay their way in a 20% tilt over 10 names:
+
+  | run (blend vs buy-and-hold) | ann. excess | 95% CI | IR | max DD | years + | DSR |
+  |---|---:|---|---:|---:|---:|---:|
+  | weekly, 10 bps (main) | −4.09% | −7.73 .. −0.67% | −0.63 | 31.2% | 4 of 10 | 0.989 |
+  | weekly, 0 bps | −3.91% | −7.55 .. −0.51% | −0.60 | 31.2% | 4 of 10 | 0.990 |
+  | weekly, 25 bps | −4.36% | −8.00 .. −0.91% | −0.67 | 31.2% | 4 of 10 | 0.988 |
+  | weekly, relative pressure | −3.29% | −6.81 .. −0.03% | −0.51 | 31.2% | 4 of 10 | 0.992 |
+  | monthly, 10 bps | −3.62% | −7.04 .. −0.37% | −0.57 | 31.0% | 4 of 10 | 0.991 |
+  | weekly, large caps (top 500) | −4.75% | −8.48 .. −1.23% | −0.72 | 31.2% | 3 of 10 | 0.987 |
+
+  Buy-and-hold of the base returned 31.2% a year (max drawdown 32.2%).
+  - **The blend's gate was rarely open.** Its own out-of-sample IC reached t > 2 in only 16 of 483 weeks (3.3%),
+    so the blend mostly holds the base rebalanced weekly.
+  - **Most of the shortfall is that rebalancing.** It trims AAPL and NVDA during their run and costs 3.5% a year
+    against buy-and-hold by itself.
+  - **Against the rebalanced base the tilts are no better.** The blend is −0.6% a year. The best single signal,
+    the score, is +1.5% a year (t ≈ 1.3, not significant), and the same signal is −3.5% a year on the large caps.
+    Every other signal loses. The fast heartbeats lose 6 to 7% a year against the rebalanced base at 10 bps,
+    about 2 points of which is trading cost.
+- **Gate (weekly, 10 bps, 54 registered trials).**
+
+  | criterion | result |
+  |---|---|
+  | c1 excess > 0 with CI above 0 | FAIL |
+  | c2 positive in ≥ 60% of years | FAIL (40%) |
+  | c3 DSR > 0.95 | pass (0.989) |
+  | c4 drawdown within base + 5 pp | pass |
+  | c5 large caps | FAIL |
+
+  The DSR "pass" is not evidence. It deflates the strategy's *total* Sharpe, and an 80% base of AAPL and NVDA has a
+  high one; it does not test the excess.
+- **Decision.** The next step is M3c, observed flows (ETF creation and redemption, 13F pairing, signed order
+  flow), not the optimizer.
+- **Caveats.**
+  - **Survivorship.** The universe is today's ticker list, so names delisted since 2016 are missing.
+  - **Frozen delistings.** A holding that stops trading stays frozen at its last price, a known limitation that
+    flatters failed picks.
+  - Both biases favour the strategies, so the negative result is, if anything, generous to them.
+
+  Equity curves: `docs/img/walkforward-equity.svg`. Full reports: `data/walkforward/<run>/report.md` (not committed).
+
+![Walk-forward equity, weekly 10 bps](docs/img/walkforward-equity.svg)
+
 ## MarketRank model
 
 The default model (`CoreParams::market_rank()`, `--marketrank`) solves for the stationary distribution π of a

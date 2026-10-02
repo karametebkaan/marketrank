@@ -494,9 +494,9 @@ The 60-bar, 16-configuration evaluation runs in 5\,min\,07\,s.
 \section{Walk-forward evaluation protocol}
 \label{Section:wf}
 
-Section~\ref{Section:results} shows that \MR\ measures structure but that its level does not forecast next-day returns. Whether its signals can nonetheless inform portfolio moves is a different question: \emph{had we followed them week by week, would the portfolio have beaten simply holding the current mix, after trading costs?} We answer it with a walk-forward protocol that was fixed, defaults and pass/fail thresholds included, before any of its results were seen. \textbf{The results are pending.} They will be reported whichever way they come out.
+Section~\ref{Section:results} shows that \MR\ measures structure but that its level does not forecast next-day returns. Whether its signals can nonetheless inform portfolio moves is a different question: \emph{had we followed them week by week, would the portfolio have beaten simply holding the current mix, after trading costs?} We answer it with a walk-forward protocol that was fixed, defaults and pass/fail thresholds included, before any of its results were seen. The results, reported in Section~\ref{Section:wfresults} whichever way they came out, are negative.
 
-\paragraph{Backfill and universe} Daily SIP bars are backfilled to 2016-01-01, about 2,450 bars per ticker. Each month uses a \emph{point-in-time} universe: the top names by trailing median dollar volume, computed only from bars available up to that month, never today's snapshot. Survivorship bias remains, because the data provider lists only today's tickers, so stocks delisted earlier are missing, and that favours strategies that held survivors. We report it as a limitation and re-run the whole test on a large-cap sub-universe (the point-in-time top 500), where delistings are rare. An edge that exists only in small names is treated as suspect.
+\paragraph{Backfill and universe} Daily SIP bars are backfilled about ten years (the backfill as run reaches 2016-06-27, 2,582 bars per ticker). Each month uses a \emph{point-in-time} universe: the top names by trailing median dollar volume, computed only from bars available up to that month, never today's snapshot. Survivorship bias remains, because the data provider lists only today's tickers, so stocks delisted earlier are missing, and that favours strategies that held survivors. We report it as a limitation and re-run the whole test on a large-cap sub-universe (the point-in-time top 500), where delistings are rare. An edge that exists only in small names is treated as suspect.
 
 \paragraph{One causal pass} The pipeline steps once through the history, and every quantity stored at a rebalance date depends only on bars up to that date. A test asserts that changing any later bar leaves every earlier decision bit-identical. The first 12 months are warm-up. At each bar the harness records eight candidate signals, each as a cross-sectional $z$-score over eligible stocks winsorized at $\pm3$:
 \begin{itemize}
@@ -535,6 +535,72 @@ The simulator also checks its own bookkeeping: after every trade, the value of w
 \item the result holds on the large-cap sub-universe (survivorship check).
 \end{enumerate}
 Anything less is ``no''.
+
+\subsection{Results}
+\label{Section:wfresults}
+
+The backfill covers 10,000 tickers from 2016-06-27 to 2026-10-02 (2,582 daily bars). After the 252-bar warm-up the weekly pass makes 483 rebalances, from 2017-06-30 to 2026-09-25 (2,326 trading days). Six configurations were run, all registered as trials of one registry (54 strategy rows): the main weekly run at 10\,bps, the same at 0 and 25\,bps, weekly with relative pressure (the configuration behind the earlier $t\approx-11$ hotness reversal), monthly at 10\,bps, and weekly on the point-in-time top 500.
+
+\paragraph{Information coefficients} Table~\ref{Table:wfic} gives the significant entries of the research table. One effect is persistent: the hotness reversal. Names that are cold today do slightly better over the next 1 to 20 days. The IC is $+0.006$ at one day ($t=3.2$), positive in 8 of 10 years, and it holds on the large caps ($t=3.4$). Under the \MR\ preset the score is its exact mirror. $\pi$ relative to size ranks the wrong way round, with IC $-0.009$ ($t=-4.6$) and 8 of 10 years negative. Inflow momentum is weakly negative. The heartbeats and the forecast are indistinguishable from zero. With relative pressure, the reversal that reached $t=-11$ on the one-year sample of Section~\ref{Section:results} falls to $t=1.4$ over ten years: it does not replicate.
+
+\begin{table}[t]
+\centering
+\caption{Walk-forward IC research table, entries with $|t|\ge2$ (weekly run, all eligible names; same panel for the large-cap run). Mean Spearman IC against the open-to-open return over $h$ bars, on non-overlapping samples; ``years'' counts calendar years with a positive mean IC; $-h$ is negated hotness.}
+\label{Table:wfic}
+\small\setlength{\tabcolsep}{3pt}
+\begin{tabular}{llrrrr}
+\toprule
+Univ. & Signal & $h$ & IC & $t$ & years $+$\\
+\midrule
+all & $-h$ & 1 & $+0.0059$ & $+3.19$ & 8/10\\
+all & $-h$ & 5 & $+0.0085$ & $+2.16$ & 7/10\\
+all & $-h$ & 20 & $+0.0168$ & $+2.32$ & 7/10\\
+all & $\log(\pi N)$ & 1 & $-0.0059$ & $-3.19$ & 2/10\\
+all & $\log(\pi/s)$ & 1 & $-0.0094$ & $-4.55$ & 2/10\\
+all & $\log(\pi/s)$ & 5 & $-0.0146$ & $-3.26$ & 2/10\\
+all & inflow mom. & 5 & $-0.0140$ & $-2.38$ & 1/10\\
+top 500 & $-h$ & 1 & $+0.0071$ & $+3.42$ & 8/10\\
+top 500 & $\log(\pi/s)$ & 1 & $-0.0086$ & $-3.86$ & 1/10\\
+relative & $-h$ & 1 & $+0.0041$ & $+1.39$ & 6/10\\
+relative & inflow mom. & 1 & $-0.0078$ & $-2.87$ & 2/10\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Portfolio results} Table~\ref{Table:wfperf} compares the gated blend of every run with buy-and-hold of the base, which returned 31.2\% a year with a 32.2\% maximum drawdown. Every run is negative, and in every run the 95\% interval lies below zero. The gate of the blend opened in only 16 of 483 weeks (3.3\%): its out-of-sample IC rarely reached $t>2$. It opened in 2 weeks (0.4\%) under relative pressure, 48 (9.9\%) on the large caps and never in the monthly run. Most of the time the blend therefore held the base rebalanced weekly. That rebalancing trims AAPL and NVDA during their run, and it alone costs 3.5\% a year against buy-and-hold. Against the rebalanced base, the blend loses 0.6\% a year. The best single signal, the score (the largest flow sinks), gains 1.5\% a year ($t\approx1.3$, not significant), and the same signal loses 3.5\% a year on the large caps. Every other signal loses 3--10\% a year, and the fast heartbeats turn their whole tilt over about twice a week. The reversal's IC is real but small: the top 10 names by $-h$ lose 2.9\% a year against the rebalanced base. Costs do not change the conclusion; the 0 and 25\,bps runs bracket the main one within half a point.
+
+\begin{table*}[t]
+\centering
+\caption{Gated blend against buy-and-hold of the base mix, 2017-07 to 2026-10. Excess is annualized; the 95\% interval is a 21-day block bootstrap; ``years $+$'' counts calendar years with positive excess; DSR is the deflated Sharpe probability over the 54 registered trials (recomputed for every run on the final registry; for the main run it is the reported value).}
+\label{Table:wfperf}
+\small\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lrrrrrrr}
+\toprule
+Run & Ann.\ return & Ann.\ excess & 95\% CI & IR & Max DD & Years $+$ & DSR\\
+\midrule
+weekly, 10\,bps (main) & 26.6\% & $-4.09\%$ & $[-7.73,-0.67]$ & $-0.63$ & 31.2\% & 4/10 & 0.989\\
+weekly, 0\,bps         & 26.8\% & $-3.91\%$ & $[-7.55,-0.51]$ & $-0.60$ & 31.2\% & 4/10 & 0.990\\
+weekly, 25\,bps        & 26.2\% & $-4.36\%$ & $[-8.00,-0.91]$ & $-0.67$ & 31.2\% & 4/10 & 0.988\\
+weekly, relative pressure & 27.6\% & $-3.29\%$ & $[-6.81,-0.03]$ & $-0.51$ & 31.2\% & 4/10 & 0.992\\
+monthly, 10\,bps       & 27.2\% & $-3.62\%$ & $[-7.04,-0.37]$ & $-0.57$ & 31.0\% & 4/10 & 0.991\\
+weekly, top 500        & 25.8\% & $-4.75\%$ & $[-8.48,-1.23]$ & $-0.72$ & 31.2\% & 3/10 & 0.987\\
+\midrule
+base, rebalanced weekly & 27.4\% & $-3.47\%$ & $[-6.94,-0.19]$ & $-0.54$ & 31.2\% & 4/10 & --\\
+VOO                    & 15.2\% & $-14.88\%$ & $[-24.18,-5.57]$ & $-1.03$ & 34.0\% & 1/10 & --\\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.92\textwidth]{figs/walkforward-equity.png}
+\caption{Walk-forward equity of the main run (weekly, 10\,bps; log scale, start $=1$). Strategies are solid and benchmarks dashed. Buy-and-hold of the base (black, dashed) ends highest; the score tilt (orange) is the only strategy above the weekly-rebalanced base.}
+\label{Fig:wfequity}
+\end{figure*}
+
+\paragraph{Decision} On the main run the gate gives: c1 FAIL (excess $-4.09\%$, interval $[-7.73\%,-0.67\%]$); c2 FAIL (4 of 10 years positive); c3 pass (DSR 0.989); c4 pass (drawdown 31.2\% against a 37.2\% limit); c5 FAIL (the large-cap blend fails c1 and c2 as well). \textbf{The answer is ``no''.} The c3 pass carries no weight. The DSR deflates the strategy's total Sharpe ratio, and a portfolio that is 80\% the base mix (60\% AAPL) has a high one whatever the tilt does, so c3 does not test the excess. Following the protocol, the work turns to observed flows (M3c) rather than to an optimizer.
+
+\paragraph{Caveats} Two biases remain, and both favour the strategies. First, the universe is today's ticker list, so stocks delisted since 2016 are missing (survivorship). Second, a holding that stops trading stays frozen at its last price, so a failed pick never shows its final loss; we record this as a known limitation. The negative result is therefore, if anything, generous to the signals. The $t$-statistics of Table~\ref{Table:wfic} ignore cross-sectional dependence and the 32 signal--horizon cells tested, so the IC entries near $|t|=2$ should be read as suggestive at most.
 
 %% ------------------------------------------------------------------
 \section{Limitations and future work}
