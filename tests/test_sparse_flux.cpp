@@ -156,3 +156,40 @@ TEST_CASE("infinite half-life never decays; invalid settings throw") {
   CHECK_THROWS_AS(FluxAccumulator(2, 0.0), std::invalid_argument);
   CHECK_THROWS_AS(FluxAccumulator(2, 1.0, 0), std::invalid_argument);
 }
+
+TEST_CASE("decayed edges are pruned from accumulator rows") {
+  BarFlux one;
+  one.rows = {{{1, 2.0}}, {}, {}};
+  one.out = {2.0, 0, 0};
+  one.in = {0, 2.0, 0};
+  BarFlux empty;
+  empty.rows.resize(3);
+  empty.out.assign(3, 0.0);
+  empty.in.assign(3, 0.0);
+  FluxAccumulator acc(3, 1.0);
+  acc.add(one);
+  for (int k = 0; k < 60; ++k) acc.add(empty);
+  CHECK(acc.rows()[0].empty());
+  CHECK(acc.edge_count() == 0);
+
+  // An edge far below the row's strongest edge is dropped; the row stays ascending by column.
+  BarFlux first;
+  first.rows = {{{1, 2.0}}, {}, {}, {}};
+  first.out = {2.0, 0, 0, 0};
+  first.in = {0, 2.0, 0, 0};
+  BarFlux none;
+  none.rows.resize(4);
+  none.out.assign(4, 0.0);
+  none.in.assign(4, 0.0);
+  FluxAccumulator b(4, 1.0);
+  b.add(first);
+  for (int k = 0; k < 10; ++k) b.add(none);  // edge 0->1 is now 2 * 2^-10, below 1e-12 * 1e10
+  BarFlux big;
+  big.rows = {{{2, 5.0}, {3, 1e10}}, {}, {}, {}};
+  big.out = {1e10 + 5.0, 0, 0, 0};
+  big.in = {0, 0, 5.0, 1e10};
+  b.add(big);
+  REQUIRE(b.rows()[0].size() == 2);
+  CHECK(b.rows()[0][0].j == 2);
+  CHECK(b.rows()[0][1].j == 3);
+}

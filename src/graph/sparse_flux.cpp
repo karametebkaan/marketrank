@@ -103,7 +103,8 @@ BarFlux bar_flux_sparse(std::span<const double> pressure, std::span<const double
 }
 
 FluxAccumulator::FluxAccumulator(std::size_t n, double halflife, std::size_t row_cap)
-    : n_(n), decay_(std::exp2(-1.0 / halflife)), cap_(row_cap), rows_(n), out_(n, 0.0), in_(n, 0.0) {
+    : n_(n), decay_(std::exp2(-1.0 / halflife)), cap_(row_cap), rows_(n), out_(n, 0.0), in_(n, 0.0),
+      ref_(n, 0.0) {
   if (!(halflife > 0)) throw std::invalid_argument("FluxAccumulator: halflife must be > 0");
   if (row_cap == 0) throw std::invalid_argument("FluxAccumulator: row_cap must be >= 1");
 }
@@ -119,7 +120,14 @@ void FluxAccumulator::add(const BarFlux& bar) {
       auto& row = rows_[i];
       for (auto& e : row) e.w *= decay_;
       const auto& add = bar.rows[i];
-      if (add.empty()) continue;
+      auto prune = [&] {
+        const double floor = kPruneRel * ref_[i];
+        std::erase_if(row, [&](const WEdge& e) { return !(e.w != 0 && e.w >= floor); });
+      };
+      if (add.empty()) {
+        prune();
+        continue;
+      }
       merged.clear();
       merged.reserve(row.size() + add.size());
       std::size_t a = 0, b = 0;
@@ -141,6 +149,10 @@ void FluxAccumulator::add(const BarFlux& bar) {
         std::sort(merged.begin(), merged.end(), by_column);
       }
       row.swap(merged);
+      double peak = 0;
+      for (const auto& e : row) peak = std::max(peak, e.w);
+      ref_[i] = peak;
+      prune();
     }
   }
 }

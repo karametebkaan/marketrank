@@ -31,7 +31,10 @@ class FluxAccumulator {
  public:
   FluxAccumulator(std::size_t n, double halflife, std::size_t row_cap = 256);
 
+  // Decays, merges the bar, caps rows at row_cap, then prunes edges below kPruneRel x the row's
+  // max weight as of its last reinforcement (and exact zeros), so idle rows empty out.
   void add(const BarFlux& bar);
+  static constexpr double kPruneRel = 1e-12;
   const std::vector<std::vector<WEdge>>& rows() const { return rows_; }
   const std::vector<double>& out() const { return out_; }
   const std::vector<double>& in() const { return in_; }
@@ -45,6 +48,7 @@ class FluxAccumulator {
   std::size_t cap_;
   std::vector<std::vector<WEdge>> rows_;
   std::vector<double> out_, in_;
+  std::vector<double> ref_;  // per row: max edge weight when the row was last reinforced
 };
 
 }  // namespace fx
