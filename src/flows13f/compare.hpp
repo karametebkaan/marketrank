@@ -102,7 +102,11 @@ struct NullStats {
 };
 struct Agreement {
   FlowMetrics est{};      // O vs E
-  FlowMetrics gravity{};  // O vs G(E) = out_E in_E^T / total_E (E's own margins): structure beyond the marginals
+  FlowMetrics gravity{};  // O vs G(E) = out_E in_E^T / total_E (E's own margins), dense: every pair with margins
+  // O vs G(E) masked to E's nonzero pairs, each row rescaled to E's row sum: same support (density) and out-margins
+  // as E, so its lift isolates E's pairing within each row from density.
+  FlowMetrics gravity_support{};
+  std::size_t obs_edges = 0, est_edges = 0, gravity_edges = 0, gravity_support_edges = 0;  // nonzero pairs
   NullStats perm;         // O vs E with node labels permuted, seeds 1..R (mt19937 Fisher-Yates)
   bool has_placebo = false;
   FlowMetrics placebo{};  // O vs another quarter's estimate (temporal placebo), when given
@@ -112,6 +116,8 @@ Agreement compare_flows(const std::vector<FlowEdge>& observed, const std::vector
                         std::size_t perms = 100, const std::vector<FlowEdge>* placebo = nullptr);
 // Gravity model of an edge list: out_i * in_j / total for i != j (positive margins only).
 std::vector<FlowEdge> gravity_null(const std::vector<FlowEdge>& edges, std::size_t n);
+// Support-matched gravity: out_i * in_j / total on the edge list's own nonzero pairs, rows rescaled to its row sums.
+std::vector<FlowEdge> gravity_support_null(const std::vector<FlowEdge>& edges, std::size_t n);
 // pi on an edge list: row-normalised out-shares, p = 0.15, dangling -> teleport (same solver as the engine).
 std::vector<double> pi_of(const std::vector<FlowEdge>&, std::size_t n);
 

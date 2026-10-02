@@ -505,6 +505,10 @@ def run(data_dir, q_from, q_to, index_url, client, stats=None):
                 stats[k] = stats.get(k, 0) + v
     finally:
         db.close()
+    # Success: the staging database (several GB on a full run) is no longer needed. On failure it is kept.
+    for ext in ("", "-journal", "-wal", "-shm"):
+        if os.path.exists(stage + ext):
+            os.remove(stage + ext)
     return quarters
 
 

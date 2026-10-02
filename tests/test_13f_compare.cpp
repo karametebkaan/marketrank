@@ -222,6 +222,75 @@ TEST_CASE("13f compare: gravity null and placebo machinery") {
   CHECK(next_quarter("2025Q4") == "2026Q1");
 }
 
+TEST_CASE("13f compare: support-matched gravity null keeps the estimate's support and row sums") {
+  // E: out = (8, 4, 0), in = (0, 6, 6), total 12. Masked to E's support {01, 02, 12}: g01 = 8*6/12 = 4, g02 = 4,
+  // g12 = 4*6/12 = 2; rows rescaled to E's row sums (8 and 4): 4, 4 and 4.
+  const std::vector<FlowEdge> e = {{0, 1, 6}, {0, 2, 2}, {1, 2, 4}, {2, 0, 0}};
+  const auto g = gravity_support_null(e, 3);
+  std::map<std::pair<std::uint32_t, std::uint32_t>, double> G;
+  for (const auto& x : g) G[{x.from, x.to}] = x.dollars;
+  CHECK(G.size() == 3);
+  CHECK(G[{0, 1}] == doctest::Approx(4.0));
+  CHECK(G[{0, 2}] == doctest::Approx(4.0));
+  CHECK(G[{1, 2}] == doctest::Approx(4.0));
+  // the dense gravity null of the same E has the same 3 pairs here (in[0] = 0), but generally fills every pair
+  std::mt19937_64 rng(11);
+  const auto big = complete_random(30, rng);
+  std::vector<FlowEdge> sparse;
+  for (std::size_t k = 0; k < big.size(); k += 7) sparse.push_back(big[k]);
+  CHECK(gravity_support_null(sparse, 30).size() == sparse.size());
+  CHECK(gravity_null(sparse, 30).size() > 2 * sparse.size());
+  std::vector<double> rs(30, 0.0), rg(30, 0.0);
+  for (const auto& x : sparse) rs[x.from] += x.dollars;
+  for (const auto& x : gravity_support_null(sparse, 30)) rg[x.from] += x.dollars;
+  for (std::size_t i = 0; i < 30; ++i) CHECK(rg[i] == doctest::Approx(rs[i]));
+}
+
+TEST_CASE("13f compare: an estimate equal to its own support-matched gravity has zero lift over it") {
+  // Circulant support i -> i+1, i+2 (n = 10) with row weights alternating 1, 3: every in-strength is 1 + 3 = 4, so
+  // masked gravity is flat within each row and the rescale restores the row weight: E is its own fixed point.
+  const std::size_t n = 10;
+  std::vector<FlowEdge> e;
+  for (std::uint32_t i = 0; i < n; ++i) {
+    const double w = i % 2 ? 3.0 : 1.0;
+    e.push_back({i, static_cast<std::uint32_t>((i + 1) % n), w});
+    e.push_back({i, static_cast<std::uint32_t>((i + 2) % n), w});
+  }
+  std::mt19937_64 rng(4);
+  const auto o = complete_random(n, rng);
+  const Agreement a = compare_flows(o, e, n, 3);
+  for (const auto& [name, mp] : kFlowMetricFields) {
+    INFO(name);
+    if (std::isfinite(a.est.*mp)) CHECK(a.gravity_support.*mp == doctest::Approx(a.est.*mp).epsilon(1e-12));
+  }
+  CHECK(a.est_edges == 20);
+  CHECK(a.gravity_support_edges == 20);
+  CHECK(a.gravity_edges == n * (n - 1));
+  CHECK(a.obs_edges == n * (n - 1));
+}
+
+TEST_CASE("13f compare: an estimate with the right pairing on its support beats its support-matched gravity") {
+  // O: two communities of 10; within-community flows 100x the cross flows (full support). E = O on a random half of
+  // the pairs: same support pattern as itself, exact pairing. Its support-matched gravity keeps E's support and row
+  // sums but spreads each row by column strength only, losing the community structure.
+  const std::size_t n = 20;
+  std::mt19937_64 rng(9);
+  std::uniform_real_distribution<double> u(1.0, 2.0);
+  std::bernoulli_distribution keep(0.5);
+  std::vector<FlowEdge> o, e;
+  for (std::uint32_t i = 0; i < n; ++i)
+    for (std::uint32_t j = 0; j < n; ++j) {
+      if (i == j) continue;
+      const double w = u(rng) * ((i < 10) == (j < 10) ? 100.0 : 1.0);
+      o.push_back({i, j, w});
+      if (keep(rng)) e.push_back({i, j, w});
+    }
+  const Agreement a = compare_flows(o, e, n, 3);
+  CHECK(a.est.full_spearman - a.gravity_support.full_spearman > 0.1);
+  CHECK(a.est.obs_topk_spearman - a.gravity_support.obs_topk_spearman > 0.1);
+  CHECK(a.est.row_cosine - a.gravity_support.row_cosine > 0.05);
+}
+
 TEST_CASE("13f compare: the engine spearman uses average ranks and is NaN when undefined") {
   CHECK(spearman(std::vector<double>{1, 2, 3, 4}, std::vector<double>{10, 20, 30, 40}) == doctest::Approx(1.0));
   CHECK(spearman(std::vector<double>{1, 2, 3, 4}, std::vector<double>{4, 3, 2, 1}) == doctest::Approx(-1.0));
@@ -383,6 +452,11 @@ TEST_CASE("13f compare (e): CLI flags") {
   CHECK_THROWS_AS(parse_cli({"--mode", "replay", "--13f-quarters", "2025Q1"}), std::invalid_argument);
   CHECK_THROWS_AS(parse_cli({"--mode", "replay", "--compare-13f", "--13f-quarters"}), std::invalid_argument);
   CHECK(cli_usage().find("--compare-13f") != std::string::npos);
+  // quarterly 13F flows are compared with daily-bar estimates only
+  CHECK(parse_cli({"--mode", "replay", "--timeframe", "1d", "--compare-13f"}).compare_13f);
+  for (const char* tf : {"1h", "1w"})
+    CHECK_THROWS_WITH_AS(parse_cli({"--mode", "replay", "--timeframe", tf, "--compare-13f"}),
+                         doctest::Contains("--timeframe 1d"), std::invalid_argument);
   for (const auto& extra : std::vector<std::vector<std::string>>{
            {"--eval"}, {"--shock", "AAA:5"}, {"--export-slice"}, {"--walkforward"}}) {
     std::vector<std::string> args = {"--mode", "replay", "--compare-13f"};
@@ -453,10 +527,16 @@ TEST_CASE("13f compare: run_compare_13f end to end on synthetic holdings") {
   for (const auto& c : r["configs"]) {
     bases += c["base"].get<bool>();
     const auto& row = c["quarters"][0];
-    for (const char* k : {"estimate", "gravity", "placebo", "perm_mean", "perm_sd", "lift_placebo", "lift_gravity",
-                          "lift_perm"})
+    for (const char* k : {"estimate", "gravity", "gravity_support", "placebo", "perm_mean", "perm_sd", "lift_placebo",
+                          "lift_gravity", "lift_gravity_support", "lift_perm", "density"})
       CHECK(row.contains(k));
+    for (const char* k : {"observed", "estimate", "gravity", "gravity_support"}) {
+      CHECK(row["density"][k].contains("edges"));
+      CHECK(row["density"][k].contains("fraction"));
+    }
+    CHECK(row["density"]["gravity_support"]["edges"] == row["density"]["estimate"]["edges"]);
     CHECK(c["summary"]["lift_placebo"]["pi_spearman"].contains("sd"));
+    CHECK(c["summary"]["lift_gravity_support"]["full_spearman"].contains("positive"));
     REQUIRE(row["placebo"].is_object());
     for (const auto& [name, mp] : kFlowMetricFields)
       if (std::string(name) == "obs_topk_spearman" || std::string(name) == "row_cosine" ||
@@ -470,6 +550,8 @@ TEST_CASE("13f compare: run_compare_13f end to end on synthetic holdings") {
   const std::string md = compare_report_md(r);
   CHECK(md.find("rank-1") != std::string::npos);  // honest limit M8
   CHECK(md.find("placebo") != std::string::npos);
+  CHECK(md.find("support-matched") != std::string::npos);
+  CHECK(md.find("density") != std::string::npos);
   CHECK(log.str().find("2025Q2") != std::string::npos);
   // a requested quarter limits the run
   opt.quarters = {"2025Q3"};

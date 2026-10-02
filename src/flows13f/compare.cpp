@@ -263,6 +263,26 @@ Agg gravity_agg(const Agg& a, std::size_t n) {
   return g;
 }
 
+// Support-matched gravity: out_i * in_j / total on a's own nonzero pairs only, each row rescaled to a's row sum.
+// It keeps a's support (density) and out-margins and drops only a's pairing within each row.
+Agg gravity_support_agg(const Agg& a, std::size_t n) {
+  std::vector<double> in, out;
+  margins(a, n, in, out);
+  Agg g;
+  g.key = a.key;
+  g.w.assign(a.key.size(), 0.0);
+  std::size_t e = 0;
+  while (e < a.key.size()) {
+    const std::uint64_t i = a.key[e] / n;
+    std::size_t f = e;
+    double row = 0, mass = 0;
+    for (; f < a.key.size() && a.key[f] / n == i; ++f) row += a.w[f], mass += in[a.key[f] % n];
+    for (std::size_t x = e; x < f; ++x) g.w[x] = mass > 0 ? row * in[a.key[x] % n] / mass : 0.0;
+    e = f;
+  }
+  return g;
+}
+
 double overlap(const std::vector<std::uint64_t>& a, const std::vector<std::uint64_t>& b, std::size_t k) {
   const std::size_t d = std::min({k, a.size(), b.size()});
   return d ? static_cast<double>(intersection_size(a, b)) / static_cast<double>(d) : kNaN;
@@ -567,6 +587,20 @@ std::vector<FlowEdge> restrict_to(const std::vector<FlowEdge>& edges, const std:
 
 std::vector<double> pi_of(const std::vector<FlowEdge>& edges, std::size_t n) { return pi_of_agg(aggregate(edges, n), n); }
 
+namespace {
+std::vector<FlowEdge> to_edges(const Agg& g, std::size_t n) {
+  std::vector<FlowEdge> out;
+  out.reserve(g.key.size());
+  for (std::size_t e = 0; e < g.key.size(); ++e)
+    if (g.w[e] > 0) out.push_back({static_cast<std::uint32_t>(g.key[e] / n), static_cast<std::uint32_t>(g.key[e] % n), g.w[e]});
+  return out;
+}
+}  // namespace
+
+std::vector<FlowEdge> gravity_support_null(const std::vector<FlowEdge>& edges, std::size_t n) {
+  return to_edges(gravity_support_agg(aggregate(edges, n), n), n);
+}
+
 std::vector<FlowEdge> gravity_null(const std::vector<FlowEdge>& edges, std::size_t n) {
   const Agg g = gravity_agg(aggregate(edges, n), n);
   std::vector<FlowEdge> out;
@@ -584,6 +618,11 @@ Agreement compare_flows(const std::vector<FlowEdge>& observed, const std::vector
   {
     Agg ea = aggregate(estimated, n);
     Agg ga = gravity_agg(ea, n);
+    Agg gs = gravity_support_agg(ea, n);
+    r.obs_edges = o.agg.key.size();
+    r.est_edges = ea.key.size();
+    r.gravity_edges = ga.key.size();
+    r.gravity_support_edges = gs.key.size();
     const EstSide e = est_side(std::move(ea), n);
     r.est = evaluate(o, e, none, none);
     const double N = static_cast<double>(n) * static_cast<double>(n > 0 ? n - 1 : 0);
@@ -615,6 +654,7 @@ Agreement compare_flows(const std::vector<FlowEdge>& observed, const std::vector
       r.perm.sd.*mp = cnt[m] > 1 ? std::sqrt(std::max(0.0, (sq.*mp - c * r.perm.mean.*mp * r.perm.mean.*mp) / (c - 1))) : kNaN;
     }
     r.gravity = evaluate(o, est_side(std::move(ga), n), none, none);
+    r.gravity_support = evaluate(o, est_side(std::move(gs), n), none, none);
   }
   if (placebo) {
     r.has_placebo = true;
@@ -721,6 +761,16 @@ std::string money(double x) {
 }
 
 // Per metric: mean, sd, min, max, n over the finite values of rows[*][field][metric].
+json density_json(const Agreement& a, std::size_t m) {
+  const double pairs = static_cast<double>(m) * static_cast<double>(m > 0 ? m - 1 : 0);
+  auto d = [&](std::size_t k) { return json{{"edges", k}, {"fraction", pairs > 0 ? static_cast<double>(k) / pairs : kNaN}}; };
+  return {{"pairs", pairs},
+          {"observed", d(a.obs_edges)},
+          {"estimate", d(a.est_edges)},
+          {"gravity", d(a.gravity_edges)},
+          {"gravity_support", d(a.gravity_support_edges)}};
+}
+
 json spread(const std::vector<json>& rows, const char* field) {
   json out = json::object();
   for (const auto& [name, mp] : kFlowMetricFields) {
@@ -728,7 +778,7 @@ json spread(const std::vector<json>& rows, const char* field) {
     for (const auto& r : rows)
       if (r.contains(field) && r[field].is_object())
         if (const double x = num(r[field][name]); std::isfinite(x)) v.push_back(x);
-    json s = {{"n", v.size()}};
+    json s = {{"n", v.size()}, {"positive", std::count_if(v.begin(), v.end(), [](double x) { return x > 0; })}};
     if (v.empty()) {
       s["mean"] = s["sd"] = s["min"] = s["max"] = nullptr;
     } else {
@@ -934,7 +984,10 @@ nlohmann::json run_compare_13f(const Panel& panel, const Compare13fOptions& opt,
                   {"perm_sd", metrics_json(a.perm.sd)},
                   {"lift_placebo", metrics_json(a.has_placebo ? minus(a.est, a.placebo) : nan_metrics())},
                   {"lift_gravity", metrics_json(minus(a.est, a.gravity))},
+                  {"gravity_support", metrics_json(a.gravity_support)},
+                  {"lift_gravity_support", metrics_json(minus(a.est, a.gravity_support))},
                   {"lift_perm", metrics_json(minus(a.est, a.perm.mean))},
+                  {"density", density_json(a, m)},
                   {"top500_expected", a.top500_expected},
                   {"top2000_expected", a.top2000_expected},
                   {"pi_est_vs_adv", spearman(pi_of(local, m), p.adv)},
@@ -945,6 +998,7 @@ nlohmann::json run_compare_13f(const Panel& panel, const Compare13fOptions& opt,
     json summary = {{"estimate", spread(rows, "estimate")},
                     {"lift_placebo", spread(rows, "lift_placebo")},
                     {"lift_gravity", spread(rows, "lift_gravity")},
+                    {"lift_gravity_support", spread(rows, "lift_gravity_support")},
                     {"lift_perm", spread(rows, "lift_perm")},
                     {"perm_mean", spread(rows, "perm_mean")}};
     const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
@@ -1031,8 +1085,11 @@ std::string compare_report_md(const nlohmann::json& r) {
        "  teleport); Spearman over all nodes and over nodes with any flow; top-50 overlap.\n"
        "- **Nulls**: lift = metric - null against (1) the **temporal placebo** - the same config's estimate of another\n"
        "  quarter (q-4, else q+1, else q-1), which cancels density and size effects and is the fair null across\n"
-       "  configs; (2) the **gravity null** G = out * in^T / total from the estimate's own margins (structure beyond\n"
-       "  the marginals); (3) label permutations of the estimate (seeds 1..R, mean and sd). Size baseline for pi:\n"
+       "  configs; (2) the **gravity null** G = out * in^T / total from the estimate's own margins, dense over every\n"
+       "  pair with margins (missing pairs count as 0 in the edge metrics, so it is favoured by density); (2b) the\n"
+       "  **support-matched gravity null**: G masked to the estimate's nonzero pairs, each row rescaled to the\n"
+       "  estimate's row sum - same support (density) and out-margins, so its lift isolates the estimate's pairing\n"
+       "  within rows; (3) label permutations of the estimate (seeds 1..R, mean and sd). Size baseline for pi:\n"
        "  Spearman of observed pi against quarter ADV and against 13F value.\n"
        "- **Best config**: highest mean lift over the placebo.\n\n";
   s << "## Quarters\n\nFound:";
@@ -1061,15 +1118,20 @@ std::string compare_report_md(const nlohmann::json& r) {
   }
   s << "\n## Calibration grid (mean over quarters; lift = metric - null, placebo lift as mean +- sd [min, max])\n";
   for (const char* metric : kPrimary) {
-    s << "\n### " << metric << "\n\n| config | estimate | lift vs placebo | lift vs gravity | perm null |\n"
-         "|---|---|---|---|---|\n";
+    s << "\n### " << metric
+      << "\n\n| config | estimate | lift vs placebo | lift vs gravity (dense) [q>0] | lift vs support-matched gravity "
+         "+- sd [q>0] | perm null |\n|---|---|---|---|---|---|\n";
     for (const auto& c : r["configs"]) {
       const auto& sm = c["summary"];
       const auto& lp = sm["lift_placebo"][metric];
       s << "| " << sv(c["name"]) << (c["base"].get<bool>() ? " (base)" : "") << " | "
         << fmt(num(sm["estimate"][metric]["mean"])) << " | " << fmt(num(lp["mean"])) << " +- " << fmt(num(lp["sd"]))
         << " [" << fmt(num(lp["min"])) << ", " << fmt(num(lp["max"])) << "] | "
-        << fmt(num(sm["lift_gravity"][metric]["mean"])) << " | " << fmt(num(sm["perm_mean"][metric]["mean"])) << " |\n";
+        << fmt(num(sm["lift_gravity"][metric]["mean"])) << " [" << sm["lift_gravity"][metric]["positive"] << "/"
+        << sm["lift_gravity"][metric]["n"] << "] | " << fmt(num(sm["lift_gravity_support"][metric]["mean"])) << " +- "
+        << fmt(num(sm["lift_gravity_support"][metric]["sd"])) << " [" << sm["lift_gravity_support"][metric]["positive"]
+        << "/" << sm["lift_gravity_support"][metric]["n"] << "] | " << fmt(num(sm["perm_mean"][metric]["mean"]))
+        << " |\n";
     }
   }
   s << "\n## Best setting (by mean lift over the placebo)\n\n";
@@ -1086,7 +1148,8 @@ std::string compare_report_md(const nlohmann::json& r) {
     if (!c["base"].get<bool>()) continue;
     s << "\n## Per quarter (" << sv(c["name"]) << ", base): estimate / placebo / gravity / perm mean +- sd\n\n"
          "| quarter | obs-topK rho | full rho | row cosine | pi rho | pi rho (flow) | top500 (exp) | top2000 (exp) | "
-         "pi_est vs ADV |\n|---|---|---|---|---|---|---|---|---|\n";
+         "pi_est vs ADV | support-matched gravity lift (topK / full / cosine) | density obs / est / dense gravity |\n"
+         "|---|---|---|---|---|---|---|---|---|---|---|\n";
     for (const auto& q : c["quarters"]) {
       s << "| " << sv(q["quarter"]);
       for (const char* m : kPrimary) {
@@ -1096,14 +1159,18 @@ std::string compare_report_md(const nlohmann::json& r) {
       }
       s << " | " << fmt(num(q["estimate"]["top500_overlap"])) << " (" << fmt(num(q["top500_expected"]), 5) << ") | "
         << fmt(num(q["estimate"]["top2000_overlap"])) << " (" << fmt(num(q["top2000_expected"]), 5) << ") | "
-        << fmt(num(q["pi_est_vs_adv"])) << " |\n";
+        << fmt(num(q["pi_est_vs_adv"])) << " | " << fmt(num(q["lift_gravity_support"]["obs_topk_spearman"])) << " / "
+        << fmt(num(q["lift_gravity_support"]["full_spearman"])) << " / " << fmt(num(q["lift_gravity_support"]["row_cosine"]))
+        << " | " << fmt(num(q["density"]["observed"]["fraction"])) << " / " << fmt(num(q["density"]["estimate"]["fraction"]))
+        << " / " << fmt(num(q["density"]["gravity"]["fraction"])) << " |\n";
     }
   }
   s << "\n## Honest limits\n\n"
        "- 13F is quarterly, long-only and institutional, with a 45-day lag; it omits shorts, retail and intra-quarter\n"
        "  round trips. Fund inflows/outflows appear as unpaired cash, not pairs.\n"
        "- Proportional pairing makes T_q a sum of per-manager rank-1 matrices (out_m in_m^T / sum in_m), so edge\n"
-       "  agreement is largely agreement on marginals; the gravity and placebo lifts measure what is left.\n"
+       "  agreement is largely agreement on marginals; the support-matched gravity and placebo lifts measure what is\n"
+       "  left (the dense gravity null is also favoured by density).\n"
        "- Trade prices are unknown: d uses the quarter's mean lake close.\n";
   return s.str();
 }

@@ -121,6 +121,9 @@ class Sec13fTests(unittest.TestCase):
         self.assertEqual(got[1:], [["222", "594918104", "MSFT", "20", "2000"],
                                    ["222", "67066G104", "NVDA", "30", "3000"]])
         self.assertTrue(os.path.exists(os.path.join(data, "13f", "holdings_2021Q4.csv")))
+        # the staging database is removed after a successful run
+        self.assertFalse(os.path.exists(os.path.join(data, "13f", "staging.sqlite")))
+        self.assertFalse(os.path.exists(os.path.join(data, "13f", "staging.sqlite-journal")))
 
     def test_abort_on_403(self):
         c = sec13f.SecClient("ua", min_interval=0, get=lambda u, ua: (403, b"", 0), sleep=lambda s: None)
@@ -195,7 +198,7 @@ class Sec13fTests(unittest.TestCase):
             qs = sec13f.run(data, None, None, "https://x/index", client)
         self.assertEqual(rm.call_count, 2)
         self.assertEqual(qs, ["2021Q4", "2022Q2", "2023Q4"])
-        self.assertTrue(os.path.exists(os.path.join(data, "13f", "staging.sqlite")))
+        self.assertFalse(os.path.exists(os.path.join(data, "13f", "staging.sqlite")))  # removed on success
         # in-memory reference
         subs, cov = {}, {}
         for p in (self.zip, z2):

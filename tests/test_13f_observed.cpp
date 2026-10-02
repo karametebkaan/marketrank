@@ -10,6 +10,7 @@
 #include <random>
 
 #include "flows13f/observed.hpp"
+#include "test_util.hpp"
 
 using namespace mr;
 
@@ -115,7 +116,7 @@ TEST_CASE("observed: fallback price when lake price NaN") {
 }
 
 TEST_CASE("load_quarter joins cusip map and drops unmapped") {
-  auto dir = std::filesystem::temp_directory_path() / "mr_13f_obs_test";
+  auto dir = test::temp_dir("mr_13f_obs_test");
   std::filesystem::create_directories(dir / "13f");
   {
     std::ofstream h(dir / "13f" / "holdings_2024Q1.csv");
@@ -222,8 +223,7 @@ TEST_CASE("observed: skipped_value and fallback rules") {
 }
 
 TEST_CASE("load_quarter edge cases") {
-  auto dir = std::filesystem::temp_directory_path() / "mr_13f_obs_test2";
-  std::filesystem::remove_all(dir);
+  auto dir = test::temp_dir("mr_13f_obs_test2");
   std::filesystem::create_directories(dir / "13f");
   {
     std::ofstream h(dir / "13f" / "holdings_2024Q1.csv");

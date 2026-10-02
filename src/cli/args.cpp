@@ -150,6 +150,7 @@ CliArgs parse_cli(const std::vector<std::string>& args) {
   if (a.export_slice > 0 && a.mode != "replay") throw std::invalid_argument("--export-slice needs --mode replay");
   // --- M3c 13F comparison ---
   if (a.compare_13f && a.mode != "replay") throw std::invalid_argument("--compare-13f needs --mode replay");
+  if (a.compare_13f && a.tf != Timeframe::Day) throw std::invalid_argument("--compare-13f needs --timeframe 1d");
   if (!a.quarters_13f.empty() && !a.compare_13f) throw std::invalid_argument("--13f-quarters needs --compare-13f");
   if (a.lookback_days < 0)
     a.lookback_days = a.tf == Timeframe::Hour ? 60 : a.tf == Timeframe::Day ? 365 : 5 * 365;
