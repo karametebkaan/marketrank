@@ -195,6 +195,7 @@ Frame CorePipeline::step(const Panel& panel, std::size_t t, const std::vector<Sh
   std::span<const double> unit;
   if (params_.flux.lambda > 0) unit = window_.unit_vectors();
   const BarFlux bar = bar_flux_sparse(pressure, unit, window_.window(), params_.flux);
+  last_pressure_ = pressure;
   window_.push(returns);
   slow_.add(bar);
   fast_.add(bar);

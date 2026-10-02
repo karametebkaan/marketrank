@@ -64,6 +64,8 @@ class CorePipeline {
  public:
   CorePipeline(std::size_t n, CoreParams params);
   Frame step(const Panel& panel, std::size_t t, const std::vector<Shock>& shocks = {});
+  // Pressure the last step() fed to the flux (after masking and shocks). For tests and diagnostics.
+  const std::vector<double>& last_pressure() const { return last_pressure_; }
 
  private:
   std::size_t n_;
@@ -76,6 +78,7 @@ class CorePipeline {
   std::size_t next_bar_ = 0;             // first bar not yet scanned into last_close_
   std::vector<double> prev_pi_;          // full size n, 0 for inactive
   std::vector<double> prev_long_pi_;     // full size n, warm start for the long-run solve
+  std::vector<double> last_pressure_;    // full size n, see last_pressure()
 };
 
 Frame run_panel_last(const Panel& panel, const CoreParams& params);
