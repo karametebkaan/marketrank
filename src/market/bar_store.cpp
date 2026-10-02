@@ -117,16 +117,22 @@ void BarStore::load_range(const std::vector<std::string>& tickers, Timeframe tf,
                           TimePoint end) {
   lake();  // an open failure (e.g. lake in use by another process) must surface
   try {
-    for (auto& [ticker, loaded] : lake().read(tf, tickers, start, end)) {
-      const Key key{ticker, tf};
+    // Taken by value and consumed entry by entry, so the lake's copy of a series is freed as it is stored.
+    auto read = lake().read(tf, tickers, start, end);
+    for (auto it = read.begin(); it != read.end(); it = read.erase(it)) {
+      const Key key{it->first, tf};
+      std::vector<Bar>& loaded = it->second;
       // Unsaved (queued_) or unflushed (to_write_) bars are newer than the lake: keep them.
       std::set<TimePoint> pending;
       for (const auto* m : {&queued_, &to_write_})
-        if (auto it = m->find(key); it != m->end())
-          for (const Bar& b : it->second) pending.insert(b.t);
+        if (auto p = m->find(key); p != m->end())
+          for (const Bar& b : p->second) pending.insert(b.t);
       if (!pending.empty())
         std::erase_if(loaded, [&](const Bar& b) { return pending.count(b.t) > 0; });
-      upsert(key, loaded);
+      // The lake returns each series sorted by time and unique: with nothing stored or pending it is the series.
+      auto s = series_.find(key);
+      if (pending.empty() && (s == series_.end() || s->second.empty())) series_[key] = std::move(loaded);
+      else upsert(key, loaded);
     }
     for (const auto& [ticker, t] : lake().coverage(tf, tickers)) {
       auto it = covered_.find({ticker, tf});

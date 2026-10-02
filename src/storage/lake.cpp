@@ -224,6 +224,10 @@ Lake::Lake(fs::path root) {
   }
   auto& I = *impl_;
   I.q("SET threads TO " + std::to_string(std::max(1, omp_get_max_threads())));
+  // Bound DuckDB's own buffers (it spills to disk beyond this) and let it drop insertion order where the SQL does
+  // not ask for one (every read here has an explicit ORDER BY), so a ten-year read stays well under 4 GB.
+  I.q("SET memory_limit = '1GB'");
+  I.q("SET preserve_insertion_order = false");
   I.q("CREATE TABLE IF NOT EXISTS meta(key VARCHAR PRIMARY KEY, value BIGINT)");
   I.q("INSERT INTO meta VALUES ('seq', 0) ON CONFLICT DO NOTHING");
   I.q("CREATE TABLE IF NOT EXISTS coverage(ticker VARCHAR, tf VARCHAR, covered_from BIGINT, "
@@ -307,7 +311,11 @@ std::map<std::string, std::vector<Bar>> Lake::read(Timeframe tf, const std::vect
   auto& I = *impl_;
   const fs::path dir = I.root / "bars" / tf_dir_name(tf);
   if (tickers.empty() || start > end || !has_parquet(dir)) return out;
-  I.set_want(tickers);
+  // Unique tickers in batches, so the materialized result of one query holds about kReadBatch series at a time.
+  constexpr std::size_t kReadBatch = 1000;
+  std::vector<std::string> uniq(tickers);
+  std::sort(uniq.begin(), uniq.end());
+  uniq.erase(std::unique(uniq.begin(), uniq.end()), uniq.end());
   constexpr TimePoint kMin = -62135596800LL;    // 0001-01-01
   constexpr TimePoint kMax = 253402300799LL;    // 9999-12-31
   const TimePoint s = std::max(start, kMin), e = std::min(end, kMax);
@@ -317,8 +325,7 @@ std::map<std::string, std::vector<Bar>> Lake::read(Timeframe tf, const std::vect
       std::to_string(year_of(e)) + " AND t BETWEEN " + std::to_string(s) + " AND " + std::to_string(e) +
       " AND ticker IN (SELECT ticker FROM want)"
       " QUALIFY row_number() OVER (PARTITION BY ticker, t ORDER BY seq DESC) = 1 ORDER BY ticker, t";
-  auto run = [&] {
-    out.clear();
+  auto run_batch = [&] {
     auto r = I.q(sql);
     std::vector<Bar>* cur = nullptr;
     std::string cur_name;
@@ -337,6 +344,15 @@ std::map<std::string, std::vector<Bar>> Lake::read(Timeframe tf, const std::vect
         }
         cur->push_back({t[i], cols[0][i], cols[1][i], cols[2][i], cols[3][i], cols[4][i], cols[5][i]});
       }
+    }
+  };
+  auto run = [&] {
+    out.clear();
+    for (std::size_t b = 0; b < uniq.size(); b += kReadBatch) {
+      const auto first = uniq.begin() + static_cast<std::ptrdiff_t>(b);
+      const auto last = first + static_cast<std::ptrdiff_t>(std::min(kReadBatch, uniq.size() - b));
+      I.set_want(std::vector<std::string>(first, last));
+      run_batch();
     }
   };
   try {

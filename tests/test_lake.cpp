@@ -216,3 +216,32 @@ TEST_CASE("create_dirs_synced creates missing directories and reports only the n
   CHECK(create_dirs_synced(dir / "a" / "b" / "c").empty());
   CHECK(create_dirs_synced(dir / "a" / "d") == std::vector<std::filesystem::path>{dir / "a" / "d"});
 }
+
+TEST_CASE("reads of thousands of tickers (batched internally) return every series once, also with repeats") {
+  auto dir = test::temp_dir("lake_batch");
+  const TimePoint d0 = utc_seconds(2026, 9, 1, 4);
+  std::vector<std::string> tickers;
+  {
+    std::vector<LakeRow> rows;
+    for (int k = 0; k < 2300; ++k) {
+      const std::string t = "T" + std::to_string(k);
+      tickers.push_back(t);
+      rows.push_back(row(t, d0 + 86400, k + 0.5));
+      rows.push_back(row(t, d0, k + 0.25));
+    }
+    Lake lake(dir);
+    lake.write(Timeframe::Day, rows, {});
+  }
+  std::vector<std::string> want = tickers;
+  want.insert(want.end(), tickers.begin(), tickers.begin() + 1500);  // repeats land in other batches
+  Lake lake(dir);
+  auto got = lake.read(Timeframe::Day, want, d0, d0 + 86400);
+  REQUIRE(got.size() == 2300);
+  for (int k = 0; k < 2300; ++k) {
+    const auto& s = got["T" + std::to_string(k)];
+    REQUIRE(s.size() == 2);
+    CHECK(s[0].t == d0);
+    CHECK(s[0].c == k + 0.25);
+    CHECK(s[1].c == k + 0.5);
+  }
+}
