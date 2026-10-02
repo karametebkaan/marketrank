@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <map>
 #include <optional>
@@ -29,6 +30,7 @@
 #include "market/universe.hpp"
 #include "pipeline/core_pipeline.hpp"
 #include "pipeline/evaluation.hpp"
+#include "pipeline/graph_slice.hpp"
 #include "pipeline/shock.hpp"
 #include "server/http_server.hpp"
 #include "storage/csv_migration.hpp"
@@ -195,6 +197,23 @@ int run_eval(const mr::CliArgs& args, const mr::Panel& panel, const mr::Universe
                 m.mean_frame_ms);
     std::fflush(stdout);
   }
+  return 0;
+}
+
+int run_export_slice(const mr::CliArgs& args, const mr::Panel& panel, const mr::Universe& universe) {
+  const mr::GraphSlice s = mr::export_slice(panel, args.params, args.export_slice);
+  const auto j = mr::slice_json(s, universe.nodes(), std::string(mr::to_string(args.tf)), args.preset);
+  if (args.slice_out.has_parent_path()) fs::create_directories(args.slice_out.parent_path());
+  std::ofstream(args.slice_out) << j.dump(2) << "\n";
+  std::printf("slice of %zu stocks at %s (%zu active) -> %s\n", s.nodes.size(), mr::format_rfc3339(s.t).c_str(),
+              s.n_active, args.slice_out.string().c_str());
+  std::printf("%-7s %-24s %12s %10s %10s\n", "ticker", "sector", "pi", "pi*N", "slice_pi");
+  for (std::size_t k = 0; k < s.nodes.size(); ++k) {
+    const auto& sec = universe.nodes()[s.nodes[k]];
+    std::printf("%-7s %-24.24s %12.4e %10.4f %10.5f\n", sec.ticker.c_str(), sec.sector.c_str(), s.pi[k], s.mr[k],
+                s.slice_pi[k]);
+  }
+  std::printf("%zu edges among the slice\n", s.edges.size());
   return 0;
 }
 
@@ -412,6 +431,7 @@ int main(int argc, char** argv) {
       }
       return 0;
     }
+    if (args.export_slice > 0) return run_export_slice(args, panel, universe);
     if (args.eval) return run_eval(args, panel, universe);
     if (!args.shocks.empty()) return run_shock(args, panel, universe, portfolio);
     return run_rank(args, panel, universe, portfolio);

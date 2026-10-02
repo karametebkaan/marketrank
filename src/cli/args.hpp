@@ -30,6 +30,8 @@ struct CliArgs {
   bool maintain = false;
   bool sync_sectors = false;  // fetch SEC SIC sectors for the universe; needs no Alpaca keys
   bool refetch_full = false;  // alpaca only: refetch every ticker's full stored history once
+  std::size_t export_slice = 0;  // replay only: export a graph slice of this many stocks (--export-slice [N], 6)
+  std::filesystem::path slice_out = "docs/img/marketrank-slice.json";
   std::vector<std::pair<std::string, double>> shocks;  // --shock TICKER:SIZE, repeatable
   bool serve = false;
   int port = 8765;

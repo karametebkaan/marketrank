@@ -111,6 +111,11 @@ CliArgs parse_cli(const std::vector<std::string>& args) {
     else if (flag == "--vol-scale") a.params.vol_scale = true;
     else if (flag == "--vol-window") a.params.vol_window = to_size(flag, value());
     else if (flag == "--lambda") a.params.flux.lambda = to_double(flag, value());
+    else if (flag == "--export-slice") {
+      a.export_slice = 6;
+      if (i + 1 < args.size() && args[i + 1].rfind("--", 0) != 0) a.export_slice = to_size(flag, args[++i]);
+      if (a.export_slice == 0) throw std::invalid_argument("--export-slice needs N >= 1");
+    } else if (flag == "--slice-out") a.slice_out = value();
     else if (flag == "--shock") a.shocks.push_back(to_shock(flag, value()));
     else if (flag == "--help" || flag == "-h") a.help = true;
     else throw std::invalid_argument("unknown flag " + flag);
@@ -118,6 +123,7 @@ CliArgs parse_cli(const std::vector<std::string>& args) {
   if (a.mode != "synthetic" && a.mode != "replay" && a.mode != "alpaca")
     throw std::invalid_argument("--mode must be synthetic, replay or alpaca");
   if (a.refetch_full && a.mode != "alpaca") throw std::invalid_argument("--refetch-full needs --mode alpaca");
+  if (a.export_slice > 0 && a.mode != "replay") throw std::invalid_argument("--export-slice needs --mode replay");
   if (a.lookback_days < 0)
     a.lookback_days = a.tf == Timeframe::Hour ? 60 : a.tf == Timeframe::Day ? 365 : 5 * 365;
   a.params.validate();
@@ -145,6 +151,8 @@ std::string cli_usage() {
          "                 [--lambda X] [--min-dollar-volume X] [--max-volume-ratio X]\n"
          "                 [--vol-scale] [--vol-window N]\n"
          "                 [--shock TICKER:SIZE ...]   (extra SIZE% return at normal volume on the last bar)\n"
+         "                 [--export-slice [N (6)] [--slice-out PATH.json]]   (replay: top-pi stock + N-1 flux partners,\n"
+         "                                   raw flux among them and MarketRank re-solved on the slice, as JSON)\n"
          "                 [--serve [--port N (8765)] [--host H] [--web DIR]]   (REST + SSE server)\n"
          "                 [--migrate-cache [DIR]] [--maintain]\n"
          "                 [--sync-sectors]   (fetch SEC EDGAR SIC sectors for the universe snapshot into\n"

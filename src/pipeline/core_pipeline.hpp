@@ -80,6 +80,8 @@ class CorePipeline {
   Frame step(const Panel& panel, std::size_t t, const std::vector<Shock>& shocks = {});
   // Pressure the last step() fed to the flux (after masking and shocks). For tests and diagnostics.
   const std::vector<double>& last_pressure() const { return last_pressure_; }
+  // The slow (equilibrium) flux accumulator after the last step: raw kept edges, the source of Frame::P.
+  const FluxAccumulator& slow_flux() const { return slow_; }
 
  private:
   std::size_t n_;

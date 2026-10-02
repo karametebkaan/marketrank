@@ -1,0 +1,139 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="560" viewBox="0 0 900 560" font-family="Helvetica, Arial, sans-serif">
+<defs><marker id="arr0" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#c0583a"/></marker><marker id="arr1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#3d7bb0"/></marker><marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#4f8f3c"/></marker><marker id="arr3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#8a5aa6"/></marker><marker id="arr4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#9a7410"/></marker><marker id="arr5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#3b8f8f"/></marker></defs>
+<rect width="900" height="560" fill="#ffffff"/>
+<text x="24" y="34" font-size="19" font-weight="bold" fill="#1f2733">MarketRank on a real slice of the money-flow graph</text>
+<text x="24" y="56" font-size="12.5" fill="#5b6573">1d bar of 2026-10-01 · top-π stock and its 5 strongest flux partners · 6,188 active stocks · p = 0.15</text>
+<path d="M327.6,463.3 Q388.4,413.4 466.9,399.2" fill="none" stroke="#8a5aa6" stroke-opacity="0.37" stroke-width="0.94" marker-end="url(#arr3)"/>
+<path d="M492.5,360.5 Q476.7,300.0 490.8,245.8" fill="none" stroke="#4f8f3c" stroke-opacity="0.37" stroke-width="1.01" marker-end="url(#arr2)"/>
+<path d="M475.0,414.3 Q412.5,465.6 336.2,479.4" fill="none" stroke="#4f8f3c" stroke-opacity="0.38" stroke-width="1.01" marker-end="url(#arr2)"/>
+<path d="M468.4,401.5 Q300.0,445.2 132.5,401.7" fill="none" stroke="#4f8f3c" stroke-opacity="0.38" stroke-width="1.01" marker-end="url(#arr2)"/>
+<path d="M128.7,231.6 Q235.8,320.4 286.7,451.7" fill="none" stroke="#3b8f8f" stroke-opacity="0.38" stroke-width="1.05" marker-end="url(#arr5)"/>
+<path d="M510.8,244.8 Q525.1,300.0 509.6,359.5" fill="none" stroke="#3d7bb0" stroke-opacity="0.38" stroke-width="1.05" marker-end="url(#arr1)"/>
+<path d="M486.8,243.4 Q436.7,372.6 328.3,462.5" fill="none" stroke="#3d7bb0" stroke-opacity="0.38" stroke-width="1.07" marker-end="url(#arr1)"/>
+<path d="M272.5,463.2 Q163.3,372.6 113.3,243.8" fill="none" stroke="#8a5aa6" stroke-opacity="0.39" stroke-width="1.13" marker-end="url(#arr3)"/>
+<path d="M264.8,479.6 Q187.5,465.6 125.8,414.9" fill="none" stroke="#8a5aa6" stroke-opacity="0.40" stroke-width="1.23" marker-end="url(#arr3)"/>
+<path d="M467.9,387.0 Q275.8,352.2 129.6,232.1" fill="none" stroke="#4f8f3c" stroke-opacity="0.40" stroke-width="1.24" marker-end="url(#arr2)"/>
+<path d="M312.9,452.6 Q364.2,320.4 470.1,232.6" fill="none" stroke="#8a5aa6" stroke-opacity="0.41" stroke-width="1.29" marker-end="url(#arr3)"/>
+<path d="M136.9,213.9 Q324.2,247.8 474.2,371.0" fill="none" stroke="#3b8f8f" stroke-opacity="0.41" stroke-width="1.29" marker-end="url(#arr5)"/>
+<path d="M463.1,216.8 Q300.0,259.2 137.3,216.9" fill="none" stroke="#3d7bb0" stroke-opacity="0.41" stroke-width="1.30" marker-end="url(#arr1)"/>
+<path d="M108.8,244.2 Q123.3,300.0 107.8,359.6" fill="none" stroke="#3b8f8f" stroke-opacity="0.42" stroke-width="1.36" marker-end="url(#arr5)"/>
+<path d="M470.7,231.8 Q324.2,352.2 133.1,386.8" fill="none" stroke="#3d7bb0" stroke-opacity="0.42" stroke-width="1.41" marker-end="url(#arr1)"/>
+<path d="M131.5,384.6 Q300.0,340.8 467.4,384.3" fill="none" stroke="#9a7410" stroke-opacity="0.42" stroke-width="1.42" marker-end="url(#arr4)"/>
+<path d="M136.3,197.3 Q300.0,154.8 462.1,196.9" fill="none" stroke="#3b8f8f" stroke-opacity="0.45" stroke-width="1.62" marker-end="url(#arr5)"/>
+<path d="M125.0,371.7 Q275.8,247.8 461.5,214.1" fill="none" stroke="#9a7410" stroke-opacity="0.45" stroke-width="1.68" marker-end="url(#arr4)"/>
+<path d="M132.1,399.0 Q211.6,413.4 271.6,462.7" fill="none" stroke="#9a7410" stroke-opacity="0.49" stroke-width="2.01" marker-end="url(#arr4)"/>
+<path d="M128.8,182.6 Q187.5,134.4 243.9,124.2" fill="none" stroke="#3b8f8f" stroke-opacity="0.52" stroke-width="2.27" marker-end="url(#arr5)"/>
+<path d="M279.8,166.2 Q235.8,279.6 125.7,371.0" fill="none" stroke="#c0583a" stroke-opacity="0.53" stroke-width="2.34" marker-end="url(#arr0)"/>
+<path d="M90.6,360.5 Q74.9,300.0 89.2,245.2" fill="none" stroke="#9a7410" stroke-opacity="0.56" stroke-width="2.54" marker-end="url(#arr4)"/>
+<path d="M462.5,200.0 Q388.4,186.6 344.0,150.2" fill="none" stroke="#3d7bb0" stroke-opacity="0.58" stroke-width="2.72" marker-end="url(#arr1)"/>
+<path d="M291.0,451.4 Q251.6,300.0 285.7,169.2" fill="none" stroke="#8a5aa6" stroke-opacity="0.59" stroke-width="2.80" marker-end="url(#arr3)"/>
+<path d="M343.1,149.7 Q436.7,227.4 488.4,360.8" fill="none" stroke="#c0583a" stroke-opacity="0.70" stroke-width="3.73" marker-end="url(#arr0)"/>
+<path d="M475.1,371.6 Q364.2,279.6 320.6,167.1" fill="none" stroke="#4f8f3c" stroke-opacity="0.71" stroke-width="3.85" marker-end="url(#arr2)"/>
+<path d="M256.7,149.6 Q211.6,186.6 137.9,200.0" fill="none" stroke="#c0583a" stroke-opacity="0.82" stroke-width="4.75" marker-end="url(#arr0)"/>
+<path d="M314.1,168.2 Q348.4,300.0 309.3,450.4" fill="none" stroke="#c0583a" stroke-opacity="0.82" stroke-width="4.76" marker-end="url(#arr0)"/>
+<path d="M111.2,361.7 Q163.3,227.4 256.1,150.4" fill="none" stroke="#9a7410" stroke-opacity="0.84" stroke-width="4.88" marker-end="url(#arr4)"/>
+<path d="M355.1,124.0 Q412.5,134.4 470.0,181.6" fill="none" stroke="#c0583a" stroke-opacity="0.85" stroke-width="5.00" marker-end="url(#arr0)"/>
+<text x="381.8" y="431.2" font-size="10" font-weight="normal" text-anchor="middle" fill="#8a5aa6" stroke="#ffffff" stroke-width="3" stroke-linejoin="round" paint-order="stroke">$84.2M</text>
+<text x="484.5" y="314.3" font-size="10" font-weight="normal" text-anchor="middle" fill="#4f8f3c" stroke="#ffffff" stroke-width="3" stroke-linejoin="round" paint-order="stroke">$126M</text>
+<text x="420.1" y="454.3" font-size="10" font-weight="normal" text-anchor="middle" fill="#4f8f3c" stroke="#ffffff" stroke-width="3" stroke-linejoin="round" paint-order="stroke">$127M</text>
+<text x="327.1" y="426.3" font-size="10" font-weight="normal" text-anchor="middle" fill="#4f8f3c" stroke="#ffffff" stroke-width="3" stroke-linejoin="round" paint-order="stroke">$129M</text>
+<text x="208.8" y="317.2" font-size="10" font-weight="normal" text-anchor="middle" fill="#3b8f8f" stroke="#ffffff" stroke-width="3" stroke-linejoin="round" paint-order="stroke">$149M</text>
+<text x="517.5" y="295.4" font-size="10" font-weight="normal" text-anchor="middle" fill="#3d7bb0" stroke="#ffffff" stroke-width="3" stroke-linejoin="round" paint-order="stroke">$153M</text>
+<text x="434.4" y="348.5" font-size="10" font-weight="normal" text-anchor="middle" fill="#3d7bb0" stroke="#ffffff" stroke-width="3" stroke-linejoin="round" paint-order="stroke">$164M</text>
+<text x="191.2" y="383.9" font-size="10" font-weight="normal" text-anchor="middle" fill="#8a5aa6" stroke="#ffffff" stroke-width="3" stroke-linejoin="round" paint-order="stroke">$198M</text>
+<text x="202.6" y="464.9" font-size="10" font-weight="normal" text-anchor="middle" fill="#8a5aa6" stroke="#ffffff" stroke-width="3" stroke-linejoin="round" paint-order="stroke">$257M</text>
+<text x="314.6" y="346.2" font-size="10" font-weight="normal" text-anchor="middle" fill="#4f8f3c" stroke="#ffffff" stroke-width="3" stroke-linejoin="round" paint-order="stroke">$266M</text>
+<text x="365.6" y="352.9" font-size="10" font-weight="normal" text-anchor="middle" fill="#8a5aa6" stroke="#ffffff" stroke-width="3" stroke-linejoin="round" paint-order="stroke">$295M</text>
+<text x="287.7" y="261.6" font-size="10" font-weight="normal" text-anchor="middle" fill="#3b8f8f" stroke="#ffffff" stroke-width="3" stroke-linejoin="round" paint-order="stroke">$297M</text>
+<text x="326.2" y="241.0" font-size="10" font-weight="normal" text-anchor="middle" fill="#3d7bb0" stroke="#ffffff" stroke-width="3" stroke-linejoin="round" paint-order="stroke">$299M</text>
+<text x="115.7" y="295.2" font-size="10" font-weight="normal" text-anchor="middle" fill="#3b8f8f" stroke="#ffffff" stroke-width="3" stroke-linejoin="round" paint-order="stroke">$340M</text>
+<text x="339.8" y="321.3" font-size="10" font-weight="normal" text-anchor="middle" fill="#3d7bb0" stroke="#ffffff" stroke-width="3" stroke-linejoin="round" paint-order="stroke">$367M</text>
+<text x="272.9" y="366.7" font-size="10" font-weight="normal" text-anchor="middle" fill="#9a7410" stroke="#ffffff" stroke-width="3" stroke-linejoin="round" paint-order="stroke">$370M</text>
+<text x="273.5" y="180.0" font-size="10" font-weight="normal" text-anchor="middle" fill="#3b8f8f" stroke="#ffffff" stroke-width="3" stroke-linejoin="round" paint-order="stroke">$494M</text>
+<text x="257.8" y="287.0" font-size="10" font-weight="normal" text-anchor="middle" fill="#9a7410" stroke="#ffffff" stroke-width="3" stroke-linejoin="round" paint-order="stroke">$530M</text>
+<text x="195.4" y="420.7" font-size="10" font-weight="normal" text-anchor="middle" fill="#9a7410" stroke="#ffffff" stroke-width="3" stroke-linejoin="round" paint-order="stroke">$725M</text>
+<text x="177.7" y="152.3" font-size="10" font-weight="normal" text-anchor="middle" fill="#3b8f8f" stroke="#ffffff" stroke-width="3" stroke-linejoin="round" paint-order="stroke">$882M</text>
+<text x="231.2" y="261.1" font-size="10" font-weight="normal" text-anchor="middle" fill="#c0583a" stroke="#ffffff" stroke-width="3" stroke-linejoin="round" paint-order="stroke">$929M</text>
+<text x="82.7" y="314.2" font-size="10" font-weight="normal" text-anchor="middle" fill="#9a7410" stroke="#ffffff" stroke-width="3" stroke-linejoin="round" paint-order="stroke">$1.04B</text>
+<text x="405.5" y="188.2" font-size="10" font-weight="normal" text-anchor="middle" fill="#3d7bb0" stroke="#ffffff" stroke-width="3" stroke-linejoin="round" paint-order="stroke">$1.15B</text>
+<text x="270.9" y="331.3" font-size="10" font-weight="normal" text-anchor="middle" fill="#8a5aa6" stroke="#ffffff" stroke-width="3" stroke-linejoin="round" paint-order="stroke">$1.20B</text>
+<text x="414.4" y="228.3" font-size="10" font-weight="bold" text-anchor="middle" fill="#c0583a" stroke="#ffffff" stroke-width="3" stroke-linejoin="round" paint-order="stroke">$1.77B</text>
+<text x="393.8" y="294.2" font-size="10" font-weight="bold" text-anchor="middle" fill="#4f8f3c" stroke="#ffffff" stroke-width="3" stroke-linejoin="round" paint-order="stroke">$1.83B</text>
+<text x="213.8" y="180.0" font-size="10" font-weight="bold" text-anchor="middle" fill="#c0583a" stroke="#ffffff" stroke-width="3" stroke-linejoin="round" paint-order="stroke">$2.38B</text>
+<text x="329.9" y="285.7" font-size="10" font-weight="bold" text-anchor="middle" fill="#c0583a" stroke="#ffffff" stroke-width="3" stroke-linejoin="round" paint-order="stroke">$2.39B</text>
+<text x="162.1" y="262.5" font-size="10" font-weight="bold" text-anchor="middle" fill="#9a7410" stroke="#ffffff" stroke-width="3" stroke-linejoin="round" paint-order="stroke">$2.46B</text>
+<text x="403.3" y="142.7" font-size="10" font-weight="bold" text-anchor="middle" fill="#c0583a" stroke="#ffffff" stroke-width="3" stroke-linejoin="round" paint-order="stroke">$2.53B</text>
+<circle cx="300.0" cy="114.0" r="54.0" fill="#fbd5c5" stroke="#c0583a" stroke-width="2"/>
+<text x="300.0" y="115.0" font-size="15" font-weight="bold" text-anchor="middle" fill="#1f2733">MU</text>
+<text x="300.0" y="129.0" font-size="10.5" text-anchor="middle" fill="#1f2733">0.333</text>
+<text x="300.0" y="182.0" font-size="11" font-style="italic" text-anchor="middle" fill="#5b6573" stroke="#ffffff" stroke-width="3" stroke-linejoin="round" paint-order="stroke">Information Technology</text>
+<circle cx="500.9" cy="207.0" r="37.1" fill="#cfe3f3" stroke="#3d7bb0" stroke-width="2"/>
+<text x="500.9" y="208.0" font-size="15" font-weight="bold" text-anchor="middle" fill="#1f2733">MSFT</text>
+<text x="500.9" y="222.0" font-size="10.5" text-anchor="middle" fill="#1f2733">0.157</text>
+<text x="500.9" y="258.1" font-size="11" font-style="italic" text-anchor="middle" fill="#5b6573" stroke="#ffffff" stroke-width="3" stroke-linejoin="round" paint-order="stroke">Information Technology</text>
+<circle cx="500.9" cy="393.0" r="31.6" fill="#d9ecd0" stroke="#4f8f3c" stroke-width="2"/>
+<text x="500.9" y="394.0" font-size="15" font-weight="bold" text-anchor="middle" fill="#1f2733">SPCX</text>
+<text x="500.9" y="408.0" font-size="10.5" text-anchor="middle" fill="#1f2733">0.114</text>
+<text x="500.9" y="438.6" font-size="11" font-style="italic" text-anchor="middle" fill="#5b6573" stroke="#ffffff" stroke-width="3" stroke-linejoin="round" paint-order="stroke">Information Technology</text>
+<circle cx="300.0" cy="486.0" r="33.8" fill="#efe0f5" stroke="#8a5aa6" stroke-width="2"/>
+<text x="300.0" y="487.0" font-size="15" font-weight="bold" text-anchor="middle" fill="#1f2733">AAPL</text>
+<text x="300.0" y="501.0" font-size="10.5" text-anchor="middle" fill="#1f2733">0.130</text>
+<text x="300.0" y="533.8" font-size="11" font-style="italic" text-anchor="middle" fill="#5b6573" stroke="#ffffff" stroke-width="3" stroke-linejoin="round" paint-order="stroke">Information Technology</text>
+<circle cx="99.1" cy="393.0" r="31.5" fill="#fdf0c4" stroke="#9a7410" stroke-width="2"/>
+<text x="99.1" y="394.0" font-size="15" font-weight="bold" text-anchor="middle" fill="#1f2733">TSLA</text>
+<text x="99.1" y="408.0" font-size="10.5" text-anchor="middle" fill="#1f2733">0.114</text>
+<text x="99.1" y="438.5" font-size="11" font-style="italic" text-anchor="middle" fill="#5b6573" stroke="#ffffff" stroke-width="3" stroke-linejoin="round" paint-order="stroke">Consumer Discretionary</text>
+<circle cx="99.1" cy="207.0" r="36.5" fill="#d7eeee" stroke="#3b8f8f" stroke-width="2"/>
+<text x="99.1" y="208.0" font-size="15" font-weight="bold" text-anchor="middle" fill="#1f2733">SOXS</text>
+<text x="99.1" y="222.0" font-size="10.5" text-anchor="middle" fill="#1f2733">0.152</text>
+<text x="99.1" y="257.5" font-size="11" font-style="italic" text-anchor="middle" fill="#5b6573" stroke="#ffffff" stroke-width="3" stroke-linejoin="round" paint-order="stroke">ETF/Fund</text>
+<rect x="612" y="90" width="278" height="212" rx="8" fill="#f7f8fa" stroke="#d5d9e0"/>
+<text x="624" y="110" font-size="13" font-weight="bold" fill="#1f2733">MarketRank on the slice alone</text>
+<text x="624" y="134" font-size="11" font-weight="bold" text-anchor="start" fill="#5b6573">#</text>
+<text x="646" y="134" font-size="11" font-weight="bold" text-anchor="start" fill="#5b6573">ticker</text>
+<text x="752" y="134" font-size="11" font-weight="bold" text-anchor="end" fill="#5b6573">slice π</text>
+<text x="870" y="134" font-size="11" font-weight="bold" text-anchor="end" fill="#5b6573">global π·N</text>
+<line x1="624" y1="141" x2="870" y2="141" stroke="#c9ced6"/>
+<text x="624" y="162" font-size="12.5" text-anchor="start" fill="#1f2733" font-weight="bold">1</text>
+<text x="646" y="162" font-size="12.5" text-anchor="start" fill="#1f2733" font-weight="bold">MU</text>
+<text x="752" y="162" font-size="12.5" text-anchor="end" fill="#1f2733" font-weight="bold">0.3331</text>
+<text x="870" y="162" font-size="12.5" text-anchor="end" fill="#1f2733" font-weight="bold">387.4</text>
+<circle cx="766" cy="158" r="5" fill="#fbd5c5" stroke="#c0583a" stroke-width="1.5"/>
+<text x="624" y="188" font-size="12.5" text-anchor="start" fill="#1f2733">2</text>
+<text x="646" y="188" font-size="12.5" text-anchor="start" fill="#1f2733">MSFT</text>
+<text x="752" y="188" font-size="12.5" text-anchor="end" fill="#1f2733">0.1571</text>
+<text x="870" y="188" font-size="12.5" text-anchor="end" fill="#1f2733">157.8</text>
+<circle cx="766" cy="184" r="5" fill="#cfe3f3" stroke="#3d7bb0" stroke-width="1.5"/>
+<text x="624" y="214" font-size="12.5" text-anchor="start" fill="#1f2733">3</text>
+<text x="646" y="214" font-size="12.5" text-anchor="start" fill="#1f2733">SOXS</text>
+<text x="752" y="214" font-size="12.5" text-anchor="end" fill="#1f2733">0.1519</text>
+<text x="870" y="214" font-size="12.5" text-anchor="end" fill="#1f2733">203.7</text>
+<circle cx="766" cy="210" r="5" fill="#d7eeee" stroke="#3b8f8f" stroke-width="1.5"/>
+<text x="624" y="240" font-size="12.5" text-anchor="start" fill="#1f2733">4</text>
+<text x="646" y="240" font-size="12.5" text-anchor="start" fill="#1f2733">AAPL</text>
+<text x="752" y="240" font-size="12.5" text-anchor="end" fill="#1f2733">0.1303</text>
+<text x="870" y="240" font-size="12.5" text-anchor="end" fill="#1f2733">153.0</text>
+<circle cx="766" cy="236" r="5" fill="#efe0f5" stroke="#8a5aa6" stroke-width="1.5"/>
+<text x="624" y="266" font-size="12.5" text-anchor="start" fill="#1f2733">5</text>
+<text x="646" y="266" font-size="12.5" text-anchor="start" fill="#1f2733">SPCX</text>
+<text x="752" y="266" font-size="12.5" text-anchor="end" fill="#1f2733">0.1140</text>
+<text x="870" y="266" font-size="12.5" text-anchor="end" fill="#1f2733">105.3</text>
+<circle cx="766" cy="262" r="5" fill="#d9ecd0" stroke="#4f8f3c" stroke-width="1.5"/>
+<text x="624" y="292" font-size="12.5" text-anchor="start" fill="#1f2733">6</text>
+<text x="646" y="292" font-size="12.5" text-anchor="start" fill="#1f2733">TSLA</text>
+<text x="752" y="292" font-size="12.5" text-anchor="end" fill="#1f2733">0.1136</text>
+<text x="870" y="292" font-size="12.5" text-anchor="end" fill="#1f2733">214.6</text>
+<circle cx="766" cy="288" r="5" fill="#fdf0c4" stroke="#9a7410" stroke-width="1.5"/>
+<text x="616" y="336" font-size="11" fill="#5b6573">slice π: the damped chain re-solved on these</text>
+<text x="616" y="352" font-size="11" fill="#5b6573">6 stocks alone (p = 0.15); circle area ∝ slice π.</text>
+<text x="616" y="368" font-size="11" fill="#5b6573">global π·N: MarketRank in the full graph</text>
+<text x="616" y="384" font-size="11" fill="#5b6573">(1 = average active stock).</text>
+<text x="616" y="400" font-size="11" fill="#5b6573"></text>
+<text x="616" y="416" font-size="11" fill="#5b6573">Arrows: estimated dollar flux from → to,</text>
+<text x="616" y="432" font-size="11" fill="#5b6573">accumulated over the data window; width ∝</text>
+<text x="616" y="448" font-size="11" fill="#5b6573">dollars, colour = sending stock. Estimated</text>
+<text x="616" y="464" font-size="11" fill="#5b6573">from public price and volume bars, not</text>
+<text x="616" y="480" font-size="11" fill="#5b6573">observed account-level trades.</text>
+<text x="616" y="496" font-size="11" fill="#5b6573"></text>
+<text x="616" y="512" font-size="11" fill="#5b6573">marketrank --export-slice · scripts/render_slice.py</text>
+</svg>

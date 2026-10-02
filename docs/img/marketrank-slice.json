@@ -1,0 +1,199 @@
+{
+  "bar": "1d",
+  "edges": [
+    {
+      "dollars": 929475216.1654361,
+      "from": "MU",
+      "to": "TSLA"
+    },
+    {
+      "dollars": 2385112759.336449,
+      "from": "MU",
+      "to": "AAPL"
+    },
+    {
+      "dollars": 1766797493.4541054,
+      "from": "MU",
+      "to": "SPCX"
+    },
+    {
+      "dollars": 2528343336.703845,
+      "from": "MU",
+      "to": "MSFT"
+    },
+    {
+      "dollars": 2377595280.6881313,
+      "from": "MU",
+      "to": "SOXS"
+    },
+    {
+      "dollars": 1154376900.9460561,
+      "from": "MSFT",
+      "to": "MU"
+    },
+    {
+      "dollars": 366660436.86758184,
+      "from": "MSFT",
+      "to": "TSLA"
+    },
+    {
+      "dollars": 163633301.3254747,
+      "from": "MSFT",
+      "to": "AAPL"
+    },
+    {
+      "dollars": 153370297.4234544,
+      "from": "MSFT",
+      "to": "SPCX"
+    },
+    {
+      "dollars": 298739505.1486963,
+      "from": "MSFT",
+      "to": "SOXS"
+    },
+    {
+      "dollars": 1833293729.496256,
+      "from": "SPCX",
+      "to": "MU"
+    },
+    {
+      "dollars": 129058814.2841609,
+      "from": "SPCX",
+      "to": "TSLA"
+    },
+    {
+      "dollars": 126608146.14827831,
+      "from": "SPCX",
+      "to": "AAPL"
+    },
+    {
+      "dollars": 125582466.90941727,
+      "from": "SPCX",
+      "to": "MSFT"
+    },
+    {
+      "dollars": 265955546.43604395,
+      "from": "SPCX",
+      "to": "SOXS"
+    },
+    {
+      "dollars": 1203767475.9009387,
+      "from": "AAPL",
+      "to": "MU"
+    },
+    {
+      "dollars": 257029031.2072387,
+      "from": "AAPL",
+      "to": "TSLA"
+    },
+    {
+      "dollars": 84152825.36417297,
+      "from": "AAPL",
+      "to": "SPCX"
+    },
+    {
+      "dollars": 295071914.12728757,
+      "from": "AAPL",
+      "to": "MSFT"
+    },
+    {
+      "dollars": 197721344.7748331,
+      "from": "AAPL",
+      "to": "SOXS"
+    },
+    {
+      "dollars": 2456602512.929499,
+      "from": "TSLA",
+      "to": "MU"
+    },
+    {
+      "dollars": 725463252.6178513,
+      "from": "TSLA",
+      "to": "AAPL"
+    },
+    {
+      "dollars": 370336928.6847523,
+      "from": "TSLA",
+      "to": "SPCX"
+    },
+    {
+      "dollars": 529899593.6394229,
+      "from": "TSLA",
+      "to": "MSFT"
+    },
+    {
+      "dollars": 1044908279.616823,
+      "from": "TSLA",
+      "to": "SOXS"
+    },
+    {
+      "dollars": 882049991.5639105,
+      "from": "SOXS",
+      "to": "MU"
+    },
+    {
+      "dollars": 339981137.90985453,
+      "from": "SOXS",
+      "to": "TSLA"
+    },
+    {
+      "dollars": 148595791.05580384,
+      "from": "SOXS",
+      "to": "AAPL"
+    },
+    {
+      "dollars": 297254216.50097305,
+      "from": "SOXS",
+      "to": "SPCX"
+    },
+    {
+      "dollars": 493723864.6171469,
+      "from": "SOXS",
+      "to": "MSFT"
+    }
+  ],
+  "mr": [
+    387.4298291588456,
+    157.7633984200997,
+    105.30146944685775,
+    153.02236574329754,
+    214.6098070429183,
+    203.70092920220256
+  ],
+  "n_active": 6188,
+  "p": 0.15000000000000002,
+  "pi": [
+    0.06260986250142948,
+    0.025495054689738155,
+    0.017017044189860657,
+    0.02472888909878758,
+    0.034681610705061136,
+    0.03291870219815814
+  ],
+  "preset": "marketrank",
+  "sectors": [
+    "Information Technology",
+    "Information Technology",
+    "Information Technology",
+    "Information Technology",
+    "Consumer Discretionary",
+    "ETF/Fund"
+  ],
+  "slice_pi": [
+    0.3331241883451506,
+    0.15709516947078234,
+    0.11397820671507124,
+    0.13032808786662556,
+    0.11358493291534463,
+    0.15188941468702544
+  ],
+  "t": "2026-10-01T04:00:00Z",
+  "tickers": [
+    "MU",
+    "MSFT",
+    "SPCX",
+    "AAPL",
+    "TSLA",
+    "SOXS"
+  ]
+}
