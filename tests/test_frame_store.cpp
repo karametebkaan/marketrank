@@ -196,20 +196,34 @@ TEST_CASE("frame store concurrent shocks agree") {
   }
 }
 
-TEST_CASE("frame store is identical for one and eight OpenMP threads") {
+TEST_CASE("frame store honours the caller's OpenMP thread count and is bit-identical across counts") {
   Market m = market();
   const int saved = omp_get_max_threads();
+  struct Out {
+    std::shared_ptr<const LandscapeFrame> latest;
+    FrameStore::ShockResult shock;
+    int threads;
+  };
   auto run = [&](int threads) {
     omp_set_num_threads(threads);
     FrameStore fs(m.panel, m.secs, CoreParams::money_flow(), LandscapeParams{}, 10);
     fs.start();
     wait_ready(fs);
-    return fs.landscape(std::nullopt);
+    Out o;
+    o.latest = fs.landscape(std::nullopt);
+    o.shock = fs.shock({{o.latest->nodes.front().i, -10.0}});
+    o.threads = fs.status().threads;
+    return o;
   };
   auto one = run(1);
   auto eight = run(8);
   omp_set_num_threads(saved);
-  CHECK(one->raster.z == eight->raster.z);
+  CHECK(one.threads == 1);
+  CHECK(eight.threads == 8);
+  CHECK(one.latest->raster.z == eight.latest->raster.z);
+  CHECK(test::same_values(one.shock.delta.dh, eight.shock.delta.dh));
+  CHECK(test::same_values(one.shock.delta.dpi, eight.shock.delta.dpi));
+  CHECK(one.shock.raster.z == eight.shock.raster.z);
 }
 
 TEST_CASE("frame store rejects zero max_frames") {

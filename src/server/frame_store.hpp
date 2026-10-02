@@ -25,6 +25,7 @@ class FrameStore {
     bool running = false, ready = false;
     std::string error;
     std::uint64_t generation = 0;
+    int threads = 0;  // OpenMP thread count the worker actually ran with (0 until it starts)
   };
   struct ShockResult {
     TimePoint t = 0;
@@ -55,8 +56,9 @@ class FrameStore {
 
  private:
   void stop_worker();                  // call with control_m_ held and m_ NOT held (it joins)
-  void launch_locked();                // call with control_m_ held and m_ NOT held
-  void run(std::uint64_t gen, CoreParams core, LandscapeParams land);
+  void launch_locked(std::optional<CoreParams> core, std::optional<LandscapeParams> land, int threads);
+  // (launch_locked: call with control_m_ held and m_ NOT held)
+  void run(std::uint64_t gen, CoreParams core, LandscapeParams land, int threads);
   void bump();  // version++ and notify (call with m_ held)
 
   const Panel panel_;
@@ -70,6 +72,7 @@ class FrameStore {
   std::uint64_t version_ = 0;
   CoreParams core_;
   LandscapeParams land_;
+  int omp_threads_ = 1;  // caller's omp_get_max_threads() at start()/set_params(); applied to worker and shock()
   Status status_;
   std::map<TimePoint, std::shared_ptr<const LandscapeFrame>> frames_;
   std::optional<CorePipeline> pre_last_;

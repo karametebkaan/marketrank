@@ -1,5 +1,7 @@
 #include "server/frame_store.hpp"
 
+#include <omp.h>
+
 #include <stdexcept>
 
 namespace fx {
@@ -28,8 +30,12 @@ void FrameStore::stop_worker() {
   if (worker_.joinable()) worker_.join();
 }
 
-void FrameStore::launch_locked() {
+void FrameStore::launch_locked(std::optional<CoreParams> core, std::optional<LandscapeParams> land,
+                               int threads) {
   std::lock_guard<std::mutex> lk(m_);
+  if (core) core_ = std::move(*core);
+  if (land) land_ = *land;
+  omp_threads_ = threads;
   const std::uint64_t gen = ++gen_;
   frames_.clear();
   pre_last_.reset();
@@ -40,7 +46,7 @@ void FrameStore::launch_locked() {
   status_.generation = gen;
   bump();
   try {
-    worker_ = std::thread([this, gen, core = core_, land = land_] { run(gen, core, land); });
+    worker_ = std::thread([this, gen, c = core_, l = land_, threads] { run(gen, c, l, threads); });
   } catch (const std::exception& e) {
     status_.running = false;
     status_.error = std::string("thread launch failed: ") + e.what();
@@ -49,29 +55,27 @@ void FrameStore::launch_locked() {
 }
 
 void FrameStore::start() {
+  const int threads = omp_get_max_threads();
   std::lock_guard<std::mutex> ck(control_m_);
   stop_worker();
-  launch_locked();
+  launch_locked(std::nullopt, std::nullopt, threads);
 }
 
 void FrameStore::set_params(CoreParams core, LandscapeParams land) {
   core.validate();
+  const int threads = omp_get_max_threads();
   std::lock_guard<std::mutex> ck(control_m_);
   stop_worker();
-  {
-    std::lock_guard<std::mutex> lk(m_);
-    core_ = std::move(core);
-    land_ = land;
-    status_.ready = false;
-    pre_last_.reset();
-    last_core_.reset();
-    frames_.clear();
-  }
-  launch_locked();
+  launch_locked(std::move(core), land, threads);
 }
 
-void FrameStore::run(std::uint64_t gen, CoreParams core, LandscapeParams land) {
+void FrameStore::run(std::uint64_t gen, CoreParams core, LandscapeParams land, int threads) {
   try {
+    omp_set_num_threads(threads);  // the ICV is per-thread: follow the caller that started us
+    {
+      std::lock_guard<std::mutex> lk(m_);
+      if (gen_.load() == gen) status_.threads = omp_get_max_threads();
+    }
     const std::size_t T = panel_.T();
     if (T < 3) throw std::runtime_error("need at least three bars to serve landscapes");
     CorePipeline pipe(panel_.N(), core);
@@ -139,6 +143,7 @@ FrameStore::ShockResult FrameStore::shock(const std::vector<Shock>& shocks) {
   std::shared_ptr<const Frame> base;
   std::shared_ptr<const LandscapeFrame> base_land;
   LandscapeParams land;
+  int threads = 1;
   {
     std::lock_guard<std::mutex> lk(m_);
     if (!status_.ready || !pre_last_ || !last_core_ || frames_.empty())
@@ -147,7 +152,14 @@ FrameStore::ShockResult FrameStore::shock(const std::vector<Shock>& shocks) {
     base = last_core_;
     base_land = frames_.rbegin()->second;
     land = land_;
+    threads = omp_threads_;
   }
+  const int saved_threads = omp_get_max_threads();
+  omp_set_num_threads(threads);
+  struct Restore {
+    int n;
+    ~Restore() { omp_set_num_threads(n); }
+  } restore{saved_threads};
   const Frame shocked = pipe->step(panel_, panel_.T() - 1, shocks);
   ShockResult r;
   r.t = shocked.t;
