@@ -131,16 +131,26 @@ For each bar *t* and stock *i* with return `r_i = C/C⁻ − 1`, volume V and VW
 `fluxscape --shock TICKER:SIZE [--shock ...] --top N` runs the pipeline over bars 1..T−2, copies it, then steps the original (baseline) and the copy (shocked) at the last bar T−1. A shock `TICKER:SIZE` adds an extra SIZE% return at the stock's normal volume to the bar's actual pressure, after the liquidity floor and active masking: `p_X += (SIZE/100) × vol_term`, with vol_term = mdv (dollar), √mdv (sqrt) or 1 (relative, applied after the volume-ratio cap), where mdv is the trailing median dollar volume (SIZE < 0 sell-off/source, SIZE > 0 buying surge/sink; duplicate shocks on a node add). Everything else (bar, flux rules, accumulators, transitions, solve) is identical. An unknown or inactive shocked ticker is an error.
 The report gives the shocked nodes' Δh and Δπ, the top-N receivers and losers by Δh among active nodes (with Δπ and Δscore(+1)), the total |Δπ| (L1) and the portfolio holdings' Δh.
 
-## 6. Geometry — layout, lattice, landscape
+## 6. Geometry — layout, lattice, landscape (milestone 2)
 
-1. **Force-directed layout** (Fruchterman–Reingold, O(N²) per iteration — fine at N ≈ 500) on the symmetrized pruned flux graph (attraction ∝ F_ij + F_ji, global repulsion). Warm-started from the previous frame's positions; 50–200 iterations with cooling.
-2. **Lattice snap:** lattice n×m with n·m ≥ N, near-square (500 → 23×22). Stocks are assigned to lattice points by the **Hungarian algorithm**, minimizing total squared distance from normalized layout positions. **Hysteresis:** the new assignment is adopted only if its cost improves on the previous assignment (re-evaluated against new positions) by more than τ (default 5%); otherwise cells are kept. Empty lattice points take IDW values from their neighbors.
-3. **IDW landscape:** values h at lattice points interpolated onto a fine raster (subdivision s, default 4 → ~90×90) with `z(x) = Σ w_i h_i / Σ w_i`, `w_i = 1/d_i^q` (power q default 2), restricted to a search radius R (default 3 lattice cells; nearest-only fallback if no point in radius). Exact at nodes; bounded by [min h, max h].
-4. **Raw-layout toggle:** IDW over the un-snapped layout positions, for comparison.
+Built per frame from the active nodes (about 6,000 at N = 10,000 under the $1M floor). Nothing is O(N²) or O(N³).
 
-Scaling note (N ≈ 10,000): the layout must use Barnes–Hut (O(N log N)) instead of O(N²) forces, and lattice snapping must replace the O(N³) Hungarian algorithm with a scalable assignment, such as recursive coordinate bisection followed by local swap refinement. Milestone 2 decides the method.
+1. **Force-directed layout (Barnes–Hut).**
+   - Attraction comes from springs on each active node's top-5 off-diagonal raw-flux edges, symmetrized, with weight normalized by the maximum weight. Repulsion is inverse-distance between all active pairs, approximated with a quadtree (θ = 0.8). A weak pull toward the centre holds the layout together.
+   - The step size is capped by a linearly cooling temperature. 150 iterations on the first frame, then 20 per frame, warm-started from the previous positions.
+   - Forces are computed per node in parallel (OpenMP, deterministic: each node's tree traversal is serial). The edge forces are accumulated serially.
+2. **Lattice snap (recursive coordinate bisection).**
+   - The lattice is cols = ⌈√N_active⌉ by rows = ⌈N_active/cols⌉.
+   - Active nodes are sorted by x (ties broken by index) into column bands of `rows` nodes, and each band is sorted by y. A node's cell is (band, rank). This is O(N log N), one node per cell, and it preserves locality.
+   - **Hysteresis:** a node keeps its previous cell if the new cell is within 2 cells (Chebyshev distance) and that cell is still free. Otherwise it takes its new cell if free, else the nearest free cell. When the lattice size changes, the assignment is recomputed fresh.
+3. **IDW landscape.**
+   - The raster has (cols·s) × (rows·s) pixels, with s = 4 by default. Each pixel is `z = Σ wᵢhᵢ / Σ wᵢ`, wᵢ = 1/dᵢ^q (q = 2), over occupied lattice cells within radius R = 3 cells.
+   - If no cell is within R, the nearest occupied cell is used. A pixel exactly on a node takes that node's value.
+   - Computed in parallel per pixel row.
+4. **Height.** The default height is `signed-log`: `sign(h)·log1p(|h|)`, because money-flow hotness spans orders of magnitude. `linear` is also available, and suits bounded `netflow` hotness. The colour scale is diverging (valleys blue, hills red), symmetric around 0.
+5. **Arcs.** The global top 2,000 off-diagonal raw-flux edges between active nodes.
 
-Graph adjacency ≠ geometric adjacency: the layout approximates flux proximity in 2D, so strong edges may still span the map. Flux edges are therefore drawable as arcs over the terrain.
+Graph adjacency ≠ geometric adjacency: the layout approximates flux proximity in 2D, and the arcs show the real links.
 
 ## 7. Portfolio optimizer (collective move)
 
@@ -241,6 +251,12 @@ data/       universe/, cache/ (ignored), ledger/, portfolio.json
 
 Changing a parameter re-runs only the affected stage and those after it. Replay speed is clamped so that the frame interval ≥ max(user Δt, 1.5 × measured compute time), so larger graphs automatically slow playback rather than queuing frames.
 
+### 9.2b Serve mode (milestone 2)
+`fluxscape --serve [--port 8080] [--web web] [--mode replay|alpaca|synthetic] [model flags]`. The default preset is **money-flow** unless `--legacy`, `--money-flow` or explicit model flags change it.
+- A background thread computes core frames and landscape frames for the data window and keeps up to 300 landscapes in memory for the scrubber.
+- Before the last bar it keeps a copy of the pipeline, so shocks at the latest bar cost about two frames.
+- A parameter change cancels the computation and restarts it.
+
 ### 9.3 API
 | Endpoint | Purpose |
 |---|---|
@@ -253,6 +269,8 @@ Changing a parameter re-runs only the affected stage and those after it. Replay 
 | `GET /api/proposals?book=` | proposal history with fills |
 | `GET /api/strategies` | version tree |
 | `POST /api/replay` | play / pause / seek / speed |
+| `GET /api/status`, `GET /api/times` | computation progress and parameters; frame times (milestone 2) |
+| `POST /api/shock`, `GET /api/shock/grid` | counterfactual shocks at the latest bar (§5.3): deltas plus a Δh raster (milestone 2) |
 
 ### 9.4 UI
 **Left panel (collapsible sections):**
