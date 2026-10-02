@@ -1,6 +1,6 @@
 # MarketRank M3: backfill, walk-forward test, then optimizer or better flows
 
-**Status:** draft for user review, 2026-10-02.
+**Status:** approved by the user on 2026-10-02, with the §7 defaults accepted as proposed.
 **Builds on:** `2026-10-01-marketrank-design.md` (model, engine, Fluxscape).
 
 ## 0. The one question M3 answers
@@ -111,7 +111,7 @@ Each of these is re-tested with the same walk-forward harness (§2).
 - Causal by construction. A test asserts that changing any future bar leaves every past rebalance decision bit-identical.
 - Synthetic fixtures for every metric. A planted-signal test must show that the harness detects a known edge and finds no edge in noise.
 
-## 7. Open questions for the user
+## 7. Defaults (accepted 2026-10-02; changes come later as new strategy versions)
 1. Rebalance frequency: monthly by default, with weekly as an option.
 2. Tilt budget (20%) and K (10).
 3. Cost assumption (10 bps per side).
