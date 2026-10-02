@@ -43,6 +43,23 @@ std::pair<std::string, double> to_shock(const std::string& flag, const std::stri
   return {v.substr(0, colon), size};
 }
 
+// --- M3c 13F comparison ---
+bool is_quarter_string(const std::string& q) {
+  return q.size() == 6 && std::all_of(q.begin(), q.begin() + 4, [](char c) { return c >= '0' && c <= '9'; }) &&
+         q[4] == 'Q' && q[5] >= '1' && q[5] <= '4';
+}
+
+std::vector<std::string> to_quarters(const std::string& flag, const std::string& v) {
+  std::vector<std::string> out;
+  std::stringstream ss(v);
+  std::string q;
+  while (std::getline(ss, q, ','))
+    if (!is_quarter_string(q)) throw std::invalid_argument(flag + " expects YYYYQn[,YYYYQn...], got '" + v + "'");
+    else out.push_back(q);
+  if (out.empty() || v.back() == ',') throw std::invalid_argument(flag + " expects YYYYQn[,YYYYQn...], got '" + v + "'");
+  return out;
+}
+
 }  // namespace
 
 CliArgs parse_cli(const std::vector<std::string>& args) {
@@ -117,6 +134,9 @@ CliArgs parse_cli(const std::vector<std::string>& args) {
       if (a.export_slice == 0) throw std::invalid_argument("--export-slice needs N >= 1");
     } else if (flag == "--slice-out") a.slice_out = value();
     else if (flag == "--shock") a.shocks.push_back(to_shock(flag, value()));
+    // --- M3c 13F comparison ---
+    else if (flag == "--compare-13f") a.compare_13f = true;
+    else if (flag == "--13f-quarters") a.quarters_13f = to_quarters(flag, value());
     else if (flag == "--help" || flag == "-h") a.help = true;
     else throw std::invalid_argument("unknown flag " + flag);
   }
@@ -124,6 +144,9 @@ CliArgs parse_cli(const std::vector<std::string>& args) {
     throw std::invalid_argument("--mode must be synthetic, replay or alpaca");
   if (a.refetch_full && a.mode != "alpaca") throw std::invalid_argument("--refetch-full needs --mode alpaca");
   if (a.export_slice > 0 && a.mode != "replay") throw std::invalid_argument("--export-slice needs --mode replay");
+  // --- M3c 13F comparison ---
+  if (a.compare_13f && a.mode != "replay") throw std::invalid_argument("--compare-13f needs --mode replay");
+  if (!a.quarters_13f.empty() && !a.compare_13f) throw std::invalid_argument("--13f-quarters needs --compare-13f");
   if (a.lookback_days < 0)
     a.lookback_days = a.tf == Timeframe::Hour ? 60 : a.tf == Timeframe::Day ? 365 : 5 * 365;
   a.params.validate();
@@ -158,6 +181,9 @@ std::string cli_usage() {
          "                 [--sync-sectors]   (fetch SEC EDGAR SIC sectors for the universe snapshot into\n"
          "                                   data/sectors/sec_sic.csv; needs SEC_USER_AGENT in .env, no Alpaca keys;\n"
          "                                   uses the newest snapshot (--universe-size is ignored); run it on its own, then rank/eval)\n"
+         "                 [--compare-13f [--13f-quarters Q1,Q2,...]]   (replay: observed 13F flows in DATA/13f vs\n"
+         "                                   the estimated quarter flows, MarketRank agreement and the lambda x\n"
+         "                                   pressure calibration grid -> DATA/13f/report.md and report.json)\n"
          "                 [--refetch-full]   (alpaca: one-time refetch of every ticker's full stored history,\n"
          "                                   replacing old-basis bars; failed tickers stay untouched)\n";
 }

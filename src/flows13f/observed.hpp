@@ -7,9 +7,9 @@
 #include <vector>
 
 namespace mr {
-struct Holding { std::uint64_t cik; std::string ticker; double shares; double value_usd; };
+struct Holding13F { std::uint64_t cik; std::string ticker; double shares; double value_usd; };
 // Reads holdings_<q>.csv joined with cusip_map.csv; rows whose CUSIP has no ticker are dropped (counted).
-struct QuarterHoldings { std::string quarter; std::vector<Holding> rows; double dropped_value = 0, total_value = 0; std::size_t bad_rows = 0; };
+struct QuarterHoldings { std::string quarter; std::vector<Holding13F> rows; double dropped_value = 0, total_value = 0; std::size_t bad_rows = 0; };
 QuarterHoldings load_quarter(const std::filesystem::path& dir, const std::string& quarter);
 struct FlowEdge { std::uint32_t from, to; double dollars; };
 struct ObservedParams { std::size_t top_n = 2000; double prune_rel = 1e-9; };

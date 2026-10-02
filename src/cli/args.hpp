@@ -41,6 +41,9 @@ struct CliArgs {
   RankBy rank_by = RankBy::Pi;
   std::string preset = "marketrank";  // the preset the model parameters started from: marketrank | money-flow | legacy | defaults
   CoreParams params = CoreParams::market_rank();
+  // --- M3c 13F comparison (replay only) ---
+  bool compare_13f = false;               // --compare-13f: observed 13F flows vs estimated flows, calibration grid
+  std::vector<std::string> quarters_13f;  // --13f-quarters Q1,Q2,... (YYYYQn); empty = every quarter found
 };
 
 // Time range of bars to load and analyse: everything for synthetic (fixed historical dates),

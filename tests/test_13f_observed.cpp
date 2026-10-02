@@ -19,7 +19,7 @@ const std::vector<std::string> T = {"A", "B", "C"};
 const std::vector<double> P = {10.0, 10.0, 10.0};
 double one(const std::string&) { return 1.0; }
 
-QuarterHoldings Q(const std::string& q, std::vector<Holding> rows) {
+QuarterHoldings Q(const std::string& q, std::vector<Holding13F> rows) {
   QuarterHoldings h;
   h.quarter = q;
   h.rows = std::move(rows);

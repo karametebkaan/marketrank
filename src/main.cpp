@@ -21,6 +21,7 @@
 #include "cli/args.hpp"
 #include "cli/rank_report.hpp"
 #include "core/time.hpp"
+#include "flows13f/compare.hpp"  // M3c --compare-13f
 #include "market/alpaca_client.hpp"
 #include "market/asset_universe.hpp"
 #include "market/market_sync.hpp"
@@ -268,6 +269,18 @@ int run_shock(const mr::CliArgs& args, const mr::Panel& panel, const mr::Univers
   return 0;
 }
 
+// --- M3c 13F comparison: observed 13F flows vs estimated quarter flows + calibration grid (replay only) ---
+int run_compare_13f(const mr::CliArgs& args, const mr::Panel& panel) {
+  mr::Compare13fOptions opt;
+  opt.data = args.data;
+  opt.quarters = args.quarters_13f;
+  opt.base = args.params;
+  opt.preset = args.preset;
+  const auto report = mr::run_compare_13f(panel, opt, std::cerr);
+  std::cout << mr::compare_report_md(report);
+  return 0;
+}
+
 int run_rank(const mr::CliArgs& args, const mr::Panel& panel, const mr::Universe& universe,
              const std::optional<mr::PortfolioSpec>& portfolio) {
   const auto t0 = std::chrono::steady_clock::now();
@@ -440,6 +453,7 @@ int main(int argc, char** argv) {
       }
       return 0;
     }
+    if (args.compare_13f) return run_compare_13f(args, panel);  // M3c
     if (args.export_slice > 0) return run_export_slice(args, panel, universe);
     if (args.eval) return run_eval(args, panel, universe);
     if (!args.shocks.empty()) return run_shock(args, panel, universe, portfolio);
