@@ -69,11 +69,17 @@ void CoreParams::validate() const {
   auto fail = [](const char* what) {
     throw std::invalid_argument(std::string("CoreParams: ") + what);
   };
-  if (!(alpha > 0 && alpha <= 1)) fail("alpha must be in (0, 1]");
-  if (!(flux.lambda >= 0 && flux.lambda <= 1)) fail("lambda must be in [0, 1]");
-  if (!(halflife_slow > 0 && halflife_fast > 0 && halflife_long > 0)) fail("half-lives must be > 0");
+  // Half-lives: > 0 and finite, or +infinity (no decay). h > 0 rejects NaN and -infinity.
+  auto good_halflife = [](double h) { return h > 0; };
+  if (!(std::isfinite(alpha) && alpha > 0 && alpha <= 1)) fail("alpha must be in (0, 1]");
+  if (!(std::isfinite(flux.lambda) && flux.lambda >= 0 && flux.lambda <= 1))
+    fail("lambda must be in [0, 1]");
+  if (!(good_halflife(halflife_slow) && good_halflife(halflife_fast) &&
+        good_halflife(halflife_long)))
+    fail("half-lives must be > 0 (finite or +infinity)");
   if (transition.k_out == 0) fail("k_out must be >= 1");
-  if (!(transition.retention >= 0)) fail("retention must be >= 0");
+  if (!(std::isfinite(transition.retention) && transition.retention >= 0))
+    fail("retention must be finite and >= 0");
   if (horizons.empty()) fail("horizons must not be empty");
   for (int k : horizons)
     if (k < 1) fail("horizons must be >= 1");

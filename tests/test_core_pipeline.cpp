@@ -154,6 +154,26 @@ TEST_CASE("CoreParams::validate rejects bad settings") {
   e.flux.sink_candidates = 10;
   e.flux.sinks_per_source = 20;
   CHECK_THROWS_AS(e.validate(), std::invalid_argument);
+  const double inf = std::numeric_limits<double>::infinity();
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  CoreParams f;
+  f.transition.retention = inf;
+  CHECK_THROWS_AS(f.validate(), std::invalid_argument);
+  CoreParams g;
+  g.halflife_slow = nan;
+  CHECK_THROWS_AS(g.validate(), std::invalid_argument);
+  CoreParams h;
+  h.alpha = nan;
+  CHECK_THROWS_AS(h.validate(), std::invalid_argument);
+  CoreParams l;
+  l.flux.lambda = nan;
+  CHECK_THROWS_AS(l.validate(), std::invalid_argument);
+  CoreParams m;
+  m.halflife_fast = -inf;
+  CHECK_THROWS_AS(m.validate(), std::invalid_argument);
+  CoreParams ok;
+  ok.halflife_long = inf;  // +infinity = no decay is allowed
+  CHECK_NOTHROW(ok.validate());
   CHECK_NOTHROW(CoreParams{}.validate());
   CHECK_NOTHROW(CoreParams::legacy().validate());
   CHECK_THROWS_AS(CorePipeline(4, a), std::invalid_argument);
