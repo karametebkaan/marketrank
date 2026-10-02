@@ -22,16 +22,20 @@ void fetch_into(AlpacaClient& client, BarStore& store, const std::vector<std::st
                 Timeframe tf, TimePoint from, TimePoint to, std::set<std::string>& stale,
                 const std::set<std::string>& cover) {
   if (group.empty() || from >= to) return;
-  FetchResult r = client.fetch_bars(group, alpaca_timeframe(tf), from, to);
-  for (auto& [ticker, bars] : r.bars) {
-    store.merge(ticker, tf, tf == Timeframe::Hour ? aggregate_session_hours(bars) : bars);
-  }
+  // Commit each batch (bars, then coverage) before the next request, so a crash loses at most one batch.
+  FetchResult r = client.fetch_bars(
+      group, alpaca_timeframe(tf), from, to,
+      [&](const std::vector<std::string>& batch_symbols,
+          const std::map<std::string, std::vector<Bar>>& batch_bars) {
+        for (const auto& [ticker, bars] : batch_bars) {
+          store.merge(ticker, tf, tf == Timeframe::Hour ? aggregate_session_hours(bars) : bars);
+          store.save(ticker, tf);
+        }
+        for (const auto& t : batch_symbols)
+          if (cover.count(t)) store.set_covered_from(t, tf, from);
+        store.flush();
+      });
   stale.insert(r.stale.begin(), r.stale.end());
-  const std::set<std::string> failed(r.stale.begin(), r.stale.end());
-  for (const auto& t : group) {
-    if (r.bars.count(t)) store.save(t, tf);
-    if (cover.count(t) && !failed.count(t)) store.set_covered_from(t, tf, from);
-  }
 }
 
 }  // namespace

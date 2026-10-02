@@ -42,6 +42,9 @@ std::optional<AlpacaConfig> alpaca_config_from_env();
 std::string url_encode(std::string_view s);
 std::string_view alpaca_timeframe(Timeframe tf);
 
+using BatchCallback = std::function<void(const std::vector<std::string>& batch_symbols,
+                                         const std::map<std::string, std::vector<Bar>>& batch_bars)>;
+
 struct FetchResult {
   std::map<std::string, std::vector<Bar>> bars;
   std::vector<std::string> stale;  // symbols from batches that failed
@@ -52,7 +55,7 @@ class AlpacaClient {
   explicit AlpacaClient(AlpacaConfig config, HttpGet get = {});
 
   FetchResult fetch_bars(const std::vector<std::string>& symbols, std::string_view timeframe,
-                         TimePoint start, TimePoint end);
+                         TimePoint start, TimePoint end, const BatchCallback& on_batch = {});
   std::string get(const std::string& path);
 
  private:

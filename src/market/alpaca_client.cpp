@@ -134,7 +134,8 @@ HttpResponse AlpacaClient::get_with_retry(const std::string& path) {
 }
 
 FetchResult AlpacaClient::fetch_bars(const std::vector<std::string>& symbols,
-                                     std::string_view timeframe, TimePoint start, TimePoint end) {
+                                     std::string_view timeframe, TimePoint start, TimePoint end,
+                                     const BatchCallback& on_batch) {
   FetchResult result;
   constexpr std::size_t kBatch = 100;
   for (std::size_t b = 0; b < symbols.size(); b += kBatch) {
@@ -171,8 +172,13 @@ FetchResult AlpacaClient::fetch_bars(const std::vector<std::string>& symbols,
                           symbols.begin() + static_cast<std::ptrdiff_t>(batch_end));
       continue;
     }
-    for (auto& [sym, bars] : batch_bars)
+    for (const auto& [sym, bars] : batch_bars)
       result.bars[sym].insert(result.bars[sym].end(), bars.begin(), bars.end());
+    if (on_batch) {
+      const std::vector<std::string> batch_symbols(symbols.begin() + static_cast<std::ptrdiff_t>(b),
+                                                   symbols.begin() + static_cast<std::ptrdiff_t>(batch_end));
+      on_batch(batch_symbols, batch_bars);
+    }
   }
   return result;
 }

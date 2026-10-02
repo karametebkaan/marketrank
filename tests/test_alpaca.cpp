@@ -282,3 +282,57 @@ TEST_CASE("sync_bars saves each group as it completes") {
   reload.load_all({"AAPL"}, Timeframe::Day);
   CHECK(reload.bars("AAPL", Timeframe::Day).size() == 2);
 }
+
+TEST_CASE("sync data is durable before sync returns (no destructor flush needed)") {
+  auto dir = test::temp_dir("sync_durable");
+  std::vector<std::string> tickers;
+  for (int i = 0; i < 150; ++i) tickers.push_back("T" + std::to_string(i));
+  BarStore store(dir);
+  AlpacaClient client(test_config(), [&](const std::string& path) -> HttpResponse {
+    if (path.find("symbols=T0,") == std::string::npos) return {403, "no"};  // second batch fails
+    return {200, R"({"bars":{"T0":[{"t":"2026-09-29T04:00:00Z","o":1,"h":1,"l":1,"c":1,"v":1,"vw":1}]}})"};
+  });
+  sync_bars(client, store, tickers, Timeframe::Day, utc_seconds(2026, 9, 1), utc_seconds(2026, 10, 1));
+  // Store is still alive: read straight from disk through the lake.
+  const auto on_disk = store.lake().read(Timeframe::Day, {"T0"}, 0, 1LL << 40);
+  REQUIRE(on_disk.count("T0") == 1);
+  CHECK(on_disk.at("T0").size() == 1);
+  const auto cov = store.lake().coverage(Timeframe::Day, {"T0", "T120"});
+  CHECK(cov.count("T0") == 1);
+  CHECK(cov.count("T120") == 0);
+}
+
+TEST_CASE("sync commits each 100-symbol batch before fetching the next") {
+  auto dir = test::temp_dir("sync_batches");
+  std::vector<std::string> tickers;
+  for (int i = 0; i < 150; ++i) tickers.push_back("T" + std::to_string(i));
+  int calls = 0;
+  {
+    BarStore store(dir);
+    AlpacaClient client(test_config(), [&](const std::string& path) -> HttpResponse {
+      ++calls;
+      if (path.find("symbols=T0,") == std::string::npos) return {403, "no"};  // second batch fails
+      return {200, R"({"bars":{"T0":[{"t":"2026-09-29T04:00:00Z","o":1,"h":1,"l":1,"c":1,"v":1,"vw":1}]}})"};
+    });
+    auto stale = sync_bars(client, store, tickers, Timeframe::Day, utc_seconds(2026, 9, 1), utc_seconds(2026, 10, 1));
+    CHECK(stale.size() == 50);
+  }
+  BarStore reloaded(dir);
+  reloaded.load_all({"T0", "T120"}, Timeframe::Day);
+  CHECK(reloaded.bars("T0", Timeframe::Day).size() == 1);
+  CHECK(reloaded.covered_from("T0", Timeframe::Day).has_value());   // batch 1 committed
+  CHECK_FALSE(reloaded.covered_from("T120", Timeframe::Day).has_value());  // failed batch not covered
+  CHECK(calls == 2);
+}
+
+TEST_CASE("fetch_bars reports each successful batch to the callback") {
+  std::vector<std::string> symbols;
+  for (int i = 0; i < 250; ++i) symbols.push_back("S" + std::to_string(i));
+  AlpacaClient client(test_config(), [](const std::string&) { return HttpResponse{200, R"({"bars":{}})"}; });
+  std::vector<std::size_t> sizes;
+  client.fetch_bars(symbols, "1Day", 0, 1,
+                    [&](const std::vector<std::string>& batch, const std::map<std::string, std::vector<Bar>>&) {
+                      sizes.push_back(batch.size());
+                    });
+  CHECK(sizes == std::vector<std::size_t>{100, 100, 50});
+}
