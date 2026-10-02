@@ -176,6 +176,7 @@ TEST_CASE("cli --cluster-persistence") {
   CHECK(a.cluster_persistence);
   CHECK(a.cp_stride == 10);
   CHECK(a.cp_out == "x/y");
+  CHECK(parse_cli({"--mode", "replay", "--cluster-persistence", "--cp-fast-hl", "20"}).params.halflife_fast == 20.0);
   CHECK(parse_cli({}).cp_stride == 5);
   CHECK_FALSE(parse_cli({}).cluster_persistence);
   CHECK_THROWS_AS(parse_cli({"--cluster-persistence"}), std::invalid_argument);  // needs replay

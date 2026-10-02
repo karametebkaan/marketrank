@@ -282,7 +282,9 @@ function fillHoldings(f) {
     // MarketRank π·N, coloured around 1 = average.
     const v = n ? n[11] : null;
     if (k) box.appendChild(document.createTextNode('\n'));
-    box.appendChild(document.createTextNode(`${p.ticker.padEnd(6)} ${(100 * p.weight).toFixed(1).padStart(5)}%  π·N `));
+    const tk = Object.assign(document.createElement('span'), { className: 'tk', textContent: p.ticker, title: `${p.ticker}: path over the last ${PATH_BARS} bars` });
+    tk.addEventListener('click', () => { openPath(p.ticker).catch(fail); });
+    box.append(tk, document.createTextNode(`${' '.repeat(Math.max(0, 6 - p.ticker.length))} ${(100 * p.weight).toFixed(1).padStart(5)}%  π·N `));
     const el = document.createElement('span');
     if (v !== null && v !== undefined) el.className = v >= 1 ? 'pos' : 'neg';
     el.textContent = fmt(v, 3);
@@ -352,6 +354,7 @@ function renderTop(rows) {
       box.querySelectorAll('.toprow').forEach((el) => el.classList.remove('sel'));
       if (S.highlight === r.i) row.classList.add('sel');
       render();
+      if (S.highlight === r.i) openPath(r.ticker).catch(fail); else closePath();
     });
     if (S.topPrev.has(r.i) && S.topPrev.get(r.i) !== v) row.classList.add('beat');
     return row;
@@ -395,6 +398,7 @@ async function loadFrame(t) {
   }
   fillHoldings(f);
   loadTop(f.t).catch((e) => { $('topRows').textContent = String(e.message || e); if (S.selftest) fail(e); });
+  if (S.pathTicker) openPath(S.pathTicker).catch(fail);
   updateShockEnabled();
   render();
   return true;
@@ -480,6 +484,7 @@ async function onStatus(st) {
       $('shockSizeLabel').textContent = `${$('shockSize').value}%`;
       await applyShock();
     }
+    if (Q.has('path')) await openPath(Q.get('path'));  // ?path=TICKER opens the path panel in the self-test
     setTimeout(() => {
       if (!$('topRows').querySelector('.toprow')) fail(new Error('top table did not render'));
       // The product UI is fixed: no model or landscape knobs may come back.
@@ -511,7 +516,96 @@ async function setShowEtf(on) {
   return r.generation;
 }
 
+// ---- A stock's path: level log(π / size share) (x) against 5-bar momentum Δlog π·N (y), one point per bar over the
+// last PATH_BARS cached bars ending at the displayed bar. These coordinates mean the same on every bar, unlike the
+// stock's place on the map (which follows the re-clustered layout). The strip under the chart colours each bar by
+// the stock's flux community; frequent changes mean it has no stable group.
+const PATH_BARS = 60;
+function svgEl(tag, attrs, text) {
+  const e = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, String(v));
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+function groupColor(g) {
+  if (g === null || g === undefined || g < 0) return '#d4d4cf';
+  const hue = (g * 137.508) % 360;
+  return `hsl(${hue.toFixed(0)}, 55%, 55%)`;
+}
+async function openPath(ticker) {
+  const seq = S.pathSeq = (S.pathSeq || 0) + 1;
+  S.pathTicker = ticker;
+  const q = S.frame ? `&t=${S.frame.t}` : '';
+  const r = await getJSON(`/api/path?ticker=${encodeURIComponent(ticker)}&bars=${PATH_BARS}${q}`);
+  if (seq !== S.pathSeq || S.pathTicker !== ticker) return;
+  drawPath(r);
+  $('path').hidden = false;
+}
+function closePath() { S.pathTicker = null; S.pathSeq = (S.pathSeq || 0) + 1; $('path').hidden = true; }
+function drawPath(r) {
+  const svg = $('pathSvg');
+  svg.replaceChildren();
+  const W = 360, H = 250, padL = 34, padR = 8, padT = 8, stripH = 8, padB = 34 + stripH;
+  const pts = r.points.filter((p) => p.level !== null && p.momentum !== null);
+  const days = r.points.length;
+  $('pathTitle').textContent = `${r.ticker} · ${sectorAbbr(r.sector)} · path over ${days} bars`;
+  if (pts.length < 2) {
+    svg.append(svgEl('text', { x: W / 2, y: H / 2, 'text-anchor': 'middle' }, 'not enough active bars'));
+    $('pathNote').textContent = '';
+    return;
+  }
+  // Symmetric ranges around 0, so the axes cross in the middle and the quadrants keep their meaning.
+  const xm = Math.max(1e-6, ...pts.map((p) => Math.abs(p.level))) * 1.1;
+  const ym = Math.max(1e-6, ...pts.map((p) => Math.abs(p.momentum))) * 1.1;
+  const X = (v) => padL + (v + xm) / (2 * xm) * (W - padL - padR);
+  const Y = (v) => padT + (ym - v) / (2 * ym) * (H - padT - padB);
+  const x0 = X(0), y0 = Y(0), bottom = H - padB;
+  svg.append(
+    svgEl('rect', { x: padL, y: padT, width: W - padL - padR, height: bottom - padT, fill: '#fbfbfa', stroke: '#e4e4df' }),
+    svgEl('line', { x1: x0, y1: padT, x2: x0, y2: bottom, stroke: '#c8c8c2' }),
+    svgEl('line', { x1: padL, y1: y0, x2: W - padR, y2: y0, stroke: '#c8c8c2' }),
+    svgEl('text', { x: W - padR - 3, y: padT + 11, 'text-anchor': 'end', class: 'q' }, 'above size · rising'),
+    svgEl('text', { x: W - padR - 3, y: bottom - 4, 'text-anchor': 'end', class: 'q' }, 'above size · falling'),
+    svgEl('text', { x: padL + 3, y: padT + 11, class: 'q' }, 'below size · rising'),
+    svgEl('text', { x: padL + 3, y: bottom - 4, class: 'q' }, 'below size · falling'),
+    svgEl('text', { x: (padL + W - padR) / 2, y: bottom + stripH + 24, 'text-anchor': 'middle' }, 'level: log(π / size share)'),
+    svgEl('text', { x: 10, y: (padT + bottom) / 2, 'text-anchor': 'middle', transform: `rotate(-90 10 ${(padT + bottom) / 2})` }, 'momentum: Δ5 log π·N'),
+    svgEl('text', { x: padL, y: bottom + stripH + 12 }, (-xm).toFixed(2)),
+    svgEl('text', { x: W - padR, y: bottom + stripH + 12, 'text-anchor': 'end' }, `+${xm.toFixed(2)}`),
+    svgEl('text', { x: padL - 3, y: padT + 9, 'text-anchor': 'end' }, `+${ym.toFixed(2)}`),
+    svgEl('text', { x: padL - 3, y: bottom, 'text-anchor': 'end' }, (-ym).toFixed(2)),
+  );
+  // Segments fade from old (light) to new (dark).
+  for (let k = 1; k < pts.length; k++) {
+    const a = pts[k - 1], b = pts[k], age = k / (pts.length - 1);
+    svg.append(svgEl('line', { x1: X(a.level), y1: Y(a.momentum), x2: X(b.level), y2: Y(b.momentum),
+      stroke: `rgba(29, 29, 27, ${(0.12 + 0.75 * age).toFixed(2)})`, 'stroke-width': 1.5 }));
+  }
+  const first = pts[0], last = pts[pts.length - 1];
+  const c = (p) => `${p.time.slice(0, 10)} · level ${fmtSigned(p.level, 3)} · momentum ${fmtSigned(p.momentum, 4)} · π·N ${fmt(p.mr, 3)}`;
+  const f0 = svgEl('circle', { cx: X(first.level), cy: Y(first.momentum), r: 3, fill: '#fff', stroke: '#6b6b66' });
+  f0.append(svgEl('title', {}, `start ${c(first)}`));
+  const l0 = svgEl('circle', { cx: X(last.level), cy: Y(last.momentum), r: 5, fill: 'rgb(0, 200, 80)', stroke: '#fff', 'stroke-width': 1.5 });
+  l0.append(svgEl('title', {}, `now ${c(last)}`));
+  svg.append(f0, l0);
+  // Community strip: one cell per bar (all bars of the window, active or not).
+  const cw = (W - padL - padR) / days;
+  r.points.forEach((p, k) => {
+    const rc = svgEl('rect', { x: padL + k * cw, y: bottom + 2, width: Math.max(cw, 0.5) + 0.3, height: stripH, fill: groupColor(p.group) });
+    rc.append(svgEl('title', {}, `${p.time.slice(0, 10)} · community ${p.group === null || p.group < 0 ? 'none' : p.group}`));
+    svg.append(rc);
+  });
+  const groups = r.points.map((p) => p.group);
+  let changes = 0;
+  for (let k = 1; k < groups.length; k++) if (groups[k] !== groups[k - 1]) changes++;
+  $('pathNote').textContent = `${first.time.slice(0, 10)} → ${last.time.slice(0, 10)} · open dot = start, green = now · community changed ${changes}× in ${days} bars`;
+}
+
 function wire() {
+  $('pathClose').addEventListener('click', () => {
+    closePath();
+    if (S.highlight !== null) { S.highlight = null; document.querySelectorAll('.toprow').forEach((el) => el.classList.remove('sel')); render(); }
+  });
   // Scrubbing exits shock mode (as Reset does): the shock belongs to the latest bar only.
   $('scrub').addEventListener('input', () => { $('follow').checked = false; clearShock(); render(); $('shockApply').disabled = true; loadFrame(S.times[Number($('scrub').value)]).catch(fail); });
   $('play').addEventListener('click', () => {

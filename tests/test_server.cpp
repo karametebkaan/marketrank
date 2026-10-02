@@ -580,3 +580,31 @@ TEST_CASE("server: show_etf round-trips through /api/params and /api/status, def
   CHECK(json::parse(c.Get("/api/status")->body)["show_etf"] == false);
   CHECK(etf_cells().second == 0);
 }
+
+TEST_CASE("server: /api/path gives a stock's level and 5-bar momentum per cached frame") {
+  Fixture f;
+  httplib::Client c("127.0.0.1", f.port);
+  CHECK(c.Get("/api/path")->status == 400);
+  CHECK(c.Get("/api/path?ticker=NOPE")->status == 404);
+  CHECK(c.Get("/api/path?ticker=X&bars=1")->status == 400);
+  const auto frames = f.store->recent(std::nullopt, 300);
+  REQUIRE(frames.size() >= 7);
+  const auto& n0 = frames.back()->nodes.front();
+  const std::string tk = f.store->nodes()[n0.i].ticker;
+  const json j = json::parse(c.Get("/api/path?ticker=" + tk + "&bars=4")->body);
+  CHECK(j["ticker"] == tk);
+  CHECK(j["lag"] == 5);
+  const auto& pts = j["points"];
+  REQUIRE(pts.size() == 4);
+  CHECK(pts.back()["t"] == frames.back()->t);
+  CHECK(pts.back()["level"].get<double>() == doctest::Approx(n0.hdisp));
+  // momentum = log(pi*N) now - log(pi*N) 5 frames earlier, both from the cached frames
+  auto lmr = [&](const LandscapeFrame& fr) {
+    for (const auto& n : fr.nodes)
+      if (n.i == n0.i) return std::log(market_rank_score(n.pi, fr.nodes.size()));
+    return std::numeric_limits<double>::quiet_NaN();
+  };
+  const std::size_t K = frames.size();
+  CHECK(pts.back()["momentum"].get<double>() == doctest::Approx(lmr(*frames[K - 1]) - lmr(*frames[K - 6])));
+  for (std::size_t k = 1; k < pts.size(); ++k) CHECK(pts[k]["t"].get<long long>() > pts[k - 1]["t"].get<long long>());
+}

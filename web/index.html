@@ -7,12 +7,15 @@
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="icon" type="image/png" sizes="512x512" href="icon-512.png">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <div id="app">
   <aside id="panel">
-    <h1><img class="logo" src="favicon.svg" alt="" width="28" height="28">MarketRank <span class="view">Fluxscape</span></h1>
+    <h1><img class="logo" src="favicon.svg" alt="" width="34" height="34"><span class="brand"><span class="name">MarketRank</span><span class="view">Fluxscape</span></span></h1>
     <div id="status">loading…</div>
     <h2>Data</h2>
     <label>Bar <input id="scrub" type="range" min="0" max="0" value="0"></label>
@@ -37,6 +40,11 @@
     <section id="top" aria-live="polite">
       <h3>MarketRank top 10 · π (exact)</h3>
       <div id="topRows"></div>
+    </section>
+    <section id="path" hidden>
+      <h3><span id="pathTitle"></span><button id="pathClose" title="close" aria-label="close">×</button></h3>
+      <svg id="pathSvg" viewBox="0 0 360 250" role="img"></svg>
+      <div id="pathNote" class="hint"></div>
     </section>
     <div id="legend"></div>
   </main>

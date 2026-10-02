@@ -153,6 +153,7 @@ CliArgs parse_cli(const std::vector<std::string>& args) {
     else if (flag == "--cluster-persistence") a.cluster_persistence = true;
     else if (flag == "--cp-stride") a.cp_stride = to_size(flag, value());
     else if (flag == "--cp-out") a.cp_out = value();
+    else if (flag == "--cp-fast-hl") a.params.halflife_fast = to_double(flag, value());
     else if (flag == "--help" || flag == "-h") a.help = true;
     else throw std::invalid_argument("unknown flag " + flag);
   }
@@ -234,7 +235,7 @@ std::string cli_usage() {
          "                   [--wf-largecap-run ID]   (sibling --wf-top-n 500 run in the same --wf-out: gate c5)\n"
          "                   [--wf-blend TRAIN/EMBARGO/GATE/MIN]   (blend windows in rebalance periods; default\n"
          "                                   156/1/104/52 weekly, 36/1/24/12 monthly)\n"
-         "                 [--cluster-persistence [--cp-stride N (5)] [--cp-out DIR (<data>/analysis)]]   (replay: from-\n"
+         "                 [--cluster-persistence [--cp-stride N (5)] [--cp-out DIR (<data>/analysis)] [--cp-fast-hl BARS (preset)]]   (replay: from-\n"
          "                                   scratch Louvain persistence of the flux communities vs lag, seeds, chance\n"
          "                                   and sectors; writes cluster_persistence*.csv and exits)\n"
          "                 [--wf-rereport ID [--wf-out DIR]]   (dev: regenerate results.json and report.md of a\n"

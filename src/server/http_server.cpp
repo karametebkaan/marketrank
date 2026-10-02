@@ -281,6 +281,56 @@ void FluxServer::routes() {
     send_json(res, 200, {{"t", frames.back()->t}, {"by", by == TopBy::Pi ? "pi" : "h"}, {"rows", rows}});
   });
 
+  // A stock's path over the last `bars` cached frames ending at t (latest when absent), in coordinates that mean the
+  // same on every bar (unlike its lattice position, which follows the re-clustered layout): level = the landscape
+  // value hdisp (log(pi / size share) under marketrank), momentum = log(pi*N) now minus 5 bars earlier.
+  svr_.Get("/api/path", [this](const httplib::Request& req, httplib::Response& res) {
+    constexpr std::size_t kLag = 5;
+    std::optional<TimePoint> t;
+    long long bars = 60;
+    std::string ticker;
+    try {
+      ticker = req.get_param_value("ticker");
+      if (ticker.empty()) throw std::invalid_argument("ticker");
+      if (req.has_param("bars")) {
+        bars = parse_int(req.get_param_value("bars"));
+        if (bars < 2 || bars > 300) throw std::invalid_argument("bars");
+      }
+      if (req.has_param("t")) t = parse_int(req.get_param_value("t"));
+    } catch (const std::exception&) {
+      return send_json(res, 400, {{"error", "need ticker; bars in [2, 300]; t integer"}});
+    }
+    const auto& nodes = store_.nodes();
+    auto it = std::find_if(nodes.begin(), nodes.end(), [&](const Security& x) { return x.ticker == ticker; });
+    if (it == nodes.end()) return send_json(res, 404, {{"error", "unknown ticker"}});
+    const auto i = static_cast<std::uint32_t>(it - nodes.begin());
+    if (!store_.status().ready) return send_json(res, 503, {{"error", "landscapes are still being computed"}});
+    const auto frames = store_.recent(t, static_cast<std::size_t>(bars) + kLag);
+    if (frames.empty()) return send_json(res, 404, {{"error", "no such frame"}});
+    // log(pi*N) of node i per frame (NaN when inactive), then the points of the last `bars` frames.
+    std::vector<const LandscapeNode*> at(frames.size(), nullptr);
+    std::vector<double> lmr(frames.size(), std::numeric_limits<double>::quiet_NaN());
+    for (std::size_t k = 0; k < frames.size(); ++k) {
+      const auto& fn = frames[k]->nodes;
+      auto p = std::lower_bound(fn.begin(), fn.end(), i, [](const LandscapeNode& a, std::uint32_t b) { return a.i < b; });
+      if (p == fn.end() || p->i != i) continue;
+      at[k] = &*p;
+      const double mr = market_rank_score(p->pi, fn.size());
+      if (std::isfinite(mr) && mr > 0) lmr[k] = std::log(mr);
+    }
+    json pts = json::array();
+    const std::size_t first = frames.size() > static_cast<std::size_t>(bars) ? frames.size() - bars : 0;
+    for (std::size_t k = first; k < frames.size(); ++k) {
+      const double mom = k >= kLag ? lmr[k] - lmr[k - kLag] : std::numeric_limits<double>::quiet_NaN();
+      const auto* n = at[k];
+      pts.push_back({{"t", frames[k]->t}, {"time", format_rfc3339(frames[k]->t)},
+                     {"level", n ? num(n->hdisp) : json(nullptr)}, {"momentum", num(mom)},
+                     {"mr", n ? num(market_rank_score(n->pi, frames[k]->nodes.size())) : json(nullptr)},
+                     {"group", n ? json(n->group) : json(nullptr)}});
+    }
+    send_json(res, 200, {{"ticker", ticker}, {"sector", it->sector}, {"lag", kLag}, {"points", pts}});
+  });
+
   svr_.Get("/api/frame/grid", [this](const httplib::Request& req, httplib::Response& res) {
     std::shared_ptr<const LandscapeFrame> f;
     try {
