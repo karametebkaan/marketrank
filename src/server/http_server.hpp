@@ -3,6 +3,7 @@
 
 #include <atomic>
 #include <filesystem>
+#include <list>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -40,8 +41,9 @@ class FluxServer {
   std::atomic<bool> listen_active_{false};
   std::vector<std::string> allowed_hosts_;    // Host header values accepted (set by bind)
   std::vector<std::string> allowed_origins_;  // "http://" + each allowed host
-  std::mutex shock_m_;
-  std::optional<Raster> last_shock_;
+  std::mutex shock_m_;  // guards shocks_ and next_shock_id_
+  std::list<std::pair<std::uint64_t, Raster>> shocks_;  // the last 8 shock grids, most recently used first
+  std::uint64_t next_shock_id_ = 1;
 };
 
 }  // namespace fx

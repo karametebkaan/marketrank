@@ -86,7 +86,7 @@ TEST_CASE("server: shock and params") {
   auto body = json::parse(r->body);
   CHECK(body["receivers"].size() > 0);
   CHECK(body["shocked"][0]["dh"].get<double>() < 0);
-  CHECK(cli.Get("/api/shock/grid")->status == 200);
+  CHECK(cli.Get("/api/shock/grid?id=" + std::to_string(body["shock_id"].get<std::uint64_t>()))->status == 200);
   CHECK(cli.Post("/api/shock", R"({"shocks":[{"ticker":"NOPE","size":1}]})", "application/json")->status == 400);
   CHECK(cli.Post("/api/params", R"({"preset":"bogus"})", "application/json")->status == 400);
   const auto g = json::parse(cli.Get("/api/status")->body)["generation"].get<std::uint64_t>();
@@ -153,7 +153,7 @@ TEST_CASE("server: 503 before ready, shock grid 404, node field order") {
   }
   Fixture f;
   httplib::Client cli("127.0.0.1", f.port);
-  CHECK(cli.Get("/api/shock/grid")->status == 404);
+  CHECK(cli.Get("/api/shock/grid?id=1")->status == 404);
   auto fr = json::parse(cli.Get("/api/frame")->body);
   const auto& n0 = fr["nodes"][0];
   REQUIRE(n0.size() == 11);
@@ -175,7 +175,7 @@ TEST_CASE("server: 503 before ready, shock grid 404, node field order") {
   auto r = cli.Post("/api/shock", json{{"shocks", {{{"ticker", ticker}, {"size", -5}}}}}.dump(), "application/json");
   REQUIRE(r->status == 200);
   auto b = json::parse(r->body);
-  auto g = cli.Get("/api/shock/grid");
+  auto g = cli.Get("/api/shock/grid?id=" + std::to_string(b["shock_id"].get<std::uint64_t>()));
   CHECK(g->status == 200);
   CHECK(g->body.size() == b["raster"]["w"].get<std::size_t>() * b["raster"]["h"].get<std::size_t>() * 4);
 }
@@ -366,4 +366,57 @@ TEST_CASE("server: a display-only POST redraws without re-running the pipeline")
   CHECK(st["generation"].get<std::uint64_t>() > g0);
   CHECK(f.store->pipeline_steps() == steps);
   CHECK(c.Get("/api/frame/grid")->status == 200);
+}
+
+TEST_CASE("server: shock ids, an LRU of the last 8 shock grids, shocked stocks not listed as receivers or losers") {
+  Fixture f;
+  httplib::Client c("127.0.0.1", f.port);
+  auto fr = json::parse(c.Get("/api/frame")->body);
+  const std::string t0 = fr["nodes"][0][1], t1 = fr["nodes"][1][1];
+  auto shock = [&](const std::string& t, double size) {
+    auto r = c.Post("/api/shock", json{{"shocks", {{{"ticker", t}, {"size", size}}}}}.dump(), "application/json");
+    REQUIRE(r->status == 200);
+    return json::parse(r->body);
+  };
+  const auto a = shock(t0, -10), b = shock(t1, 10);
+  const auto ida = a["shock_id"].get<std::uint64_t>(), idb = b["shock_id"].get<std::uint64_t>();
+  CHECK(ida != idb);
+  auto grid = [&](std::uint64_t id) { return c.Get("/api/shock/grid?id=" + std::to_string(id)); };
+  auto ga = grid(ida), gb = grid(idb);
+  REQUIRE(ga->status == 200);
+  REQUIRE(gb->status == 200);
+  CHECK(ga->body.size() == a["raster"]["w"].get<std::size_t>() * a["raster"]["h"].get<std::size_t>() * 4);
+  CHECK(ga->body != gb->body);  // each id serves its own shock
+  for (const auto& key : {"receivers", "losers"})
+    for (const auto& row : a[key]) CHECK(row["ticker"] != t0);
+  CHECK(a["shocked"][0]["ticker"] == t0);
+  CHECK(grid(idb + 1000)->status == 404);
+  CHECK(c.Get("/api/shock/grid")->status == 400);
+  CHECK(c.Get("/api/shock/grid?id=abc")->status == 400);
+  CHECK(c.Get("/api/shock/grid?id=12abc")->status == 400);
+  // 8 newer shocks evict the oldest; reading b keeps it fresh
+  for (int k = 0; k < 7; ++k) {
+    shock(t0, -1 - k);
+    CHECK(grid(idb)->status == 200);
+  }
+  shock(t0, -9);
+  CHECK(grid(ida)->status == 404);
+  CHECK(grid(idb)->status == 200);
+  // a parameter change invalidates every shock
+  CHECK(c.Post("/api/params", R"({"smooth":2})", "application/json")->status == 202);
+  CHECK(grid(idb)->status == 404);
+}
+
+TEST_CASE("server: t must be a whole integer") {
+  Fixture f;
+  httplib::Client c("127.0.0.1", f.port);
+  const auto t = json::parse(c.Get("/api/times")->body)[0].get<long long>();
+  for (const std::string& q : std::vector<std::string>{"12abc", "abc", "", "1.5", std::to_string(t) + "x"}) {
+    INFO(q);
+    CHECK(c.Get("/api/frame?t=" + q)->status == 400);
+    CHECK(c.Get("/api/frame/grid?t=" + q)->status == 400);
+    CHECK(c.Get("/api/top?t=" + q)->status == 400);
+  }
+  CHECK(c.Get("/api/frame?t=" + std::to_string(t))->status == 200);
+  CHECK(c.Get("/api/frame?t=-5")->status == 404);
 }

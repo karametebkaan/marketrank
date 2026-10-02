@@ -333,9 +333,10 @@ async function applyShock() {
   const tickers = [$('shockTicker').value.trim().toUpperCase()];
   const body = { shocks: tickers.map((ticker) => ({ ticker, size: Number($('shockSize').value) })) };
   const r = await getJSON('/api/shock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  const z = await getFloat32('/api/shock/grid');
+  const z = await getFloat32(`/api/shock/grid?id=${r.shock_id}`);
   if (seq !== S.shockSeq) return;
   // Height and colour scale: P90 of |Δh| over active, non-shocked stocks (the shocked stock saturates).
+  // (The receiver and loser lists from the server already exclude the shocked stocks.)
   const L = S.frame.lattice, shocked = new Set(tickers);
   S.shockVmax = p90abs(S.frame.nodes.filter((n) => !shocked.has(n[1]))
     .map((n) => sample(z, r.raster, L, n[3] % L.cols, Math.floor(n[3] / L.cols)).v));

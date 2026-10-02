@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <charconv>
 #include <chrono>
 #include <cmath>
 #include <limits>
@@ -62,10 +63,20 @@ std::string get_str(const json& b, const char* key) {
 
 json raster_meta(const Raster& r) { return {{"w", r.w}, {"h", r.h}, {"zmin", r.zmin}, {"zmax", r.zmax}}; }
 
+// Strict whole-number parse: the entire string must be an integer (no sign prefix '+', spaces or suffix).
+long long parse_int(const std::string& v) {
+  long long x = 0;
+  const auto [end, ec] = std::from_chars(v.data(), v.data() + v.size(), x);
+  if (ec != std::errc{} || end != v.data() + v.size() || v.empty()) throw std::invalid_argument("not an integer: " + v);
+  return x;
+}
+
 std::optional<TimePoint> query_t(const httplib::Request& req) {
   if (!req.has_param("t")) return std::nullopt;
-  return std::stoll(req.get_param_value("t"));
+  return parse_int(req.get_param_value("t"));
 }
+
+constexpr std::size_t kShockCache = 8;
 
 // "money-flow" or "legacy" when the model parameters equal that preset, otherwise "custom".
 std::string preset_name(const CoreParams& p) {
@@ -216,10 +227,8 @@ void FluxServer::routes() {
     long long n = 10, bars = 30;
     auto int_param = [&](const char* key, long long lo, long long hi, long long& out) {
       if (!req.has_param(key)) return;
-      const std::string v = req.get_param_value(key);
-      std::size_t used = 0;
-      const long long x = std::stoll(v, &used);
-      if (used != v.size() || x < lo || x > hi) throw std::invalid_argument(std::string(key) + " out of range");
+      const long long x = parse_int(req.get_param_value(key));
+      if (x < lo || x > hi) throw std::invalid_argument(std::string(key) + " out of range");
       out = x;
     };
     try {
@@ -298,7 +307,7 @@ void FluxServer::routes() {
       const std::uint64_t gen = store_.set_params(p, lp);
       {
         std::lock_guard<std::mutex> lk(shock_m_);
-        last_shock_.reset();
+        shocks_.clear();  // shocks belong to the parameters they were computed under
       }
       send_json(res, 202, {{"generation", gen}});
     } catch (const std::exception& e) {
@@ -337,9 +346,11 @@ void FluxServer::routes() {
       return send_json(res, store_.status().ready ? 500 : 503, {{"error", e.what()}});
     }
     const auto& nodes = store_.nodes();
-    std::vector<std::size_t> act;
+    std::vector<char> shocked(nodes.size(), 0);
+    for (const auto& s : shocks) shocked[s.node] = 1;
+    std::vector<std::size_t> act;  // receivers and losers: active, not shocked themselves
     for (const auto& n : r.base->nodes)
-      if (std::isfinite(r.delta.dh[n.i])) act.push_back(n.i);
+      if (std::isfinite(r.delta.dh[n.i]) && !shocked[n.i]) act.push_back(n.i);
     std::sort(act.begin(), act.end(), [&](auto a, auto b) {
       return r.delta.dh[a] > r.delta.dh[b] || (r.delta.dh[a] == r.delta.dh[b] && nodes[a].ticker < nodes[b].ticker);
     });
@@ -351,18 +362,30 @@ void FluxServer::routes() {
     for (std::size_t k = 0; k < std::min<std::size_t>(15, act.size()); ++k) rec.push_back(row(act[k]));
     for (std::size_t k = 0; k < std::min<std::size_t>(15, act.size()); ++k) los.push_back(row(act[act.size() - 1 - k]));
     for (const auto& s : shocks) sh.push_back(row(s.node));
+    std::uint64_t id = 0;
     {
       std::lock_guard<std::mutex> lk(shock_m_);
-      last_shock_ = r.raster;
+      id = next_shock_id_++;
+      shocks_.emplace_front(id, r.raster);
+      if (shocks_.size() > kShockCache) shocks_.pop_back();
     }
-    send_json(res, 200, {{"t", r.t}, {"l1_dpi", r.delta.l1_dpi}, {"raster", raster_meta(r.raster)},
+    send_json(res, 200, {{"shock_id", id}, {"t", r.t}, {"l1_dpi", r.delta.l1_dpi}, {"raster", raster_meta(r.raster)},
                          {"shocked", sh}, {"receivers", rec}, {"losers", los}});
   });
 
-  svr_.Get("/api/shock/grid", [this](const httplib::Request&, httplib::Response& res) {
+  svr_.Get("/api/shock/grid", [this](const httplib::Request& req, httplib::Response& res) {
+    long long id = 0;
+    try {
+      if (!req.has_param("id")) throw std::invalid_argument("missing id");
+      id = parse_int(req.get_param_value("id"));
+    } catch (const std::exception&) {
+      return send_json(res, 400, {{"error", "id must be the shock_id returned by POST /api/shock"}});
+    }
     std::lock_guard<std::mutex> lk(shock_m_);
-    if (!last_shock_) return send_json(res, 404, {{"error", "no shock yet"}});
-    send_raster(res, *last_shock_);
+    auto it = std::find_if(shocks_.begin(), shocks_.end(), [&](const auto& e) { return static_cast<long long>(e.first) == id; });
+    if (it == shocks_.end()) return send_json(res, 404, {{"error", "unknown or expired shock id"}});
+    shocks_.splice(shocks_.begin(), shocks_, it);  // most recently used
+    send_raster(res, shocks_.front().second);
   });
 
   svr_.Get("/api/events", [this](const httplib::Request&, httplib::Response& res) {
