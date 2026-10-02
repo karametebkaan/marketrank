@@ -109,3 +109,13 @@ TEST_CASE("load_dotenv sets unset variables only") {
   CHECK(std::string(std::getenv("FLUX_TEST_NEW")) == "hello");
   CHECK(std::string(std::getenv("FLUX_TEST_KEEP")) == "original");
 }
+
+TEST_CASE("load_dotenv trims trailing whitespace before unquoting") {
+  for (const char* k : {"FLUX_TEST_TRIM", "FLUX_TEST_TAB", "FLUX_TEST_QUOTED"}) ::unsetenv(k);
+  auto path = test::write_file(test::temp_dir("dotenv_trim") / ".env",
+                               "FLUX_TEST_TRIM=sip \nFLUX_TEST_TAB=iex\t\nFLUX_TEST_QUOTED=\"a b\" \n");
+  load_dotenv(path);
+  CHECK(std::string(std::getenv("FLUX_TEST_TRIM")) == "sip");
+  CHECK(std::string(std::getenv("FLUX_TEST_TAB")) == "iex");
+  CHECK(std::string(std::getenv("FLUX_TEST_QUOTED")) == "a b");
+}
