@@ -21,9 +21,17 @@ FetchContent_Declare(httplib
 FetchContent_Declare(doctest
   GIT_REPOSITORY https://github.com/doctest/doctest.git
   GIT_TAG v2.4.11)
-FetchContent_MakeAvailable(json httplib doctest)
+FetchContent_Declare(duckdb_bin
+  URL https://github.com/duckdb/duckdb/releases/download/v1.5.6/libduckdb-linux-amd64.zip
+  URL_HASH SHA256=b845005f5132a7d8180057c35e14a7626632258782f871a90861b19c1c03841b
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+FetchContent_MakeAvailable(json httplib doctest duckdb_bin)
 find_package(OpenSSL REQUIRED)
 find_package(OpenMP REQUIRED)
+add_library(duckdb SHARED IMPORTED GLOBAL)
+set_target_properties(duckdb PROPERTIES
+  IMPORTED_LOCATION ${duckdb_bin_SOURCE_DIR}/libduckdb.so
+  INTERFACE_INCLUDE_DIRECTORIES ${duckdb_bin_SOURCE_DIR})
 
 file(GLOB_RECURSE FLUXCORE_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/*.cpp)
 list(REMOVE_ITEM FLUXCORE_SOURCES ${CMAKE_SOURCE_DIR}/src/main.cpp)
@@ -32,7 +40,7 @@ target_include_directories(fluxcore PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_compile_definitions(fluxcore PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT)
 target_compile_options(fluxcore PRIVATE -Wall -Wextra -Wpedantic)
 target_link_libraries(fluxcore PUBLIC nlohmann_json::nlohmann_json httplib::httplib
-                      OpenSSL::SSL OpenSSL::Crypto OpenMP::OpenMP_CXX)
+                      OpenSSL::SSL OpenSSL::Crypto OpenMP::OpenMP_CXX duckdb)
 
 add_executable(fluxscape src/main.cpp)
 target_link_libraries(fluxscape PRIVATE fluxcore)
