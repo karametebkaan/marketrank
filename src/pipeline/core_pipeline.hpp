@@ -1,21 +1,37 @@
 #pragma once
+#include <optional>
 #include <vector>
 
 #include "core/types.hpp"
 #include "graph/csr.hpp"
-#include "graph/flux_builder.hpp"
 #include "graph/forecaster.hpp"
+#include "graph/hotness.hpp"
 #include "graph/markov_solver.hpp"
+#include "graph/pressure.hpp"
+#include "graph/return_window.hpp"
+#include "graph/sparse_flux.hpp"
+#include "graph/transition.hpp"
 #include "market/panel.hpp"
 
 namespace fx {
 
 struct CoreParams {
-  FluxParams flux;
-  std::size_t top_k = 20;
+  PressureMode pressure = PressureMode::Relative;  // (A)
+  std::size_t adv_window = 20;
+  std::size_t corr_window = 60;
+  SparseFluxParams flux;  // lambda, sink_candidates, sinks_per_source
+  double halflife_slow = 20;
+  double halflife_fast = 3;
+  double halflife_long = 120;  // used only when h_ref == LongRun
+  std::size_t row_cap = 256;
+  TransitionParams transition;     // (B) lift, (C) k_out / k_in, (E) retention
+  HotRef h_ref = HotRef::Uniform;  // (D)
   double alpha = 0.85;
   double beta = 0.5;
   std::vector<int> horizons{1, 4, 8};
+
+  static CoreParams legacy();  // milestone-1 behaviour (spec 5)
+  void validate() const;       // throws std::invalid_argument
 };
 
 struct Frame {
@@ -37,9 +53,13 @@ class CorePipeline {
  private:
   std::size_t n_;
   CoreParams params_;
-  FluxBuilder flux_;
-  std::vector<bool> active_;  // computed from the panel on the first step
-  std::vector<double> prev_pi_;  // full size n, 0 for inactive
+  PressureModel pressure_;
+  ReturnWindow window_;
+  FluxAccumulator slow_, fast_;
+  std::optional<FluxAccumulator> long_;
+  std::vector<bool> active_;          // computed from the panel on the first step
+  std::vector<double> prev_pi_;       // full size n, 0 for inactive
+  std::vector<double> prev_long_pi_;  // active sub-index, warm start for the long-run solve
 };
 
 Frame run_panel_last(const Panel& panel, const CoreParams& params);

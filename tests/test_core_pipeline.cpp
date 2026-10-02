@@ -12,28 +12,37 @@
 
 using namespace fx;
 
-TEST_CASE("planted rotation makes the receiving sector the top hill") {
-  SyntheticConfig cfg;  // 5 sectors x 10, rotation Sector0 -> Sector1 from bar 150
+namespace {
+void check_rotation(const CoreParams& params) {
+  SyntheticConfig cfg;
   BarStore store(test::temp_dir("pipeline"));
   auto secs = generate_synthetic(cfg, store);
   std::vector<std::string> tickers;
   for (auto& s : secs) tickers.push_back(s.ticker);
   Panel panel = build_panel(store, tickers, cfg.tf);
-
-  Frame f = run_panel_last(panel, CoreParams{});
+  Frame f = run_panel_last(panel, params);
   CHECK(f.solve.converged);
   REQUIRE(f.h.size() == 50);
   REQUIRE(f.forecasts.size() == 3);
   CHECK(f.forecasts[2].k == 8);
   CHECK(f.t == panel.times.back());
-
   std::map<std::string, double> sector_mean;
   for (std::size_t i = 0; i < secs.size(); ++i) sector_mean[secs[i].sector] += f.h[i] / 10.0;
   for (const auto& [sector, mean] : sector_mean) {
+    INFO(sector << " mean h " << mean);
     if (sector != "Sector1") CHECK(sector_mean["Sector1"] > mean);
   }
   CHECK(sector_mean["Sector1"] > 0);
   CHECK(sector_mean["Sector0"] < sector_mean["Sector1"]);
+}
+}  // namespace
+
+TEST_CASE("planted rotation makes the receiving sector the top hill (defaults)") {
+  check_rotation(CoreParams{});
+}
+
+TEST_CASE("planted rotation makes the receiving sector the top hill (legacy)") {
+  check_rotation(CoreParams::legacy());
 }
 
 TEST_CASE("pipeline requires at least two bars") {
@@ -92,7 +101,7 @@ TEST_CASE("a ticker with no bars is inactive and takes no part in the solve") {
 
 TEST_CASE("frame carries raw pruned weights and the fast matrix") {
   Panel p = small_panel(false);
-  Frame f = run_panel_last(p, CoreParams{});
+  Frame f = run_panel_last(p, CoreParams::legacy());
   REQUIRE(f.P.raw.size() == f.P.val.size());
   CHECK(f.P_fast.n == 4);
   CHECK(f.P_fast.raw.size() == f.P_fast.val.size());
@@ -114,4 +123,36 @@ TEST_CASE("step rejects out-of-range t and mismatched panels") {
   CorePipeline wrong(5, CoreParams{});
   CHECK_THROWS_AS(wrong.step(p, 1), std::invalid_argument);
   CHECK_NOTHROW(pipe.step(p, 1));
+}
+
+TEST_CASE("hotness references size and longrun give finite relative hotness") {
+  for (HotRef ref : {HotRef::Size, HotRef::LongRun}) {
+    CoreParams p;
+    p.h_ref = ref;
+    Frame f = run_panel_last(small_panel(false), p);
+    CHECK(f.solve.converged);
+    for (double h : f.h) CHECK(std::isfinite(h));
+  }
+}
+
+TEST_CASE("CoreParams::validate rejects bad settings") {
+  CoreParams a;
+  a.alpha = 0;
+  CHECK_THROWS_AS(a.validate(), std::invalid_argument);
+  CoreParams b;
+  b.flux.lambda = 1.5;
+  CHECK_THROWS_AS(b.validate(), std::invalid_argument);
+  CoreParams c;
+  c.horizons.clear();
+  CHECK_THROWS_AS(c.validate(), std::invalid_argument);
+  CoreParams d;
+  d.transition.k_out = 0;
+  CHECK_THROWS_AS(d.validate(), std::invalid_argument);
+  CoreParams e;
+  e.flux.sink_candidates = 10;
+  e.flux.sinks_per_source = 20;
+  CHECK_THROWS_AS(e.validate(), std::invalid_argument);
+  CHECK_NOTHROW(CoreParams{}.validate());
+  CHECK_NOTHROW(CoreParams::legacy().validate());
+  CHECK_THROWS_AS(CorePipeline(4, a), std::invalid_argument);
 }

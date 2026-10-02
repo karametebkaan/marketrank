@@ -4,6 +4,7 @@
 #include <cmath>
 #include <limits>
 #include <stdexcept>
+#include <string>
 
 namespace fx {
 
@@ -26,10 +27,51 @@ Csr compact(const Csr& P, const std::vector<std::size_t>& map, std::size_t n_act
   return C;
 }
 
+const CoreParams& validated(const CoreParams& p) {
+  p.validate();
+  return p;
+}
+
 }  // namespace
 
+CoreParams CoreParams::legacy() {
+  CoreParams p;
+  p.pressure = PressureMode::Dollar;
+  p.transition.lift = LiftMode::Off;
+  p.transition.k_in = 0;
+  p.transition.retention = 0.0;
+  p.h_ref = HotRef::Uniform;
+  return p;
+}
+
+void CoreParams::validate() const {
+  auto fail = [](const char* what) {
+    throw std::invalid_argument(std::string("CoreParams: ") + what);
+  };
+  if (!(alpha > 0 && alpha <= 1)) fail("alpha must be in (0, 1]");
+  if (!(flux.lambda >= 0 && flux.lambda <= 1)) fail("lambda must be in [0, 1]");
+  if (!(halflife_slow > 0 && halflife_fast > 0 && halflife_long > 0)) fail("half-lives must be > 0");
+  if (transition.k_out == 0) fail("k_out must be >= 1");
+  if (!(transition.retention >= 0)) fail("retention must be >= 0");
+  if (horizons.empty()) fail("horizons must not be empty");
+  for (int k : horizons)
+    if (k < 1) fail("horizons must be >= 1");
+  if (corr_window < 2) fail("corr_window must be >= 2");
+  if (adv_window < 1) fail("adv_window must be >= 1");
+  if (flux.sinks_per_source < 1 || flux.sink_candidates < flux.sinks_per_source)
+    fail("need 1 <= sinks_per_source <= sink_candidates");
+  if (row_cap < transition.k_out) fail("row_cap must be >= k_out");
+}
+
 CorePipeline::CorePipeline(std::size_t n, CoreParams params)
-    : n_(n), params_(std::move(params)), flux_(n, params_.flux) {}
+    : n_(n),
+      params_(validated(params)),
+      pressure_(n, params_.pressure, params_.adv_window),
+      window_(n, params_.corr_window),
+      slow_(n, params_.halflife_slow, params_.row_cap),
+      fast_(n, params_.halflife_fast, params_.row_cap) {
+  if (params_.h_ref == HotRef::LongRun) long_.emplace(n, params_.halflife_long, params_.row_cap);
+}
 
 Frame CorePipeline::step(const Panel& panel, std::size_t t) {
   if (t == 0 || t >= panel.T()) throw std::invalid_argument("CorePipeline::step: t out of range");
@@ -49,22 +91,28 @@ Frame CorePipeline::step(const Panel& panel, std::size_t t) {
     if (active_[i]) map[i] = n_active++;
   if (n_active == 0) throw std::runtime_error("no nodes with data");
 
-  std::vector<double> returns(n_, nan), dollar_volume(n_, nan);
+  std::vector<double> returns(n_, nan), volume(n_, nan), vwap(n_, nan);
   for (std::size_t i = 0; i < n_; ++i) {
     const double c = panel.close[panel.idx(t, i)];
     const double c_prev = panel.close[panel.idx(t - 1, i)];
     if (std::isfinite(c) && std::isfinite(c_prev) && c_prev > 0) returns[i] = c / c_prev - 1.0;
-    const double v = panel.volume[panel.idx(t, i)];
-    const double vw = panel.vwap[panel.idx(t, i)];
-    if (std::isfinite(v) && std::isfinite(vw)) dollar_volume[i] = v * vw;
+    volume[i] = panel.volume[panel.idx(t, i)];
+    vwap[i] = panel.vwap[panel.idx(t, i)];
   }
-  flux_.step(returns, dollar_volume);
+  const std::vector<double> pressure = pressure_.step(returns, volume, vwap);
+  window_.push(returns);
+  std::span<const double> unit;
+  if (params_.flux.lambda > 0) unit = window_.unit_vectors();
+  const BarFlux bar = bar_flux_sparse(pressure, unit, window_.window(), params_.flux);
+  slow_.add(bar);
+  fast_.add(bar);
+  if (long_) long_->add(bar);
 
   Frame f;
   f.t = panel.times[t];
   f.active = active_;
-  f.P = build_transition(flux_.flux_slow(), n_, params_.top_k, active_);
-  f.P_fast = build_transition(flux_.flux_fast(), n_, params_.top_k, active_);
+  f.P = build_transition(slow_, params_.transition, active_);
+  f.P_fast = build_transition(fast_, params_.transition, active_);
 
   const Csr Pa = compact(f.P, map, n_active);
   const Csr Pa_fast = compact(f.P_fast, map, n_active);
@@ -75,7 +123,29 @@ Frame CorePipeline::step(const Panel& panel, std::size_t t) {
   }
   f.solve = stationary(Pa, params_.alpha, prev_a);
   const std::vector<double> pi_a = f.solve.pi;
-  const std::vector<double> h_a = hotness(pi_a);
+
+  std::vector<double> h_a;
+  switch (params_.h_ref) {
+    case HotRef::Uniform:
+      h_a = hotness(pi_a);
+      break;
+    case HotRef::Size: {
+      const std::vector<double> mdv = pressure_.median_dollar_volume();
+      std::vector<double> ref;
+      ref.reserve(n_active);
+      for (std::size_t i = 0; i < n_; ++i)
+        if (active_[i]) ref.push_back(mdv[i]);
+      h_a = relative_hotness(pi_a, ref);
+      break;
+    }
+    case HotRef::LongRun: {
+      const Csr Pl = compact(build_transition(*long_, params_.transition, active_), map, n_active);
+      const SolveResult lr = stationary(Pl, params_.alpha, prev_long_pi_);
+      prev_long_pi_ = lr.pi;
+      h_a = relative_hotness(pi_a, lr.pi);
+      break;
+    }
+  }
 
   f.pi.assign(n_, 0.0);
   f.h.assign(n_, nan);

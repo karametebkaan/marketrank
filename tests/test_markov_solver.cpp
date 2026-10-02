@@ -1,6 +1,7 @@
 #include <doctest/doctest.h>
 
 #include "graph/csr.hpp"
+#include "flux_test_util.hpp"
 #include "graph/markov_solver.hpp"
 
 using namespace fx;
@@ -56,7 +57,7 @@ TEST_CASE("damping makes a reducible chain converge (two absorbing nodes)") {
                            0, 0, 0, 0,  //
                            0, 0, 0, 0,  //
                            0, 1, 1, 0};
-  Csr P = build_transition(F, 4, 4);
+  Csr P = build_transition(test::acc_from_dense(F, 4), test::legacy_tp(4));
   SolveResult r = stationary(P, 0.85, {});
   CHECK(r.converged);
   CHECK(r.pi[1] == doctest::Approx(r.pi[2]));

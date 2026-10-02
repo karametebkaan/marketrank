@@ -1,51 +1,6 @@
 #include "graph/csr.hpp"
 
-#include <algorithm>
-#include <utility>
-
 namespace fx {
-
-Csr build_transition(std::span<const double> flux, std::size_t n, std::size_t k,
-                     const std::vector<bool>& active) {
-  Csr P;
-  P.n = n;
-  P.row_ptr.reserve(n + 1);
-  P.row_ptr.push_back(0);
-  std::vector<std::pair<double, std::uint32_t>> row;
-  for (std::size_t i = 0; i < n; ++i) {
-    row.clear();
-    const bool row_active = active.empty() || active[i];
-    for (std::size_t j = 0; j < n && row_active; ++j) {
-      if (!active.empty() && !active[j]) continue;
-      const double w = flux[i * n + j];
-      if (j != i && w > 0) row.emplace_back(w, static_cast<std::uint32_t>(j));
-    }
-    if (row.size() > k) {
-      std::partial_sort(row.begin(), row.begin() + static_cast<std::ptrdiff_t>(k), row.end(),
-                        [](const auto& a, const auto& b) {
-                          return a.first > b.first || (a.first == b.first && a.second < b.second);
-                        });
-      row.resize(k);
-    }
-    if (row.empty()) {
-      P.col.push_back(static_cast<std::uint32_t>(i));
-      P.val.push_back(1.0);
-      P.raw.push_back(0.0);
-    } else {
-      std::sort(row.begin(), row.end(),
-                [](const auto& a, const auto& b) { return a.second < b.second; });
-      double sum = 0;
-      for (const auto& [w, j] : row) sum += w;
-      for (const auto& [w, j] : row) {
-        P.col.push_back(j);
-        P.val.push_back(w / sum);
-        P.raw.push_back(w);
-      }
-    }
-    P.row_ptr.push_back(P.col.size());
-  }
-  return P;
-}
 
 std::vector<double> left_multiply(const Csr& P, std::span<const double> x) {
   std::vector<double> y(P.n, 0.0);
@@ -53,6 +8,38 @@ std::vector<double> left_multiply(const Csr& P, std::span<const double> x) {
     const double xi = x[i];
     if (xi == 0) continue;
     for (auto e = P.row_ptr[i]; e < P.row_ptr[i + 1]; ++e) y[P.col[e]] += xi * P.val[e];
+  }
+  return y;
+}
+
+Csr transpose(const Csr& P) {
+  Csr T;
+  T.n = P.n;
+  T.row_ptr.assign(P.n + 1, 0);
+  for (auto c : P.col) ++T.row_ptr[c + 1];
+  for (std::size_t i = 0; i < P.n; ++i) T.row_ptr[i + 1] += T.row_ptr[i];
+  T.col.resize(P.col.size());
+  T.val.resize(P.val.size());
+  T.raw.resize(P.raw.size());
+  std::vector<std::size_t> next(T.row_ptr.begin(), T.row_ptr.end() - 1);
+  for (std::size_t i = 0; i < P.n; ++i) {
+    for (auto e = P.row_ptr[i]; e < P.row_ptr[i + 1]; ++e) {
+      const std::size_t slot = next[P.col[e]]++;
+      T.col[slot] = static_cast<std::uint32_t>(i);
+      T.val[slot] = P.val[e];
+      if (!P.raw.empty()) T.raw[slot] = P.raw[e];
+    }
+  }
+  return T;
+}
+
+std::vector<double> left_multiply_transposed(const Csr& PT, std::span<const double> x) {
+  std::vector<double> y(PT.n, 0.0);
+#pragma omp parallel for schedule(dynamic, 256)
+  for (std::size_t j = 0; j < PT.n; ++j) {
+    double s = 0;
+    for (auto e = PT.row_ptr[j]; e < PT.row_ptr[j + 1]; ++e) s += x[PT.col[e]] * PT.val[e];
+    y[j] = s;
   }
   return y;
 }
