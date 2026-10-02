@@ -336,3 +336,40 @@ TEST_CASE("fetch_bars reports each successful batch to the callback") {
                     });
   CHECK(sizes == std::vector<std::size_t>{100, 100, 50});
 }
+
+TEST_CASE("a re-adjusted overlap bar triggers a full-window refetch") {
+  BarStore store(test::temp_dir("readjust"));
+  const TimePoint t0 = utc_seconds(2026, 9, 1, 4), t1 = utc_seconds(2026, 9, 2, 4);
+  store.merge("AAPL", Timeframe::Day, {{t0, 100, 100, 100, 100, 1, 100}, {t1, 110, 110, 110, 110, 1, 110}});
+  std::vector<std::string> paths;
+  AlpacaClient client(test_config(), [&](const std::string& path) -> HttpResponse {
+    paths.push_back(path);
+    if (path.find("start=2026-09-02T04:00:00Z") != std::string::npos)  // tail: split-adjusted overlap bar
+      return {200, R"({"bars":{"AAPL":[{"t":"2026-09-02T04:00:00Z","o":55,"h":55,"l":55,"c":55,"v":2,"vw":55}]}})"};
+    return {200, R"({"bars":{"AAPL":[{"t":"2026-09-01T04:00:00Z","o":50,"h":50,"l":50,"c":50,"v":2,"vw":50},
+                                     {"t":"2026-09-02T04:00:00Z","o":55,"h":55,"l":55,"c":55,"v":2,"vw":55}]}})"};
+  });
+  auto stale = sync_bars(client, store, {"AAPL"}, Timeframe::Day, utc_seconds(2026, 9, 1), utc_seconds(2026, 10, 1));
+  CHECK(stale.empty());
+  REQUIRE(paths.size() == 2);
+  CHECK(paths[0].find("start=2026-09-02T04:00:00Z") != std::string::npos);
+  CHECK(paths[1].find("start=2026-09-01T00:00:00Z") != std::string::npos);
+  CHECK(paths[1].find("end=2026-10-01T00:00:00Z") != std::string::npos);
+  const auto& b = store.bars("AAPL", Timeframe::Day);
+  REQUIRE(b.size() == 2);
+  CHECK(b[0].c == 50);
+  CHECK(b[1].c == 55);
+}
+
+TEST_CASE("an unchanged overlap bar does not refetch history") {
+  BarStore store(test::temp_dir("noreadjust"));
+  const TimePoint t1 = utc_seconds(2026, 9, 2, 4);
+  store.merge("AAPL", Timeframe::Day, {{utc_seconds(2026, 9, 1, 4), 100, 100, 100, 100, 1, 100}, {t1, 110, 110, 110, 110, 1, 110}});
+  int calls = 0;
+  AlpacaClient client(test_config(), [&](const std::string&) -> HttpResponse {
+    ++calls;
+    return {200, R"({"bars":{"AAPL":[{"t":"2026-09-02T04:00:00Z","o":110,"h":110,"l":110,"c":110,"v":2,"vw":110}]}})"};
+  });
+  sync_bars(client, store, {"AAPL"}, Timeframe::Day, utc_seconds(2026, 9, 1), utc_seconds(2026, 10, 1));
+  CHECK(calls == 1);
+}
