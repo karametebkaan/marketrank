@@ -22,7 +22,9 @@ data window (slow half-life 1e9 bars), with no lift, no self-retention and the d
 dangling node: its rank teleports uniformly, as in PageRank.
 
 The **MarketRank score** is π_i·N_active (1 = average) and the **heartbeat** is its pulse,
-Δlog π_i between the current bar and the previous one.
+Δlog(π_i·N_active) between the current bar and the previous one (so a change in the number of active stocks
+alone is no pulse). Under this preset the forecast column "score+1" contrasts the cumulative π with the 3-bar
+fast chain, so it reads "where the newest flow points against the whole window", not a one-bar drift.
 
 Worked example (three stocks, T in dollars):
 
@@ -38,8 +40,11 @@ receives the most money relative to what its senders pass on. The test suite che
 solver and through the pipeline's transition builder.
 
 `./build/marketrank --mode replay` prints the TOP and BOTTOM MARKETRANK tables (rank, ticker, sector,
-MarketRank π·N, heartbeat Δlog π, hotness h, score+1); `--rank-by hotness` sorts by h instead (HILLS and
-VALLEYS). `--money-flow` and `--legacy` select the earlier presets.
+MarketRank π·N, heartbeat Δlog(π·N), hotness h, score+1), sorted by π with ties to the lower index, the same
+order as `/api/top`. The stocks that receive no flow all tie at the teleport floor; the bottom table folds them
+into one line ("N stocks tied at the teleport floor (π·N = x)") and lists the lowest names above it.
+`--rank-by hotness` sorts by h instead (HILLS and VALLEYS). `--money-flow`, `--legacy` and `--defaults`
+(`CoreParams{}`) select the other presets.
 
 ## Build and test
 
@@ -90,23 +95,25 @@ not observed order flow.
 scripts/ui_smoke.sh                                # headless-Chrome smoke test + screenshot
 ```
 
-The page shows a triangulated landscape. Under the marketrank preset its height is the MarketRank score as log(π·N), signed around 0 = average; the "Height: MarketRank π / hotness" select (`"value":"pi"|"hotness"` in `/api/params`) switches to signed-log hotness, where hills are where money settles relative to the reference and valleys are where it drains. The same value orders the stocks inside each territory and decides mountain or crater, so changing it re-places the stocks.
+The page shows a triangulated landscape of **π relative to size**: the height is log(π_i / s_i), where s_i is the stock's size share (trailing median dollar volume over the sum across active stocks, the size `HotRef::Size` uses). A hill attracts more money than its size predicts, a valley less, and 0 is exactly as predicted; stocks without a size get no height. Ranking and the table show π itself: the landscape is a reading aid, the table is the truth. Note that the many stocks at the teleport floor get the same π whatever their size, so small floor stocks read slightly above 0 here. The same value orders the stocks inside each territory and decides mountain or crater. The legend under the landscape names the quantity.
 
-**Placement.** Territories are flux communities by default: Louvain on the model's own flux graph finds stocks that trade money among themselves, and spectral bisection of the community graph orders the communities so that trading partners sit next to each other along a Hilbert-type curve. Each community owns one contiguous region with area proportional to its stock count, and inside it stocks are ordered by hotness from the centre outward along a spiral, so a community reads as a mountain (inflow) or a crater (outflow). Choose "sectors" in the Territories select (or `"territory":"sector"` in `/api/params`) to use market sectors instead.
+**The UI is fixed.** It has no model or landscape options: the marketrank preset, π relative to size, flux territories, the CVT smoother and subdivision 1 are fixed defaults, and the page never calls `/api/params`. Developer knobs exist only on the CLI (`--money-flow`, `--h-ref`, ...) and in the API (`POST /api/params`: `value` `pi_rel_size|pi|hotness`, `territory`, `smoother`, IDW, ...).
+
+**Placement.** Territories are flux communities by default: Louvain on the model's own flux graph finds stocks that trade money among themselves, and spectral bisection of the community graph orders the communities so that trading partners sit next to each other along a Hilbert-type curve. Each community owns one contiguous region with area proportional to its stock count, and inside it stocks are ordered by hotness from the centre outward along a spiral, so a community reads as a mountain (inflow) or a crater (outflow). `"territory":"sector"` in `/api/params` uses market sectors instead (developer option).
 
 **Stability.** Stocks stay put from bar to bar. Inside a territory the cells are taken in spiral order (ring by ring, each ring by angle), so a small change in rank is a small move. On top of that a stock keeps its cell while it stays in the same community, its cell is still inside the territory, and its new place in the spiral is within 15% of the territory (at least 2 slots) of that cell. The clustering is refreshed every 5 bars. Each refresh starts Louvain from the current communities rather than from scratch, and the new communities are matched to the old ones (Jaccard ≥ 0.3, or ≥ 60% of the new community inside an old one), so community labels and their order persist. The first 5 bars only warm up the model. On the real replay data about 85% of stocks keep their cell between refreshes, and about 74% keep their community at a refresh.
 
-**Surface.** The mesh vertices are the lattice points. Each stock's value (`hdisp`: log(π·N), or its signed-log hotness) is exact; empty vertices are filled by IDW, and the displayed surface is then smoothed for the eye, so a vertex shows a local average rather than the stock's exact value. The default CVT smoother is a Lloyd-style relaxation over each pixel's 3×3 neighbourhood weighted by density ρ = ε + |z|: tall neighbours pull the pixel toward them, which fills the dip that IDW leaves around an isolated peak (12 iterations, λ = 0.6, ε = 0.1·P90|z|; the Smoother select offers Gaussian σ and none). It does not conserve the mean height. The shock Δh surface is smoothed the same way. The landscape is aesthetic and the sorted table is the truth: the tooltip, the top-10 table and `/api/top` always show the exact, unsmoothed values. Each triangle is Gouraud-shaded from its vertex colours, red for inflow and blue for outflow, with relief lighting on top. Changing only the display settings (smoother, height, IDW, subdivision) redraws the cached frames without recomputing the model.
+**Surface.** The mesh vertices are the lattice points. Each stock's value (`hdisp`: log(π / size share); log(π·N) or signed-log hotness through the API) is exact; empty vertices are filled by IDW, and the displayed surface is then smoothed for the eye, so a vertex shows a local average rather than the stock's exact value. The default CVT smoother is a Lloyd-style relaxation over each pixel's 3×3 neighbourhood weighted by density ρ = ε + |z|: tall neighbours pull the pixel toward them, which fills the dip that IDW leaves around an isolated peak (12 iterations, λ = 0.6, ε = 0.1·P90|z|; the API also offers Gaussian σ and none). It does not conserve the mean height. The shock Δh surface is smoothed the same way. The landscape is aesthetic and the sorted table is the truth: the tooltip, the top-10 table and `/api/top` always show the exact, unsmoothed values. Each triangle is Gouraud-shaded from its vertex colours, red for inflow and blue for outflow, with relief lighting on top. Changing only the display settings (smoother, height, IDW, subdivision) redraws the cached frames without recomputing the model.
 
 **Overlays.** The strongest flux arcs and your portfolio, as green rings, are drawn on top.
 
-**Left panel.** It lets you:
-- switch the preset and hotness reference;
-- choose the territories (flux communities or sectors);
-- set the IDW and height parameters and the display smoothing;
-- set the arc count with the Arcs slider;
-- scrub or play through the last 300 bars (the table at the top right, "MarketRank top 10 · π (exact)", shows the ten highest π·N with their heartbeat and recent history; its π / h toggle switches it, its sparklines and its pulse to hotness);
+**Left panel.** The status line reads "MarketRank · replay 1d · N stocks · date". The panel lets you:
+- scrub or play through the last 300 bars, or follow the latest;
+- set the height scale (visual only), the arc count and the labels;
+- see your portfolio's π·N;
 - apply a shock on the latest bar (`TICKER`, ±%) to show the Δh landscape of who absorbs the money and who loses it.
+
+The table at the top right, "MarketRank top 10 · π (exact)", shows the ten highest π·N with their heartbeat and recent history. Tooltips show π·N, the heartbeat, π, h and the displayed height value.
 
 ## How it works
 

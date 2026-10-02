@@ -1,5 +1,7 @@
 #include "geom/landscape.hpp"
 
+#include "graph/hotness.hpp"
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -53,15 +55,31 @@ Raster apply_smoother(Raster r, const LandscapeParams& p) {
 LandscapeValue parse_landscape_value(std::string_view s) {
   if (s == "pi") return LandscapeValue::Pi;
   if (s == "hotness") return LandscapeValue::Hotness;
+  if (s == "pi_rel_size") return LandscapeValue::PiRelSize;
   throw std::invalid_argument("unknown landscape value: " + std::string(s));
 }
 
-std::string_view to_string(LandscapeValue v) { return v == LandscapeValue::Pi ? "pi" : "hotness"; }
+std::string_view to_string(LandscapeValue v) {
+  switch (v) {
+    case LandscapeValue::Pi: return "pi";
+    case LandscapeValue::Hotness: return "hotness";
+    case LandscapeValue::PiRelSize: return "pi_rel_size";
+  }
+  return "?";
+}
 
-double landscape_value(double h, double pi, std::size_t n_active, LandscapeValue v, HeightMode height) {
+LandscapeValue default_landscape_value(std::string_view preset) {
+  return preset == "marketrank" ? LandscapeValue::PiRelSize : LandscapeValue::Hotness;
+}
+
+double landscape_value(double h, double pi, std::size_t n_active, double size_share, LandscapeValue v,
+                       HeightMode height) {
+  const double nan = std::numeric_limits<double>::quiet_NaN();
   if (v == LandscapeValue::Hotness) return display_height(h, height);
-  const double s = pi * static_cast<double>(n_active);
-  return std::isfinite(s) && s > 0 ? std::log(s) : std::numeric_limits<double>::quiet_NaN();
+  const double s = v == LandscapeValue::Pi ? pi * static_cast<double>(n_active)
+                   : std::isfinite(size_share) && size_share > 0 ? pi / size_share
+                                                                 : nan;
+  return std::isfinite(s) && s > 0 ? std::log(s) : nan;
 }
 
 bool same_placement(const LandscapeParams& a, const LandscapeParams& b) {
@@ -85,7 +103,7 @@ Raster node_raster(const LandscapeFrame& f, const LandscapeParams& p) {
 
 LandscapeFrame restyle(const LandscapeFrame& f, const LandscapeParams& p) {
   LandscapeFrame out = f;
-  for (auto& nd : out.nodes) nd.hdisp = landscape_value(nd.h, nd.pi, out.nodes.size(), p.value, p.height);
+  for (auto& nd : out.nodes) nd.hdisp = landscape_value(nd.h, nd.pi, out.nodes.size(), nd.size_share, p.value, p.height);
   out.raster = node_raster(out, p);
   return out;
 }
@@ -147,6 +165,16 @@ LandscapeFrame LandscapeBuilder::build(const Frame& f) {
   std::size_t n_active = 0;
   for (std::size_t i = 0; i < n_; ++i) n_active += f.active[i] ? 1 : 0;
   const LatticeSize size = lattice_size(n_active);
+  // Size shares over the active stocks (PiRelSize) and the teleport-floor flags.
+  std::vector<double> share(n_, std::numeric_limits<double>::quiet_NaN());
+  if (f.size_ref.size() == n_) {
+    std::vector<double> ref(n_, 0.0);
+    for (std::size_t i = 0; i < n_; ++i)
+      if (f.active[i]) ref[i] = f.size_ref[i];
+    share = size_shares(ref);
+  }
+  std::vector<bool> floor(n_, false);
+  for (std::size_t i = 0; i < n_; ++i) floor[i] = f.active[i] && at_teleport_floor(f.pi[i], f.pi_floor);
   // Ranking value: the landscape value (log(pi N) or signed-log h) blended with the previous frame's value;
   // non-finite values rank as 0.
   std::vector<double> rank(n_, 0.0);
@@ -156,7 +184,7 @@ LandscapeFrame LandscapeBuilder::build(const Frame& f) {
       has_prev_[i] = 0;
       continue;
     }
-    double cur = landscape_value(f.h[i], f.pi[i], n_active, p_.value, p_.height);
+    double cur = landscape_value(f.h[i], f.pi[i], n_active, share[i], p_.value, p_.height);
     if (!std::isfinite(cur)) cur = 0.0;
     rank[i] = has_prev_[i] ? (1.0 - p_.order_smoothing) * cur + p_.order_smoothing * s_prev_[i] : cur;
     s_prev_[i] = rank[i];
@@ -172,7 +200,10 @@ LandscapeFrame LandscapeBuilder::build(const Frame& f) {
   if (have_mem)
     for (std::size_t i = 0; i < n_; ++i)
       if (!f.active[i] || !was_active[i] || key[i] != prev_key_[i]) mem_.cell[i] = -1;
-  const TerritoryLayout layout = territory_layout(f.active, grp, rank, size, have_mem ? &mem_ : nullptr, p_.rank_tolerance);
+  // Under Pi the floor stocks all tie at one value; they would drag the territory medians (mountain or crater) to
+  // the floor, so the medians leave them out.
+  const TerritoryLayout layout = territory_layout(f.active, grp, rank, size, have_mem ? &mem_ : nullptr, p_.rank_tolerance,
+                                                  p_.value == LandscapeValue::Pi ? floor : std::vector<bool>{});
   const std::vector<std::int32_t>& cells = layout.cell;
   mem_.size = size;
   mem_.cell = cells;
@@ -186,12 +217,13 @@ LandscapeFrame LandscapeBuilder::build(const Frame& f) {
   const auto& score = f.forecasts.empty() ? f.h : f.forecasts.front().score;
   for (std::size_t i = 0; i < n_; ++i) {
     if (!f.active[i]) continue;
-    const double hd = landscape_value(f.h[i], f.pi[i], n_active, p_.value, p_.height);
+    const double hd = landscape_value(f.h[i], f.pi[i], n_active, share[i], p_.value, p_.height);
     lf.nodes.push_back({static_cast<std::uint32_t>(i), cells[static_cast<std::size_t>(i)],
                         static_cast<float>((cells[i] % cols + 0.5) / static_cast<double>(size.cols)),
                         static_cast<float>((cells[i] / cols + 0.5) / static_cast<double>(size.rows)), f.h[i], hd, f.pi[i], score[i],
                         flux ? tracker_.node_group()[i] : (group_.empty() ? 0 : static_cast<std::int32_t>(group_[i])),
-                        f.pulse.size() == n_ ? f.pulse[i] : std::numeric_limits<double>::quiet_NaN()});
+                        f.pulse.size() == n_ ? f.pulse[i] : std::numeric_limits<double>::quiet_NaN(), share[i],
+                        static_cast<bool>(floor[i])});
   }
   lf.raster = node_raster(lf, p_);
   lf.arcs = top_arcs(f.P, f.active, p_.max_arcs);

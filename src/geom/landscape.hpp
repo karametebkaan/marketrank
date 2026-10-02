@@ -24,14 +24,22 @@ enum class TerritoryMode { Flux, Sector };
 TerritoryMode parse_territory_mode(std::string_view s);  // "flux" | "sector"
 std::string_view to_string(TerritoryMode m);
 
-// What the landscape height (and the territory ordering, and the mountain/crater rule) is made of: the
-// MarketRank score as log(pi * N_active), signed around 0 = average, or hotness h through HeightMode.
-enum class LandscapeValue { Pi, Hotness };
-LandscapeValue parse_landscape_value(std::string_view s);  // "pi" | "hotness"
+// What the landscape height (and the territory ordering, and the mountain/crater rule) is made of:
+// - PiRelSize: log(pi_i / s_i), s_i the size share (trailing median dollar volume / sum over active stocks,
+//   size_shares in graph/hotness.hpp): how much more money a stock attracts than its size predicts; 0 = as
+//   predicted. The default under the marketrank preset.
+// - Pi: the MarketRank score as log(pi * N_active), signed around 0 = average.
+// - Hotness: hotness h through HeightMode.
+// The truth (pi, the rank tables, /api/top) is the same under every value.
+enum class LandscapeValue { Pi, Hotness, PiRelSize };
+LandscapeValue parse_landscape_value(std::string_view s);  // "pi" | "hotness" | "pi_rel_size"
 std::string_view to_string(LandscapeValue v);
-// Display value of a node: log(pi * n_active) under Pi (NaN for pi <= 0; HeightMode is not applied), else
-// display_height(h, height).
-double landscape_value(double h, double pi, std::size_t n_active, LandscapeValue v, HeightMode height);
+// The landscape value a preset brings: PiRelSize under "marketrank", Hotness otherwise.
+LandscapeValue default_landscape_value(std::string_view preset);
+// Display value of a node: log(pi * n_active) under Pi, log(pi / size_share) under PiRelSize (NaN for pi <= 0 or
+// a zero / non-finite size share; HeightMode is not applied), else display_height(h, height).
+double landscape_value(double h, double pi, std::size_t n_active, double size_share, LandscapeValue v,
+                       HeightMode height);
 
 // Display smoother applied to the IDW raster (and the shock delta raster): CVT-weighted relaxation (default),
 // Gaussian (LandscapeParams::smooth sigma) or none. Display-only: the cached frames are redrawn, not recomputed.
@@ -40,7 +48,7 @@ Smoother parse_smoother(std::string_view s);  // "gaussian" | "cvt" | "none"
 std::string_view to_string(Smoother s);
 
 struct LandscapeParams {
-  LandscapeValue value = LandscapeValue::Hotness;  // Pi is the default under the marketrank preset (main, server)
+  LandscapeValue value = LandscapeValue::Hotness;  // PiRelSize under the marketrank preset (main, server)
   IdwParams idw{1, 2.0, 3};  // subdivision 1: raster = lattice mesh vertices
   HeightMode height = HeightMode::SignedLog;
   Smoother smoother = Smoother::Cvt;
@@ -62,7 +70,9 @@ struct LandscapeNode {
   float fx, fy;  // cell centre normalized to [0, 1]
   double h, hdisp, pi, score;
   std::int32_t group = -1;  // flux: persistent community label (stable across re-clusters); sector: sector id; -1 = loose
-  double pulse = std::numeric_limits<double>::quiet_NaN();  // heartbeat: Frame::pulse (delta log pi)
+  double pulse = std::numeric_limits<double>::quiet_NaN();       // heartbeat: Frame::pulse (delta log pi*N)
+  double size_share = std::numeric_limits<double>::quiet_NaN();  // s_i (PiRelSize); NaN = no size
+  bool floor = false;  // pi at the teleport floor (Frame::pi_floor); excluded from the territory medians under Pi
 };
 
 struct LandscapeArc {

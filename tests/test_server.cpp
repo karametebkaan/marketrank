@@ -156,7 +156,8 @@ TEST_CASE("server: 503 before ready, shock grid 404, node field order") {
   CHECK(cli.Get("/api/shock/grid?id=1")->status == 404);
   auto fr = json::parse(cli.Get("/api/frame")->body);
   const auto& n0 = fr["nodes"][0];
-  REQUIRE(n0.size() == 13);
+  REQUIRE(n0.size() == 14);
+  CHECK(n0[13].is_boolean());  // at the teleport floor
   CHECK(n0[10].is_number_integer());
   REQUIRE(fr.contains("communities"));
   CHECK(fr["communities"]["count"].is_number_integer());
@@ -307,7 +308,7 @@ TEST_CASE("server: /api/top ranks by π by default (by=pi), rows carry mr = π·
   const double n_active = static_cast<double>(fr["nodes"].size());
   std::vector<std::pair<double, std::size_t>> v;
   for (const auto& n : fr["nodes"]) {
-    REQUIRE(n.size() == 13);  // [..., group, mr, pulse]
+    REQUIRE(n.size() == 14);  // [..., group, mr, pulse, floor]
     CHECK(n[11].get<double>() == doctest::Approx(n[8].get<double>() * n_active));
     v.push_back({n[8].get<double>(), n[0].get<std::size_t>()});
   }
@@ -343,7 +344,14 @@ TEST_CASE("server: the marketrank preset and the landscape value") {
   CHECK(c.Post("/api/params", R"({"preset":"marketrank"})", "application/json")->status == 202);
   CHECK(status()["preset"] == "marketrank");
   CHECK(f.store->core_params() == CoreParams::market_rank());
-  CHECK(f.store->landscape_params().value == LandscapeValue::Pi);  // Pi under the marketrank preset
+  CHECK(f.store->landscape_params().value == LandscapeValue::PiRelSize);  // pi_rel_size under the marketrank preset
+  CHECK(status()["value"] == "pi_rel_size");
+  CHECK(c.Post("/api/params", R"({"value":"pi"})", "application/json")->status == 202);
+  CHECK(status()["value"] == "pi");
+  CHECK(status()["preset"] == "marketrank");  // only the landscape value changed
+  CHECK(c.Post("/api/params", R"({"value":"pi_rel_size"})", "application/json")->status == 202);
+  CHECK(status()["value"] == "pi_rel_size");
+  CHECK(f.store->landscape_params().value == LandscapeValue::PiRelSize);
   CHECK(c.Post("/api/params", R"({"preset":"marketrank","value":"hotness"})", "application/json")->status == 202);
   CHECK(f.store->landscape_params().value == LandscapeValue::Hotness);
 }

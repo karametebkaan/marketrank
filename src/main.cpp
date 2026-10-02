@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "cli/args.hpp"
+#include "cli/rank_report.hpp"
 #include "core/time.hpp"
 #include "market/alpaca_client.hpp"
 #include "market/asset_universe.hpp"
@@ -265,34 +266,29 @@ int run_rank(const mr::CliArgs& args, const mr::Panel& panel, const mr::Universe
               f.P.col.size(), f.P_fast.col.size(), 100.0 * mr::floor_share(f, args.params.alpha));
 
   const auto& nodes = universe.nodes();
-  std::vector<std::size_t> order;
-  for (std::size_t i = 0; i < panel.N(); ++i)
-    if (f.active[i]) order.push_back(i);
+  const bool by_pi = args.rank_by == mr::RankBy::Pi;
+  // Primary metric: MarketRank pi (default) or hotness h; descending, ties by lower index (as /api/top).
+  const std::vector<std::size_t> order = mr::rank_order(f, args.rank_by);
   const std::size_t n_active = order.size();
   const std::size_t inactive = panel.N() - n_active;
-  const bool by_pi = args.rank_by == mr::RankBy::Pi;
-  // Primary metric: MarketRank pi (default) or hotness h; descending, ties by ticker.
-  auto key = [&](std::size_t i) { return by_pi ? f.pi[i] : f.h[i]; };
-  auto by_ticker = [&](std::size_t a, std::size_t b) { return nodes[a].ticker < nodes[b].ticker; };
-  std::sort(order.begin(), order.end(), [&](auto a, auto b) {
-    return key(a) > key(b) || (key(a) == key(b) && by_ticker(a, b));
-  });
-  std::vector<std::size_t> bottom(order.rbegin(), order.rend());
-  std::stable_sort(bottom.begin(), bottom.end(), [&](auto a, auto b) { return key(a) < key(b); });
+  std::vector<std::size_t> rank_of(panel.N(), 0);
+  for (std::size_t r = 0; r < order.size(); ++r) rank_of[order[r]] = r + 1;
   const auto& score = f.forecasts.front().score;
   const std::size_t top = std::min(args.top, order.size());
   if (inactive > 0) std::printf("%zu inactive (stale or below liquidity floor)\n\n", inactive);
-  std::printf("MarketRank = pi*N (1 = average, N = %zu active); heartbeat = delta log pi vs the previous bar\n\n",
+  std::printf("MarketRank = pi*N (1 = average, N = %zu active); heartbeat = delta log(pi*N) vs the previous bar\n\n",
               n_active);
   std::printf("%s\n", by_pi ? "TOP MARKETRANK" : "HILLS (money accumulating)");
   std::printf("%5s  %-7s %-24s %10s %10s %10s %9s\n", "rank", "ticker", "sector", "MarketRank", "heartbeat", "hotness",
               ("score+" + std::to_string(f.forecasts.front().k)).c_str());
-  auto row = [&](std::size_t rank, std::size_t i) {
-    print_row(rank, nodes[i], mr::market_rank_score(f.pi[i], n_active), f.pulse[i], f.h[i], score[i]);
+  auto row = [&](std::size_t i) {
+    print_row(rank_of[i], nodes[i], mr::market_rank_score(f.pi[i], n_active), f.pulse[i], f.h[i], score[i]);
   };
-  for (std::size_t r = 0; r < top; ++r) row(r + 1, order[r]);
+  for (std::size_t r = 0; r < top; ++r) row(order[r]);
   std::printf("\n%s\n", by_pi ? "BOTTOM MARKETRANK" : "VALLEYS (money draining)");
-  for (std::size_t r = 0; r < top; ++r) row(bottom.size() - r, bottom[r]);
+  const mr::BottomSection bottom = mr::bottom_section(f, order, args.rank_by, top);
+  if (bottom.floor_count > 0) std::printf("%s\n", mr::floor_line(bottom).c_str());
+  for (std::size_t i : bottom.rows) row(i);
   if (portfolio) {
     std::printf("\nPORTFOLIO HOLDINGS\n");
     for (const auto& hld : portfolio->holdings) {
@@ -390,8 +386,9 @@ int main(int argc, char** argv) {
                   << " is not a loopback address: the server (which has no authentication) is reachable from the "
                      "network\n";
       mr::LandscapeParams land;
-      // Under the marketrank preset the landscape height is the MarketRank score log(pi*N).
-      land.value = args.preset == "marketrank" ? mr::LandscapeValue::Pi : mr::LandscapeValue::Hotness;
+      // Fixed serve defaults (the UI has no knobs): flux territories, the CVT smoother, subdivision 1 (all
+      // LandscapeParams{} defaults) and, under the marketrank preset, the height log(pi / size share).
+      land.value = mr::default_landscape_value(args.preset);
       mr::FrameStore frames(std::move(panel), universe.nodes(), args.params, land);
       frames.start();
       mr::FluxServer server(frames, portfolio, args.mode + " " + std::string(mr::to_string(args.tf)));

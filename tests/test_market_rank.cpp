@@ -197,7 +197,7 @@ TEST_CASE("the solver teleports a dangling node's mass uniformly (standard PageR
   for (double x : prop) CHECK(x == doctest::Approx(1.0 / 3.0));
 }
 
-TEST_CASE("frames carry the heartbeat: pulse = Δlog π against the previous bar's frame") {
+TEST_CASE("frames carry the heartbeat: pulse = Δlog(π·N) against the previous bar's frame") {
   const Panel panel = synthetic_panel();
   CoreParams p = CoreParams::market_rank();
   CorePipeline pipe(panel.N(), p);
@@ -206,25 +206,42 @@ TEST_CASE("frames carry the heartbeat: pulse = Δlog π against the previous bar
   for (double x : f1.pulse) CHECK(std::isnan(x));  // first frame: no previous π
   const Frame f2 = pipe.step(panel, 2);
   const Frame f3 = pipe.step(panel, 3);
+  auto n_active = [](const Frame& f) { return static_cast<std::size_t>(std::count(f.active.begin(), f.active.end(), true)); };
+  const std::size_t n2 = n_active(f2), n3 = n_active(f3);
   REQUIRE(f3.pulse.size() == panel.N());
   std::size_t finite = 0;
   for (std::size_t i = 0; i < panel.N(); ++i) {
     if (f3.active[i] && f2.active[i]) {
       REQUIRE(std::isfinite(f3.pulse[i]));
-      CHECK(f3.pulse[i] == doctest::Approx(std::log(f3.pi[i]) - std::log(f2.pi[i])).epsilon(1e-12));
+      const double want = std::log(market_rank_score(f3.pi[i], n3)) - std::log(market_rank_score(f2.pi[i], n2));
+      CHECK(f3.pulse[i] == doctest::Approx(want).epsilon(1e-12));
       ++finite;
     } else {
       CHECK(std::isnan(f3.pulse[i]));
     }
   }
   CHECK(finite > 0);
-  // The score is π·N_active: 1 on average over the active nodes.
-  std::size_t n_active = 0;
-  double sum = 0;
+  // The score π·N_active averages exactly 1 over the active nodes.
+  double mean_score = 0;
   for (std::size_t i = 0; i < panel.N(); ++i)
-    if (f3.active[i]) ++n_active, sum += f3.pi[i] * 1.0;
-  CHECK(n_active > 0);
-  CHECK(sum * static_cast<double>(n_active) / static_cast<double>(n_active) == doctest::Approx(1.0));
+    if (f3.active[i]) mean_score += market_rank_score(f3.pi[i], n3) / static_cast<double>(n3);
+  CHECK(mean_score == doctest::Approx(1.0).epsilon(1e-12));
+}
+
+TEST_CASE("a floor stock whose score does not move has heartbeat 0") {
+  Panel panel = synthetic_panel();
+  const std::size_t flat = 7;  // zero returns: no pressure, so no flux in or out, so pi sits at the floor
+  for (std::size_t t = 0; t < panel.T(); ++t) panel.close[panel.idx(t, flat)] = 10.0;
+  CorePipeline pipe(panel.N(), CoreParams::market_rank());
+  Frame f;
+  for (std::size_t t = 1; t < 40; ++t) f = pipe.step(panel, t);
+  REQUIRE(f.active[flat]);
+  CHECK(at_teleport_floor(f.pi[flat], f.pi_floor));
+  CHECK(std::abs(f.pulse[flat]) < 1e-9);
+  std::size_t floors = 0;
+  for (std::size_t i = 0; i < panel.N(); ++i) floors += f.active[i] && at_teleport_floor(f.pi[i], f.pi_floor);
+  CHECK(floors >= 1);
+  CHECK(f.pi_floor > (1 - 0.85) / static_cast<double>(std::count(f.active.begin(), f.active.end(), true)));
 }
 
 TEST_CASE("market_rank() on the planted rotation: the receiving sector has the highest MarketRank") {
@@ -232,11 +249,15 @@ TEST_CASE("market_rank() on the planted rotation: the receiving sector has the h
   const Panel panel = synthetic_panel(&secs);
   const Frame f = run_panel_last(panel, CoreParams::market_rank());
   CHECK(f.solve.converged);
-  std::map<std::string, double> mean;
-  for (std::size_t i = 0; i < secs.size(); ++i) mean[secs[i].sector] += f.pi[i] * 50.0 / 10.0;
-  for (const auto& [s, m] : mean)
-    if (s != "Sector1") CHECK(mean["Sector1"] > m);
-  CHECK(mean["Sector1"] > 1.0);
+  const auto n = static_cast<std::size_t>(std::count(f.active.begin(), f.active.end(), true));
+  std::map<std::string, std::pair<double, std::size_t>> acc;  // sector -> (sum of scores, members)
+  for (std::size_t i = 0; i < secs.size(); ++i)
+    if (f.active[i]) acc[secs[i].sector].first += market_rank_score(f.pi[i], n), ++acc[secs[i].sector].second;
+  REQUIRE(acc.count("Sector1"));
+  auto mean = [&](const std::string& s) { return acc[s].first / static_cast<double>(acc[s].second); };
+  for (const auto& [s, m] : acc)
+    if (s != "Sector1") CHECK(mean("Sector1") > mean(s));
+  CHECK(mean("Sector1") > 1.0);
 }
 
 TEST_CASE("landscape value Pi: height log(π·N), and π (not h) drives ordering and mountains") {
@@ -327,7 +348,7 @@ TEST_CASE("top list by π: descending π, mr = π·N, series of π·N, pulse car
   CHECK(hrows[0].i == 1);
   CHECK(hrows[0].series[1] == 3.0);
   CHECK(hrows[0].mr == doctest::Approx(0.4));
-  CHECK(top_hot({prev, cur}, 3, 2).front().i == 1);  // default stays hotness for the function
+  CHECK(top_hot({prev, cur}, 3, 2).front().i == 0);  // the default ranks by π
 }
 
 TEST_CASE("cli: market_rank() is the default for rank and serve; preset flags are exclusive") {
@@ -342,6 +363,13 @@ TEST_CASE("cli: market_rank() is the default for rank and serve; preset flags ar
   CHECK(parse_cli({"--serve", "--legacy"}).params == CoreParams::legacy());
   CHECK_THROWS_AS(parse_cli({"--marketrank", "--legacy"}), std::invalid_argument);
   CHECK_THROWS_AS(parse_cli({"--marketrank", "--money-flow"}), std::invalid_argument);
+  CHECK(parse_cli({"--defaults"}).params == CoreParams{});
+  CHECK(parse_cli({"--defaults"}).preset == "defaults");
+  CHECK(parse_cli({"--serve", "--defaults"}).params == CoreParams{});
+  CHECK_THROWS_AS(parse_cli({"--defaults", "--legacy"}), std::invalid_argument);
+  CHECK(cli_usage().find("--defaults") != std::string::npos);
+  CHECK(describe(CoreParams::market_rank()).find("dangling=teleport") != std::string::npos);
+  CHECK(describe(CoreParams{}).find("dangling=self-loop") != std::string::npos);
   const CliArgs k = parse_cli({"--marketrank", "--k-in", "5"});
   CHECK(k.params.transition.k_in == 5);
   CHECK(k.params.transition.retention == 0.0);

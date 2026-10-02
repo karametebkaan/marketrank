@@ -13,13 +13,14 @@ double metric(const LandscapeFrame& f, std::size_t k, TopBy by) {
   return by == TopBy::Pi ? nd.pi * static_cast<double>(f.nodes.size()) : nd.h;
 }
 
-// Positions of f's nodes with a finite metric, sorted highest first (ties by lower i).
+// Positions of f's nodes with a finite metric, sorted highest first (ties by lower i). By pi the sort key is
+// nd.pi itself (the same order as pi*N, without the product's rounding), matching the CLI.
 std::vector<std::size_t> ranking(const LandscapeFrame& f, TopBy by) {
   std::vector<std::size_t> pos;
   pos.reserve(f.nodes.size());
   std::vector<double> m(f.nodes.size());
   for (std::size_t k = 0; k < f.nodes.size(); ++k) {
-    m[k] = metric(f, k, by);
+    m[k] = by == TopBy::Pi ? f.nodes[k].pi : f.nodes[k].h;
     if (std::isfinite(m[k])) pos.push_back(k);
   }
   std::sort(pos.begin(), pos.end(), [&](std::size_t a, std::size_t b) {

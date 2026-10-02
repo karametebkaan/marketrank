@@ -37,7 +37,7 @@ struct CliArgs {
   std::filesystem::path web = "web";
   bool help = false;
   RankBy rank_by = RankBy::Pi;
-  std::string preset = "marketrank";  // the preset the model parameters started from: marketrank | money-flow | legacy
+  std::string preset = "marketrank";  // the preset the model parameters started from: marketrank | money-flow | legacy | defaults
   CoreParams params = CoreParams::market_rank();
 };
 

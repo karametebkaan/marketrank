@@ -51,9 +51,14 @@ struct Frame {
   std::vector<bool> active;         // size n; causal: a recent close and the liquidity floor
   std::vector<double> pi, h;        // inactive: pi = 0, h = NaN
   std::vector<double> inflow;       // size n; slow accumulator in() (structure-gain metric)
-  // Heartbeat: log pi_i(t) - log pi_i(t-1) against the previous step's frame; NaN when the node is
-  // inactive now or was inactive (or there was no previous step) at t-1.
+  // Heartbeat, the pulse of the score: log(pi_i(t) N(t)) - log(pi_i(t-1) N(t-1)) against the previous step's
+  // frame (N = active count), so a change in N alone is no pulse; NaN when the node is inactive now or was
+  // inactive (or there was no previous step) at t-1.
   std::vector<double> pulse;
+  // Size reference: trailing median dollar volume (HotRef::Size's reference), NaN for inactive nodes.
+  std::vector<double> size_ref;
+  // Teleport floor of pi: ((1 - alpha) + alpha * d) / N_active, d = pi mass on dangling (empty) active rows.
+  double pi_floor = 0;
   SolveResult solve;
   SolveResult solve_long;           // h_ref == LongRun only (pi full size n); else default
   std::vector<Forecast> forecasts;  // parallel to CoreParams::horizons
@@ -86,11 +91,15 @@ class CorePipeline {
   std::vector<std::size_t> last_close_;  // per node: last bar with a finite close (npos = none)
   std::size_t next_bar_ = 0;             // first bar not yet scanned into last_close_
   std::vector<double> prev_pi_;          // full size n, 0 for inactive
+  std::size_t prev_n_active_ = 0;        // active count of the previous step (heartbeat)
   std::vector<double> prev_long_pi_;     // full size n, warm start for the long-run solve
   std::vector<double> last_pressure_;    // full size n, see last_pressure()
 };
 
 Frame run_panel_last(const Panel& panel, const CoreParams& params);
+
+// Whether pi sits at the teleport floor (within 1e-6 relative); false when no floor is known (floor <= 0).
+inline bool at_teleport_floor(double pi, double floor) { return floor > 0 && pi <= floor * (1.0 + 1e-6); }
 
 // MarketRank score of a node: pi_i * N_active (1 = average).
 inline double market_rank_score(double pi, std::size_t n_active) { return pi * static_cast<double>(n_active); }

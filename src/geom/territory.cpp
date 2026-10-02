@@ -72,10 +72,13 @@ std::vector<std::int32_t> gilbert_order(LatticeSize s) {
 
 TerritoryLayout territory_layout(const std::vector<bool>& active, const std::vector<std::uint32_t>& group,
                                  const std::vector<double>& s, LatticeSize size, const PlacementMemory* prev,
-                                 double rank_tolerance) {
+                                 double rank_tolerance, const std::vector<bool>& median_exclude) {
   const std::size_t n = active.size();
   if (s.size() != n) throw std::invalid_argument("territory_layout: s size mismatch");
   if (!group.empty() && group.size() != n) throw std::invalid_argument("territory_layout: group size mismatch");
+  if (!median_exclude.empty() && median_exclude.size() != n)
+    throw std::invalid_argument("territory_layout: median_exclude size mismatch");
+  auto counted = [&](std::uint32_t i) { return median_exclude.empty() || !median_exclude[i]; };
   if (prev && prev->cell.size() != n)
     throw std::invalid_argument("territory_layout: memory size mismatch");
   TerritoryLayout out;
@@ -97,7 +100,11 @@ TerritoryLayout territory_layout(const std::vector<bool>& active, const std::vec
   std::vector<double> all;
   all.reserve(A);
   for (const auto& kv : members)
-    for (auto i : kv.second) all.push_back(rank(i));
+    for (auto i : kv.second)
+      if (counted(i)) all.push_back(rank(i));
+  if (all.empty())
+    for (const auto& kv : members)
+      for (auto i : kv.second) all.push_back(rank(i));
   const double med_all = median_of(all);
 
   // Territory sizes: a_g plus a largest-remainder share of the C - A spare cells.
@@ -157,7 +164,10 @@ TerritoryLayout territory_layout(const std::vector<bool>& active, const std::vec
     });
     for (std::size_t k = 0; k < keys.size(); ++k) cells[k] = keys[k].c;
     std::vector<double> sv;
-    for (auto i : kv.second) sv.push_back(rank(i));
+    for (auto i : kv.second)
+      if (counted(i)) sv.push_back(rank(i));
+    if (sv.empty())
+      for (auto i : kv.second) sv.push_back(rank(i));
     t.mountain = median_of(sv) >= med_all;
     std::vector<std::uint32_t> nodes = kv.second;  // ascending index
     std::stable_sort(nodes.begin(), nodes.end(), [&](auto a, auto b) {

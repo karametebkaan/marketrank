@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -42,6 +43,18 @@ std::vector<double> relative_hotness(std::span<const double> pi, std::span<const
   std::vector<double> h(n);
   for (std::size_t i = 0; i < n; ++i) h[i] = pi[i] / (r[i] / sum) - 1.0;
   return h;
+}
+
+std::vector<double> size_shares(std::span<const double> ref) {
+  auto valid = [](double x) { return std::isfinite(x) && x > 0; };
+  double sum = 0;
+  for (double x : ref)
+    if (valid(x)) sum += x;
+  std::vector<double> s(ref.size(), std::numeric_limits<double>::quiet_NaN());
+  if (!(sum > 0)) return s;
+  for (std::size_t i = 0; i < ref.size(); ++i)
+    if (valid(ref[i])) s[i] = ref[i] / sum;
+  return s;
 }
 
 std::vector<double> net_flow_hotness(std::span<const double> in, std::span<const double> out) {

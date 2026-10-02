@@ -27,6 +27,6 @@ struct TopRow {
 // frames: cached frames ending at the target bar, oldest first; frames[size-2] (if any) is the previous bar.
 // O(N log N + n·bars·log N).
 std::vector<TopRow> top_hot(const std::vector<std::shared_ptr<const LandscapeFrame>>& frames, std::size_t n,
-                            std::size_t bars, TopBy by = TopBy::Hotness);
+                            std::size_t bars, TopBy by = TopBy::Pi);
 
 }  // namespace mr

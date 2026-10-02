@@ -86,7 +86,8 @@ struct SseSlot {
   ~SseSlot() { --n; }
 };
 
-// "marketrank", "money-flow" or "legacy" when the model parameters equal that preset, otherwise "custom".
+// "marketrank", "money-flow" or "legacy" when the model parameters equal that preset, otherwise "custom". Only the
+// model parameters count: a landscape change (value, smoother, ...) keeps the preset name.
 std::string preset_name(const CoreParams& p) {
   if (p == CoreParams::market_rank()) return "marketrank";
   if (p == CoreParams::money_flow()) return "money-flow";
@@ -217,7 +218,7 @@ void FluxServer::routes() {
     json jn = json::array();
     for (const auto& n : f->nodes)
       jn.push_back({n.i, nodes[n.i].ticker, nodes[n.i].sector, n.cell, n.fx, n.fy, num(n.h), num(n.hdisp), num(n.pi),
-                    num(n.score), n.group, num(market_rank_score(n.pi, f->nodes.size())), num(n.pulse)});
+                    num(n.score), n.group, num(market_rank_score(n.pi, f->nodes.size())), num(n.pulse), n.floor});
     json ja = json::array();
     for (const auto& a : f->arcs) ja.push_back({a.a, a.b, a.w});
     json jp = json::array();
@@ -302,8 +303,8 @@ void FluxServer::routes() {
       LandscapeParams lp = store_.landscape_params();
       if (b.contains("preset")) {
         const std::string preset = get_str(b, "preset");
-        // The landscape value follows the preset unless given: MarketRank pi under marketrank, else hotness.
-        lp.value = preset == "marketrank" ? LandscapeValue::Pi : LandscapeValue::Hotness;
+        // The landscape value follows the preset unless given: pi relative to size under marketrank, else hotness.
+        lp.value = default_landscape_value(preset);
         if (preset == "marketrank") p = CoreParams::market_rank();
         else if (preset == "money-flow") p = CoreParams::money_flow();
         else if (preset == "legacy") p = CoreParams::legacy();

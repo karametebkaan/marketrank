@@ -286,9 +286,20 @@ Frame CorePipeline::step(const Panel& panel, std::size_t t, const std::vector<Sh
   }
   f.solve.pi = f.pi;
   f.pulse.assign(n_, nan);
-  if (prev_pi_.size() == n_)
+  if (prev_pi_.size() == n_ && prev_n_active_ > 0)
     for (std::size_t i = 0; i < n_; ++i)
-      if (active[i] && f.pi[i] > 0 && prev_pi_[i] > 0) f.pulse[i] = std::log(f.pi[i]) - std::log(prev_pi_[i]);
+      if (active[i] && f.pi[i] > 0 && prev_pi_[i] > 0)
+        f.pulse[i] = std::log(market_rank_score(f.pi[i], n_active)) - std::log(market_rank_score(prev_pi_[i], prev_n_active_));
+  {
+    const std::vector<double> mdv_now = pressure_.median_dollar_volume();
+    f.size_ref.assign(n_, nan);
+    for (std::size_t i = 0; i < n_; ++i)
+      if (active[i]) f.size_ref[i] = mdv_now[i];
+    double dangling = 0;
+    for (std::size_t a = 0; a < n_active; ++a)
+      if (Pa.row_ptr[a] == Pa.row_ptr[a + 1]) dangling += pi_a[a];
+    f.pi_floor = ((1.0 - params_.alpha) + params_.alpha * dangling) / static_cast<double>(n_active);
+  }
   f.inflow.assign(slow_.in().begin(), slow_.in().begin() + static_cast<std::ptrdiff_t>(n_));
   for (int k : params_.horizons) {
     Forecast fa = forecast(Pa_fast, params_.alpha, pi_a, prev_a, k, params_.beta);
@@ -304,6 +315,7 @@ Frame CorePipeline::step(const Panel& panel, std::size_t t, const std::vector<Sh
     f.forecasts.push_back(std::move(full));
   }
   prev_pi_ = f.pi;
+  prev_n_active_ = n_active;
   f.compute_ms =
       std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
   return f;

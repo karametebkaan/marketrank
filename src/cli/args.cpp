@@ -50,9 +50,11 @@ CliArgs parse_cli(const std::vector<std::string>& args) {
   // Presets apply first, regardless of position, so later model flags override them. The default (rank and
   // --serve alike) is the MarketRank concept model.
   auto has = [&](const char* f) { return std::find(args.begin(), args.end(), f) != args.end(); };
-  const bool legacy = has("--legacy"), money = has("--money-flow"), market = has("--marketrank");
-  if (int(legacy) + int(money) + int(market) > 1)
-    throw std::invalid_argument("--marketrank, --money-flow and --legacy are mutually exclusive");
+  const bool legacy = has("--legacy"), money = has("--money-flow"), market = has("--marketrank"),
+             defaults = has("--defaults");
+  if (int(legacy) + int(money) + int(market) + int(defaults) > 1)
+    throw std::invalid_argument("--marketrank, --money-flow, --legacy and --defaults are mutually exclusive");
+  if (defaults) a.params = CoreParams{}, a.preset = "defaults";
   if (legacy) a.params = CoreParams::legacy(), a.preset = "legacy";
   if (money) a.params = CoreParams::money_flow(), a.preset = "money-flow";
   if (market) a.params = CoreParams::market_rank(), a.preset = "marketrank";
@@ -91,7 +93,7 @@ CliArgs parse_cli(const std::vector<std::string>& args) {
       a.port = static_cast<int>(p);
     } else if (flag == "--host") a.host = value();
     else if (flag == "--web") a.web = value();
-    else if (flag == "--legacy" || flag == "--money-flow" || flag == "--marketrank") continue;
+    else if (flag == "--legacy" || flag == "--money-flow" || flag == "--marketrank" || flag == "--defaults") continue;
     else if (flag == "--rank-by") {
       const std::string v = value();
       if (v == "pi") a.rank_by = RankBy::Pi;
@@ -135,7 +137,8 @@ std::string cli_usage() {
          "                 [--lookback-days N] [--top N] [--data DIR] [--threads N]\n"
          "                 [--universe auto|sp500|snapshot] [--universe-size N] [--refresh-universe]\n"
          "                 [--eval] [--eval-bars N]\n"
-         "                 [--marketrank | --money-flow | --legacy]   (model preset; default --marketrank, for --serve too)\n"
+         "                 [--marketrank | --money-flow | --legacy | --defaults]   (model preset; default --marketrank, for\n"
+         "                                   --serve too; --defaults = CoreParams{}, sqrt pressure + excess lift)\n"
          "                 [--rank-by pi|hotness]   (primary table: MarketRank pi*N (default) or hotness h)\n"
          "                 [--pressure dollar|sqrt|relative] [--lift off|excess|ratio]\n"
          "                 [--k-out N] [--k-in N] [--retention X] [--h-ref uniform|size|longrun|netflow]\n"
@@ -155,7 +158,8 @@ std::string describe(const CoreParams& p) {
   std::ostringstream s;
   s << "pressure=" << to_string(p.pressure) << " lift=" << to_string(p.transition.lift)
     << " k_out=" << p.transition.k_out << " k_in=" << p.transition.k_in
-    << " retention=" << p.transition.retention << " h_ref=" << to_string(p.h_ref)
+    << " retention=" << p.transition.retention
+    << " dangling=" << (p.transition.dangling == DanglingMode::Teleport ? "teleport" : "self-loop") << " h_ref=" << to_string(p.h_ref)
     << " lambda=" << p.flux.lambda << " alpha=" << p.alpha
     << " min_dv=" << p.min_dollar_volume << " max_vr=" << p.max_volume_ratio
     << " vol_scale=" << (p.vol_scale ? 1 : 0) << " hl_slow=" << p.halflife_slow

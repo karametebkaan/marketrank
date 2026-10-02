@@ -44,10 +44,12 @@ struct PlacementMemory {
 // range would disable the memory on real data, where ~50 stocks join or leave per bar and every range shifts.)
 // Conflicts resolve as in a 3-pass assignment, each pass in rank order: kept cells first, then the ideal slot if
 // free, then the nearest free slot of the territory (ties to the lower slot).
+// `median_exclude` (empty, or size active.size()) leaves nodes out of both medians (a group with only excluded
+// nodes uses all of them); they are still placed.
 // `group` must be empty (one group) or have size active.size(); `s` must have size active.size().
 // Requires size.cells() >= active count. O(C log C), deterministic.
 TerritoryLayout territory_layout(const std::vector<bool>& active, const std::vector<std::uint32_t>& group,
                                  const std::vector<double>& s, LatticeSize size, const PlacementMemory* prev = nullptr,
-                                 double rank_tolerance = 0.15);
+                                 double rank_tolerance = 0.15, const std::vector<bool>& median_exclude = {});
 
 }  // namespace mr

@@ -4,7 +4,7 @@ const Q = new URLSearchParams(location.search);
 const S = {
   status: null, times: [], frame: null, raster: null, shock: null, shockRaster: null, shockVmax: 1,
   baseVmax: 1, deck: null, playing: false, loadedKey: '', loadedGen: null, selftest: Q.has('selftest'),
-  frameSeq: 0, shockSeq: 0, topSeq: 0, topPrev: new Map(), topBy: 'pi', highlight: null, idx: null, idxKey: '', colCache: null, arcsInit: false, selftestDone: false,
+  frameSeq: 0, shockSeq: 0, topSeq: 0, topPrev: new Map(), highlight: null, idx: null, idxKey: '', colCache: null, arcsInit: false, selftestDone: false,
 };
 const $ = (id) => document.getElementById(id);
 const MID = [247, 247, 247], POS = [178, 24, 43], NEG = [33, 102, 172];
@@ -116,7 +116,7 @@ function render() {
   });
   const byI = new Map(nodes.map((n) => [n.i, n]));
   const pos = (n, lift = 0.3) => [n.x, n.y, n.zt + lift];
-  // Labels: the 30 highest and lowest by the landscape value (log π·N or signed-log h).
+  // Labels: the 30 highest and lowest by the displayed height value.
   const ranked = nodes.filter((n) => n.hd !== null).sort((a, b) => b.hd - a.hd);
   const labeled = ranked.slice(0, 30).concat(ranked.slice(-30));
   const nArcs = shock ? 0 : Number($('arcs').value);
@@ -175,7 +175,7 @@ function initDeck(lattice) {
     initialViewState: { target: [lattice.cols / 2, lattice.rows / 2, 0], rotationX: 45, rotationOrbit: -25, zoom: Math.log2(Math.min(el.clientWidth, el.clientHeight) / (1.6 * span(lattice))), minZoom: -6, maxZoom: 12 },
     controller: true,
     getTooltip: ({ object }) => (object && object.ticker
-      ? `${object.ticker} · ${object.sector}\n${clusterLine(object)}MarketRank π·N ${fmt(object.mr, 3)}  Δlog π ${fmtSigned(object.pulse, 4)}\nh ${fmt(object.h, 3)}  π ${object.pi === null ? 'n/a' : object.pi.toExponential(2)}\nscore+1 ${fmt(object.score, 3)}`
+      ? `${object.ticker} · ${object.sector}\n${clusterLine(object)}MarketRank π·N ${fmt(object.mr, 3)}  heartbeat ${fmtSigned(object.pulse, 4)}\nπ ${object.pi === null ? 'n/a' : object.pi.toExponential(3)}  h ${fmt(object.h, 3)}\ndisplayed height (${heightName().short}) ${fmtSigned(object.hd, 3)}`
       : null),
   });
 }
@@ -194,6 +194,27 @@ function clusterLine(o) {
   return o.group < 0 ? `loose · ${k} stocks\n` : `${flux ? 'cluster' : 'sector group'} #${o.group} · ${k} stocks\n`;
 }
 
+// What the landscape height is (the server's fixed landscape value), in one phrase.
+const HEIGHTS = {
+  pi_rel_size: { short: 'log π / size', text: 'Height: π relative to size, log(π / size share)', pos: 'more money than its size predicts', neg: 'less' },
+  pi: { short: 'log π·N', text: 'Height: MarketRank, log(π·N)', pos: 'above average', neg: 'below' },
+  hotness: { short: 'hotness', text: 'Height: hotness h (signed log)', pos: 'money accumulating', neg: 'draining' },
+};
+function heightName() { return HEIGHTS[(S.status && S.status.value) || 'pi_rel_size'] || HEIGHTS.pi_rel_size; }
+
+function showLegend() {
+  const box = $('legend');
+  if (!S.frame) { box.replaceChildren(); return; }
+  if (S.shock) {
+    box.textContent = `Height: Δh after the shock, colour ±${S.shockVmax.toPrecision(3)} (P90)`;
+    return;
+  }
+  const H = heightName();
+  const sw = (c) => { const e = document.createElement('span'); e.className = 'sw'; e.style.background = `rgb(${c.join(',')})`; return e; };
+  box.replaceChildren(document.createTextNode(H.text), sw(POS), document.createTextNode(H.pos), sw(NEG),
+    document.createTextNode(`${H.neg} · colour ±${S.baseVmax.toPrecision(3)} (P90)`));
+}
+
 function fmt(v, d) { return v === null || v === undefined || !Number.isFinite(v) ? 'n/a' : v.toFixed(d); }
 function fmtSigned(v, d) { const t = fmt(v, d); return t !== 'n/a' && v >= 0 ? `+${t}` : t; }
 
@@ -210,13 +231,12 @@ function fillHoldings(f) {
   box.replaceChildren();
   (f.portfolio || []).forEach((p, k) => {
     const n = p.i === null ? undefined : byI.get(p.i);
-    // The selected metric: MarketRank π·N (coloured around 1 = average) or hotness h.
-    const pi = S.topBy === 'pi';
-    const v = n ? (pi ? n[11] : n[6]) : null;
+    // MarketRank π·N, coloured around 1 = average.
+    const v = n ? n[11] : null;
     if (k) box.appendChild(document.createTextNode('\n'));
-    box.appendChild(document.createTextNode(`${p.ticker.padEnd(6)} ${(100 * p.weight).toFixed(1).padStart(5)}%  ${pi ? 'π·N ' : 'h '}`));
+    box.appendChild(document.createTextNode(`${p.ticker.padEnd(6)} ${(100 * p.weight).toFixed(1).padStart(5)}%  π·N `));
     const el = document.createElement('span');
-    if (v !== null && v !== undefined) el.className = v >= (pi ? 1 : 0) ? 'pos' : 'neg';
+    if (v !== null && v !== undefined) el.className = v >= 1 ? 'pos' : 'neg';
     el.textContent = fmt(v, 3);
     box.appendChild(el);
   });
@@ -232,7 +252,7 @@ function updateShockEnabled() {
   $('shockHint').hidden = ok;
 }
 
-// ---- Heartbeat table: top 10 by exact MarketRank π (default) or exact hotness h ----
+// ---- Heartbeat table: top 10 by exact MarketRank π ----
 const SVGNS = 'http://www.w3.org/2000/svg';
 function sparkline(series) {
   const W = 72, H = 18, pad = 2;
@@ -257,8 +277,8 @@ function sparkline(series) {
 
 function cell(cls, text) { const d = document.createElement('span'); d.className = cls; d.textContent = text; return d; }
 
-// The selected metric of a top row: π·N (`mr`) or h. The sparkline and the pulse animation follow it.
-function topValue(r) { return S.topBy === 'pi' ? r.mr : r.h; }
+// The table's metric: π·N (`mr`). The sparkline (series of π·N) and the pulse animation follow it.
+function topValue(r) { return r.mr; }
 
 function renderTop(rows) {
   const box = $('topRows');
@@ -287,21 +307,9 @@ function renderTop(rows) {
 // Refreshes the table for frame t; stale responses (superseded by a newer frame) are dropped.
 async function loadTop(t) {
   const seq = ++S.topSeq;
-  const by = S.topBy === 'pi' ? 'pi' : 'h';
-  const r = await getJSON(`/api/top?n=10&bars=30&by=${by}&t=${t}`);
+  const r = await getJSON(`/api/top?n=10&bars=30&by=pi&t=${t}`);
   if (seq !== S.topSeq) return;
   renderTop(r.rows);
-}
-
-function setTopBy(by) {
-  if (by === S.topBy) return;
-  S.topBy = by; S.topPrev = new Map();  // no pulse across a metric switch
-  $('topTitle').textContent = by === 'pi' ? 'MarketRank top 10 · π (exact)' : 'Hottest 10 · model h (unsmoothed)';
-  [['byPi', 'pi'], ['byH', 'h']].forEach(([id, b]) => { $(id).classList.toggle('on', by === b); $(id).setAttribute('aria-pressed', String(by === b)); });
-  if (S.frame) {
-    fillHoldings(S.frame);
-    loadTop(S.frame.t).catch((e) => { $('topRows').textContent = String(e.message || e); });
-  }
 }
 
 function clearShock() {
@@ -318,15 +326,16 @@ async function loadFrame(t) {
   if (seq !== S.frameSeq) return false;
   if (S.shock) clearShock();
   S.frame = f; S.raster = z;
-  // Base colour/height scale: P90 of |z| over the occupied vertices (stock cells).
-  S.baseVmax = p90abs(f.nodes.map((n) => sample(z, f.raster, f.lattice, n[3] % f.lattice.cols, Math.floor(n[3] / f.lattice.cols)).v));
+  // Base colour/height scale: P90 of |z| over the occupied vertices (stock cells). Under value = pi the stocks at
+  // the teleport floor (all tied) are left out, so the floor plain does not set the scale.
+  const floorTie = S.status && S.status.value === 'pi';
+  S.baseVmax = p90abs(f.nodes.filter((n) => !(floorTie && n[13])).map((n) => sample(z, f.raster, f.lattice, n[3] % f.lattice.cols, Math.floor(n[3] / f.lattice.cols)).v));
   showStatus();
   if (!S.deck) {
     initDeck(f.lattice);
     fillTickers(f.nodes);
   }
   if (!S.arcsInit) { S.arcsInit = true; $('arcs').value = Math.min(2 * f.nodes.length, 150); setArcsLabel(); }
-  $('tlabel').textContent = `${f.time}  ·  ${f.nodes.length} active stocks  ·  ${f.params}`;
   fillHoldings(f);
   loadTop(f.t).catch((e) => { $('topRows').textContent = String(e.message || e); if (S.selftest) fail(e); });
   updateShockEnabled();
@@ -342,12 +351,17 @@ async function refreshTimes() {
   updateShockEnabled();
 }
 
+// "MarketRank · replay 1d · N stocks · <date>": no parameter dump.
 function showStatus() {
   const st = S.status;
   if (!st) return;
-  const tag = (S.shock ? `  ·  Δh ${S.shock.shocked.map((x) => x.ticker).join(',')}` : '') +
-    (S.frame ? `  ·  colour ±${(S.shock ? S.shockVmax : S.baseVmax).toPrecision(3)} (P90)` : '');
-  $('status').textContent = st.error ? `error: ${st.error}` : `${st.label} · ${st.ready ? 'ready' : `computing ${st.computed}/${st.total}`} · ${st.nodes} stocks${tag}`;
+  const parts = ['MarketRank', st.label];
+  if (st.error) parts.push(`error: ${st.error}`);
+  else if (!st.ready || !S.frame) parts.push(`computing ${st.computed}/${st.total}`);
+  else parts.push(`${S.frame.nodes.length} stocks`, S.frame.time.slice(0, 10));
+  if (S.shock) parts.push(`shock ${S.shock.shocked.map((x) => x.ticker).join(',')}`);
+  $('status').textContent = parts.join(' · ');
+  showLegend();
 }
 
 async function applyShock() {
@@ -371,31 +385,8 @@ async function applyShock() {
   render();
 }
 
-// Parameter controls follow the server's current parameters: on the first status and after each Apply.
-// The preset and hotness selects are sent only when the user changed them, so CLI model flags survive.
-function initControls(st) {
-  S.controlsInit = true; S.presetDirty = false; S.hrefDirty = false; S.valueDirty = false;
-  $('preset').value = st.preset === 'custom' ? 'custom' : st.preset;
-  $('href').value = st.h_ref;
-  $('height').value = st.height; $('territory').value = st.territory;
-  if (st.value) $('value').value = st.value;
-  $('idwPower').value = st.idw_power; $('idwRadius').value = st.idw_radius; $('subdiv').value = st.subdivision;
-  $('smooth').value = st.smooth; $('smoothLabel').textContent = $('smooth').value;
-  if (st.smoother) $('smoother').value = st.smoother;
-  if (st.cvt_iterations !== undefined) { $('cvtIt').value = st.cvt_iterations; $('cvtItLabel').textContent = $('cvtIt').value; }
-  if (st.cvt_lambda !== undefined) { $('cvtLam').value = st.cvt_lambda; $('cvtLamLabel').textContent = $('cvtLam').value; }
-  showSmootherRows();
-}
-
-// CVT sliders only under CVT, the Gaussian sigma only under Gaussian.
-function showSmootherRows() {
-  const m = $('smoother').value;
-  $('cvtItRow').hidden = m !== 'cvt'; $('cvtLamRow').hidden = m !== 'cvt'; $('smoothRow').hidden = m !== 'gaussian';
-}
-
 async function onStatus(st) {
   S.status = st;
-  if (!S.controlsInit && typeof st.preset === 'string') initControls(st);
   showStatus();
   if (!st.ready) return;
   // Reload on a new generation, or (when following the latest bar) when new bars have been computed.
@@ -420,6 +411,8 @@ async function onStatus(st) {
     }
     setTimeout(() => {
       if (!$('topRows').querySelector('.toprow')) fail(new Error('top table did not render'));
+      // The product UI is fixed: no model or landscape knobs may come back.
+      else if (document.querySelector('#panel select, #apply, #top button')) fail(new Error('a removed control is present'));
       else document.title = `marketrank-ok:${S.frame.nodes.length}`;
     }, 1500);
   }
@@ -448,27 +441,6 @@ function wire() {
   });
   ['hscale', 'labels'].forEach((id) => $(id).addEventListener('input', render));
   $('arcs').addEventListener('input', () => { setArcsLabel(); render(); });
-  $('smooth').addEventListener('input', () => { $('smoothLabel').textContent = $('smooth').value; });
-  $('smoother').addEventListener('change', showSmootherRows);
-  $('cvtIt').addEventListener('input', () => { $('cvtItLabel').textContent = $('cvtIt').value; });
-  $('cvtLam').addEventListener('input', () => { $('cvtLamLabel').textContent = $('cvtLam').value; });
-  $('preset').addEventListener('change', () => { S.presetDirty = $('preset').value !== 'custom'; });
-  $('href').addEventListener('change', () => { S.hrefDirty = true; });
-  $('value').addEventListener('change', () => { S.valueDirty = true; });
-  $('byPi').addEventListener('click', () => setTopBy('pi'));
-  $('byH').addEventListener('click', () => setTopBy('h'));
-  $('apply').addEventListener('click', async () => {
-    const body = { height: $('height').value, idw_power: Number($('idwPower').value), idw_radius: Number($('idwRadius').value), subdivision: Number($('subdiv').value), smooth: Number($('smooth').value), smoother: $('smoother').value, cvt_iterations: Number($('cvtIt').value), cvt_lambda: Number($('cvtLam').value), territory: $('territory').value };
-    if (S.presetDirty) body.preset = $('preset').value;
-    if (S.hrefDirty && $('href').value) body.h_ref = $('href').value;
-    // Sent only when changed: otherwise a preset brings its own value (π under marketrank).
-    if (S.valueDirty) body.value = $('value').value;
-    try {
-      await getJSON('/api/params', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      S.controlsInit = false;  // re-read the controls from the next status
-      S.deck && S.deck.finalize(); S.deck = null;
-    } catch (e) { fail(e); }
-  });
   $('shockSize').addEventListener('input', () => { $('shockSizeLabel').textContent = `${$('shockSize').value}%`; });
   $('shockApply').addEventListener('click', () => { applyShock().catch((e) => { $('shockOut').textContent = String(e.message || e); }); });
   $('shockReset').addEventListener('click', () => { clearShock(); render(); });

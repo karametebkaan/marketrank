@@ -13,24 +13,9 @@
     <div id="status">loading…</div>
     <h2>Data</h2>
     <label>Bar <input id="scrub" type="range" min="0" max="0" value="0"></label>
-    <div id="tlabel"></div>
     <label>Follow latest <input id="follow" type="checkbox" checked></label>
     <button id="play">Play</button>
-    <h2>Graph</h2>
-    <label>Preset <select id="preset"><option>marketrank</option><option>money-flow</option><option>defaults</option><option>legacy</option><option value="custom">custom (current)</option></select></label>
-    <label>Hotness <select id="href"><option value="">preset</option><option>size</option><option>netflow</option><option>uniform</option><option>longrun</option></select></label>
-    <h2>Landscape</h2>
-    <label>Territories <select id="territory"><option value="flux">flux communities</option><option value="sector">sectors</option></select></label>
-    <label>Height: MarketRank π / hotness <select id="value"><option value="pi">MarketRank π</option><option value="hotness">hotness h</option></select></label>
-    <label>Hotness scale <select id="height"><option>signed-log</option><option>linear</option></select></label>
-    <label>IDW power <input id="idwPower" type="number" min="0.5" max="6" step="0.5" value="2"></label>
-    <label>IDW radius <input id="idwRadius" type="number" min="0" max="10" step="1" value="3"></label>
-    <label>Subdivision <input id="subdiv" type="number" min="1" max="8" step="1" value="1"></label>
-    <label>Smoother <select id="smoother"><option value="cvt">CVT</option><option value="gaussian">Gaussian</option><option value="none">none</option></select></label>
-    <label id="cvtItRow">iterations <span id="cvtItLabel">12</span> <input id="cvtIt" type="range" min="0" max="30" step="1" value="12"></label>
-    <label id="cvtLamRow">&lambda; <span id="cvtLamLabel">0.6</span> <input id="cvtLam" type="range" min="0.1" max="1" step="0.05" value="0.6"></label>
-    <label id="smoothRow">Gaussian &sigma; <span id="smoothLabel">1</span> <input id="smooth" type="range" min="0" max="4" step="0.25" value="1"></label>
-    <button id="apply">Apply</button>
+    <h2>View</h2>
     <label>Height scale <input id="hscale" type="range" min="0.1" max="3" step="0.1" value="1"></label>
     <label>Arcs <span id="arcsLabel"></span> <input id="arcs" type="range" min="0" max="400" step="10" value="100"></label>
     <label>Labels <input id="labels" type="checkbox" checked></label>
@@ -47,10 +32,10 @@
   </aside>
   <main id="canvas">
     <section id="top" aria-live="polite">
-      <div class="tophead"><h3 id="topTitle">MarketRank top 10 · π (exact)</h3>
-        <span class="toggle" role="group" aria-label="rank by"><button id="byPi" class="on" aria-pressed="true">π</button><button id="byH" aria-pressed="false">h</button></span></div>
+      <h3>MarketRank top 10 · π (exact)</h3>
       <div id="topRows"></div>
     </section>
+    <div id="legend"></div>
   </main>
 </div>
 <script src="https://unpkg.com/deck.gl@9.4.0/dist.min.js" integrity="sha384-NrpHmp6N6IhXZ+gSV+uRLo+Hqprkw4BfdGzmxgWXhjakjkAabyfQxokSmn/aK0VB" crossorigin="anonymous"></script>
