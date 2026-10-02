@@ -30,6 +30,8 @@ constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
 constexpr double kEstimateHalflife = 1e9;
 constexpr double kSplitSnap = 1.08;   // |log ratio| < log(1.08): no split (dividend drift is ~1-2%/quarter)
 constexpr double kSplitConfirm = 1.1;  // the median holder share ratio must be within 10% of the price-factor ratio
+constexpr double kSplitExact = 1.01;    // ... or this share of holders sits within 1% of it (non-traders show r exactly)
+constexpr double kSplitHolderShare = 0.30;
 constexpr std::size_t kTopK = 5000;   // observed top-K edges (and the legacy union-top-K)
 constexpr double kAlpha = 0.85;       // p = 0.15, as the market_rank() preset
 
@@ -498,6 +500,7 @@ QuarterPricing quarter_pricing(const Panel& panel, const QuarterHoldings& prev, 
   // Share-count confirmation: per ticker, the median over managers holding it in both quarters of
   // shares_q / shares_{q-1} (holders who did not trade show exactly the split ratio).
   std::vector<double> share_ratio(n, kNaN), cur_value(n, 0.0);
+  std::vector<std::vector<double>> sr(n);  // per ticker: holder share ratios
   {
     auto per_manager = [&](const QuarterHoldings& h) {
       std::unordered_map<std::uint64_t, double> m;  // key cik * n + ticker index
@@ -507,23 +510,28 @@ QuarterPricing quarter_pricing(const Panel& panel, const QuarterHoldings& prev, 
       return m;
     };
     const auto mp = per_manager(prev), mc = per_manager(cur);
-    std::vector<std::vector<double>> sr(n);
     for (const auto& [k, sc] : mc)
       if (auto it = mp.find(k); it != mp.end()) sr[k % n].push_back(sc / it->second);
-    for (std::size_t i = 0; i < n; ++i) share_ratio[i] = median(std::move(sr[i]));
+    for (std::size_t i = 0; i < n; ++i) share_ratio[i] = median(sr[i]);
     for (const auto& r : cur.rows)
       if (auto it = idx.find(r.ticker); it != idx.end() && std::isfinite(r.value_usd)) cur_value[it->second] += r.value_usd;
   }
   for (std::size_t i = 0; i < n; ++i) {
     const double fp = q.factor_prev[i], fc = q.factor_cur[i];
     if (std::isfinite(fp) && std::isfinite(fc)) {
-      const double r = fp / fc, sr = share_ratio[i];
+      const double r = fp / fc, med = share_ratio[i];
       if (std::abs(std::log(r)) >= std::log(kSplitSnap)) {
-        // Within 10% of r and closer to r than to 1 (unchanged holdings are not a confirmation).
-        const bool confirmed = std::isfinite(sr) && sr > 0 &&
-                               std::abs(std::log(sr / r)) < std::min(std::log(kSplitConfirm), std::abs(std::log(r)) / 2);
+        // (a) the median holder ratio is within 10% of r and closer to r than to 1 (unchanged holdings are not a
+        // confirmation), or (b) at least 30% of the holders present in both quarters sit within 1% of r.
+        const bool by_median = std::isfinite(med) && med > 0 &&
+                               std::abs(std::log(med / r)) < std::min(std::log(kSplitConfirm), std::abs(std::log(r)) / 2);
+        std::size_t exact = 0;
+        for (double x : sr[i]) exact += x > 0 && std::abs(std::log(x / r)) < std::log(kSplitExact);
+        const bool by_holders =
+            !sr[i].empty() && static_cast<double>(exact) >= kSplitHolderShare * static_cast<double>(sr[i].size());
+        const bool confirmed = by_median || by_holders;
         if (confirmed) q.ratio[i] = r, ++q.splits;
-        else q.unconfirmed.push_back({i, r, sr, cur_value[i]});
+        else q.unconfirmed.push_back({i, r, med, cur_value[i]});
       }
     }
     // A full exit has no q rows: assume no split in q and take q-1's factor.
@@ -761,9 +769,9 @@ nlohmann::json run_compare_13f(const Panel& panel, const Compare13fOptions& opt,
   report["observed_params"] = {{"top_n", opt.observed.top_n}, {"prune_rel", opt.observed.prune_rel}};
   report["lookback_days"] = opt.lookback_days;
   report["timeframe"] = opt.timeframe;
-  report["git_sha"] = opt.git_sha;
+  report["source_tree_git_sha_at_run_time"] = opt.git_sha;
   report["perms"] = opt.perms;
-  report["warmup_bars_required"] = warm;
+  report["warmup_returns_required"] = warm;
   report["panel"] = {{"nodes", panel.N()},
                      {"bars", panel.T()},
                      {"first", panel.T() ? format_rfc3339(panel.times.front()) : ""},
@@ -777,9 +785,10 @@ nlohmann::json run_compare_13f(const Panel& panel, const Compare13fOptions& opt,
     if (!bars) return "no panel bars in the quarter";
     if (panel.times.front() >= qs) return "panel starts inside the quarter (extend --lookback-days)";
     if (panel.times.back() < qe) return "quarter not complete in the panel";
-    if (bars->first < warm)
-      return "warm-up: " + std::to_string(bars->first) + " bars before the quarter, need " + std::to_string(warm) +
-             " (extend --lookback-days)";
+    // Bar 0 has no return, so the quarter's first bar has bars->first - 1 prior returns.
+    if (bars->first < warm + 1)
+      return "warm-up: " + std::to_string(bars->first == 0 ? 0 : bars->first - 1) +
+             " returns before the quarter, need " + std::to_string(warm) + " (extend --lookback-days)";
     return "";
   };
   auto usable = [&](const std::string& q) { return coverage(q).empty(); };
@@ -851,6 +860,7 @@ nlohmann::json run_compare_13f(const Panel& panel, const Compare13fOptions& opt,
               {"placebo_quarter", p.placebo.empty() ? json(nullptr) : json(p.placebo)},
               {"bars", p.bars.second - p.bars.first + 1},
               {"warmup_bars", p.bars.first},
+              {"warmup_returns", p.bars.first - 1},
               {"first_bar", format_rfc3339(panel.times[p.bars.first])},
               {"last_bar", format_rfc3339(panel.times[p.bars.second])},
               {"managers", f.managers},
@@ -985,8 +995,8 @@ std::string compare_report_md(const nlohmann::json& r) {
   s << "# 13F observed flows vs MarketRank estimated flows\n\n";
   s << "Panel: " << r["panel"]["nodes"].get<std::size_t>() << " nodes, " << r["panel"]["bars"].get<std::size_t>()
     << " bars, " << sv(r["panel"]["first"]) << " .. " << sv(r["panel"]["last"]) << " (" << sv(r["timeframe"])
-    << ", lookback " << r["lookback_days"] << " days). Preset: " << sv(r["preset"]) << ". Build: " << sv(r["git_sha"])
-    << ". Permutation draws: " << r["perms"] << ". Warm-up required: " << r["warmup_bars_required"] << " bars.\n\n";
+    << ", lookback " << r["lookback_days"] << " days). Preset: " << sv(r["preset"]) << ". Source tree at run time (git): " << sv(r["source_tree_git_sha_at_run_time"])
+    << ". Permutation draws: " << r["perms"] << ". Warm-up required: " << r["warmup_returns_required"] << " returns before a quarter's first bar.\n\n";
   s << "## Method\n\n"
        "- **Observed T_q** (13F): per manager, d = (shares_q - ratio * shares_{q-1}) * P_q; sources d < 0, sinks d > 0;\n"
        "  F_ij = out_i * in_j / sum(in) * min(1, sum(in)/sum(out)); summed over managers. Node set: the top "
@@ -995,8 +1005,8 @@ std::string compare_report_md(const nlohmann::json& r) {
        "- **Prices and splits**: lake bars are adjustment=all. Per ticker and quarter end, f = median(13F value/shares) /\n"
        "  last adjusted close of that quarter; P_q = mean adjusted close over q's bars * f_q (q's raw basis);\n"
        "  ratio = f_{q-1} / f_q, snapped to 1 within 8% (dividend drift); a split also needs the median holder share\n"
-       "  ratio shares_q / shares_{q-1} within 10% of it (and closer to it than to 1), otherwise it is listed as an\n"
-       "  unconfirmed candidate.\n"
+       "  ratio shares_q / shares_{q-1} within 10% of it (and closer to it than to 1), or at least 30% of the holders\n"
+       "  present in both quarters within 1% of it; otherwise it is listed as an unconfirmed candidate.\n"
        "- **Estimated T^_q**: the pipeline (warm from the panel's first bar; a quarter needs at least the warm-up bars\n"
        "  before it) is stepped through q's last bar; the exact BarFlux of every bar in q (UTC calendar quarter) is\n"
        "  summed in a separate FluxAccumulator (half-life 1e9, no row cap).\n"

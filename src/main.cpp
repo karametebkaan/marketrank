@@ -270,23 +270,26 @@ int run_shock(const mr::CliArgs& args, const mr::Panel& panel, const mr::Univers
 }
 
 // --- M3c 13F comparison: observed 13F flows vs estimated quarter flows + calibration grid (replay only) ---
-// Git SHA of the source tree the binary was built from (+ "-dirty" with uncommitted changes); "unknown" without git.
+// Git SHA of the source tree at run time (the tree the binary was built from, as it is now): "<sha>", "<sha>-dirty"
+// with uncommitted changes, "<sha> (dirty: unknown)" if git status fails, "unknown" without git.
 std::string source_git_sha() {
 #ifdef MR_SOURCE_DIR
-  auto run = [](const std::string& cmd) {
+  auto run = [](const std::string& cmd) -> std::optional<std::string> {
+    FILE* p = popen(cmd.c_str(), "r");
+    if (!p) return std::nullopt;
     std::string out;
-    if (FILE* p = popen(cmd.c_str(), "r")) {
-      char buf[256];
-      while (std::fgets(buf, sizeof buf, p)) out += buf;
-      if (pclose(p) != 0) return std::string();
-    }
+    char buf[256];
+    while (std::fgets(buf, sizeof buf, p)) out += buf;
+    if (pclose(p) != 0) return std::nullopt;
     while (!out.empty() && (out.back() == '\n' || out.back() == '\r')) out.pop_back();
     return out;
   };
   const std::string dir = MR_SOURCE_DIR;
-  const std::string sha = run("git -C '" + dir + "' rev-parse HEAD 2>/dev/null");
-  if (sha.empty()) return "unknown";
-  return run("git -C '" + dir + "' status --porcelain --untracked-files=no 2>/dev/null").empty() ? sha : sha + "-dirty";
+  const auto sha = run("git -C '" + dir + "' rev-parse HEAD 2>/dev/null");
+  if (!sha || sha->empty()) return "unknown";
+  const auto status = run("git -C '" + dir + "' status --porcelain --untracked-files=no 2>/dev/null");
+  if (!status) return *sha + " (dirty: unknown)";
+  return status->empty() ? *sha : *sha + "-dirty";
 #else
   return "unknown";
 #endif

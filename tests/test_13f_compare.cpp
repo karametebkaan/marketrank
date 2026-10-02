@@ -411,9 +411,11 @@ TEST_CASE("13f compare: run_compare_13f end to end on synthetic holdings") {
   const std::string hdr = "cik,cusip,issuer,shares,value_usd\n";
   test::write_file(data / "13f" / "holdings_2025Q2.csv", hdr + "1,C1,a,100,5000\n2,C3,c,500,10000\n");
   test::write_file(data / "13f" / "holdings_2025Q3.csv",
-                   hdr + "1,C1,a,100,5000\n1,C2,b,100,8000\n2,C3,c,500,10000\n2,C4,d,10,1200\n");
+                   hdr + "1,C1,a,100,5000\n1,C2,b,100,8000\n2,C3,c,500,10000\n2,C4,d,10,1200\n"
+                         "3,C2,b,200,16000\n3,C3,c,100,2000\n3,C4,d,10,1200\n4,C4,d,50,6000\n4,C1,a,10,500\n");
   test::write_file(data / "13f" / "holdings_2025Q4.csv",
-                   hdr + "1,C1,a,50,2500\n1,C2,b,140,11200\n2,C3,c,300,6000\n2,C4,d,40,4800\n");
+                   hdr + "1,C1,a,50,2500\n1,C2,b,140,11200\n2,C3,c,300,6000\n2,C4,d,40,4800\n"
+                         "3,C2,b,100,8000\n3,C3,c,300,6000\n3,C4,d,30,3600\n4,C4,d,20,2400\n4,C1,a,80,4000\n");
   Compare13fOptions opt;
   opt.data = data;
   opt.lookback_days = 400;
@@ -429,18 +431,20 @@ TEST_CASE("13f compare: run_compare_13f end to end on synthetic holdings") {
   REQUIRE(r["quarters"].size() == 1);
   const auto& q = r["quarters"][0];
   CHECK(q["quarter"] == "2025Q4");
-  CHECK(q["managers"] == 2);
+  CHECK(q["managers"] == 4);
   CHECK(q["warmup_bars"] == 122);
   CHECK(q["placebo_quarter"] == "2026Q1");
   CHECK(q.contains("pi_obs_vs_adv"));
   CHECK(q.contains("pi_obs_vs_13f_value"));
   CHECK(q["split_candidates_unconfirmed"].is_array());
-  CHECK(r["warmup_bars_required"] == 60);
+  CHECK(r["warmup_returns_required"] == 60);
   CHECK(r["base_params"]["corr_window"] == 60);
   CHECK(r["base_params"]["pressure"] == "dollar");
   CHECK(r["lookback_days"] == 400);
   CHECK(r["timeframe"] == "1d");
-  CHECK(r["git_sha"] == "abc123");
+  CHECK(r["source_tree_git_sha_at_run_time"] == "abc123");
+  CHECK_FALSE(r.contains("git_sha"));
+  CHECK(q["warmup_returns"] == 121);
   CHECK(r["observed_params"]["top_n"] == 2000);
   CHECK(r["perms"] == 5);
   CHECK(r["configs"].size() == 6);  // the marketrank preset is a grid point (lambda 1, dollar)
@@ -452,6 +456,11 @@ TEST_CASE("13f compare: run_compare_13f end to end on synthetic holdings") {
                           "lift_perm"})
       CHECK(row.contains(k));
     CHECK(c["summary"]["lift_placebo"]["pi_spearman"].contains("sd"));
+    REQUIRE(row["placebo"].is_object());
+    for (const auto& [name, mp] : kFlowMetricFields)
+      if (std::string(name) == "obs_topk_spearman" || std::string(name) == "row_cosine" ||
+          std::string(name) == "full_spearman")
+        CHECK(std::isfinite(row["lift_placebo"][name].get<double>()));
   }
   CHECK(bases == 1);
   CHECK(r["best"].contains("pi_spearman"));
@@ -527,4 +536,110 @@ TEST_CASE("13f compare: a small price-factor shift with unchanged holder shares 
   CHECK(q.ratio[0] == 1.0);
   CHECK(q.splits == 0);
   CHECK(q.unconfirmed.size() == 1);
+}
+
+TEST_CASE("13f compare: split confirmed by the fraction of holders at exactly r") {
+  // 2:1 split; 4 of 10 holders did not trade (share ratio exactly 2), 6 bought 20-25% more post-split shares, so the
+  // median share ratio (2.4) misses r by more than 10%; 40% of holders at r (>= 30%) confirms it. Likewise a 1:10
+  // reverse split where 6 of 10 holders sold 30%.
+  const std::vector<TimePoint> times = {utc_seconds(2025, 9, 30, 16), utc_seconds(2025, 12, 31, 16)};
+  const Panel p = make_panel(times, {"SPL", "REV"}, {50, 50, 50, 50});
+  QuarterHoldings prev, cur;
+  prev.quarter = "2025Q3";
+  cur.quarter = "2025Q4";
+  for (std::uint64_t m = 1; m <= 10; ++m) {
+    const double buy = m <= 4 ? 1.0 : m == 10 ? 1.25 : 1.2;
+    prev.rows.push_back({m, "SPL", 100, 100 * 100.0});  // raw 100
+    cur.rows.push_back({m, "SPL", 200 * buy, 200 * buy * 50.0});
+    const double sell = m <= 4 ? 1.0 : 0.7;
+    prev.rows.push_back({m, "REV", 1000, 1000 * 5.0});  // raw 5
+    cur.rows.push_back({m, "REV", 100 * sell, 100 * sell * 50.0});
+  }
+  const QuarterPricing q = quarter_pricing(p, prev, cur);
+  CHECK(q.ratio[0] == doctest::Approx(2.0));
+  CHECK(q.ratio[1] == doctest::Approx(0.1));
+  CHECK(q.splits == 2);
+  CHECK(q.unconfirmed.empty());
+}
+
+TEST_CASE("13f compare: sparse full-pair Spearman and row cosine match a dense brute force") {
+  // Random sparse matrices with zeros, duplicate pairs, self-pairs and tied weights (adapted from the reviewer's
+  // cross-check): the sparse rank formula must equal Spearman over the explicit n(n-1) vectors.
+  std::mt19937_64 rng(1);
+  auto dense = [](const std::vector<FlowEdge>& e, std::size_t n) {
+    std::vector<double> d(n * n, 0.0);
+    for (const auto& x : e)
+      if (x.from != x.to && x.dollars > 0) d[x.from * n + x.to] += x.dollars;
+    return d;
+  };
+  double worst = 0;
+  for (int trial = 0; trial < 40; ++trial) {
+    const std::size_t n = 5 + rng() % 60, m = rng() % (n * n / 2 + 1);
+    auto gen = [&](bool ties) {
+      std::vector<FlowEdge> e;
+      for (std::size_t k = 0; k < m; ++k) {
+        const auto i = static_cast<std::uint32_t>(rng() % n), j = static_cast<std::uint32_t>(rng() % n);
+        e.push_back({i, j, ties ? double(1 + rng() % 4) : std::exp(static_cast<double>(rng() % 1000) / 100.0)});
+      }
+      return e;
+    };
+    const auto o = gen(trial % 2), e = gen(trial % 3 == 0);
+    const Agreement a = compare_flows(o, e, n, 0);
+    const auto O = dense(o, n), E = dense(e, n);
+    std::vector<double> x, y;
+    for (std::size_t i = 0; i < n; ++i)
+      for (std::size_t j = 0; j < n; ++j)
+        if (i != j) x.push_back(O[i * n + j]), y.push_back(E[i * n + j]);
+    const double ref = spearman(x, y);
+    auto shares = [n](std::vector<double> M) {
+      for (std::size_t i = 0; i < n; ++i) {
+        double s = 0;
+        for (std::size_t j = 0; j < n; ++j) s += M[i * n + j];
+        if (s > 0)
+          for (std::size_t j = 0; j < n; ++j) M[i * n + j] /= s;
+      }
+      return M;
+    };
+    const auto So = shares(O), Se = shares(E);
+    double d = 0, xx = 0, yy = 0;
+    for (std::size_t k = 0; k < n * n; ++k) d += So[k] * Se[k], xx += So[k] * So[k], yy += Se[k] * Se[k];
+    const double cref = xx > 0 && yy > 0 ? d / std::sqrt(xx * yy) : std::nan("");
+    auto diff = [](double p, double q) { return std::isnan(p) && std::isnan(q) ? 0.0 : std::abs(p - q); };
+    worst = std::max({worst, diff(a.est.full_spearman, ref), diff(a.est.row_cosine, cref)});
+  }
+  CHECK(worst < 1e-12);
+}
+
+TEST_CASE("13f compare: the warm-up counts prior returns, not prior bars") {
+  // corr_window = 60: 2025Q4's first bar needs 60 returns before it, i.e. first bar index >= 61.
+  auto run = [](TimePoint start) {
+    const std::vector<std::string> tickers = {"AAA", "BBB", "CCC"};
+    std::vector<TimePoint> times;
+    std::vector<double> close;
+    std::mt19937_64 rng(8);
+    std::normal_distribution<double> z(0.0, 0.02);
+    std::vector<double> px = {50, 80, 20};
+    for (TimePoint t = start; t < utc_seconds(2026, 1, 3); t += 86400) {
+      times.push_back(t);
+      for (auto& x : px) close.push_back(x *= std::exp(z(rng)));
+    }
+    const auto data = test::temp_dir("compare13f_warm");
+    test::write_file(data / "13f" / "cusip_map.csv", "cusip,ticker\nC1,AAA\nC2,BBB\nC3,CCC\n");
+    const std::string hdr = "cik,cusip,issuer,shares,value_usd\n";
+    test::write_file(data / "13f" / "holdings_2025Q3.csv", hdr + "1,C1,a,100,5000\n1,C2,b,100,8000\n");
+    test::write_file(data / "13f" / "holdings_2025Q4.csv", hdr + "1,C1,a,50,2500\n1,C3,c,100,2000\n");
+    Compare13fOptions opt;
+    opt.data = data;
+    opt.perms = 1;
+    opt.quarters = {"2025Q4"};
+    std::ostringstream log;
+    return run_compare_13f(make_panel(times, tickers, close), opt, log);
+  };
+  const auto exact = run(utc_seconds(2025, 8, 2, 20));  // 2025-10-01 is bar 60: 59 prior returns
+  CHECK(exact["quarters"].empty());
+  REQUIRE(exact["skipped"].size() == 1);
+  CHECK(exact["skipped"][0]["reason"].get<std::string>().find("warm-up") != std::string::npos);
+  const auto ok = run(utc_seconds(2025, 8, 1, 20));  // bar 61: 60 prior returns
+  REQUIRE(ok["quarters"].size() == 1);
+  CHECK(ok["quarters"][0]["warmup_returns"] == 60);
 }

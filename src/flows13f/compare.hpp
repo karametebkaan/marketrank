@@ -51,7 +51,8 @@ std::vector<std::vector<FlowEdge>> estimated_range_flows(const Panel&, const Cor
 // so d = (shares_q - ratio * shares_{q-1}) * prices = (adjusted shares_q - adjusted shares_{q-1}) * mean adjusted close.
 // A price-factor ratio r with |log r| < log(1.08) (dividend drift ~1-2%/quarter, price noise) is snapped to 1. A
 // larger r is a split only if the median holder share ratio shares_q/shares_{q-1} (managers holding the ticker in
-// both quarters) is within 10% of r and closer to r than to 1 (log scale); otherwise ratio stays 1 and the ticker is listed in `unconfirmed`. Unknown
+// both quarters) is within 10% of r and closer to r than to 1 (log scale), or at least 30% of those holders are
+// within 1% of r (holders who did not trade show r exactly); otherwise ratio stays 1 and the ticker is listed in `unconfirmed`. Unknown
 // factors give ratio 1; an unknown f_q falls back to f_{q-1} (full exits), else price NaN (observed_flows then uses
 // value/shares, also q's raw basis).
 struct SplitCandidate {
@@ -125,10 +126,10 @@ struct Compare13fOptions {
   // recorded in report.json
   int lookback_days = 0;
   std::string timeframe;
-  std::string git_sha;
+  std::string git_sha;  // recorded as source_tree_git_sha_at_run_time
 };
 // Lists the holdings_<q>.csv quarters found and compares each that has a previous quarter, complete panel coverage
-// and a warm-up of at least max(corr_window, adv_window, vol_window) bars before its first bar. Runs the calibration
+// and a warm-up of at least max(corr_window, adv_window, vol_window) returns before its first bar. Runs the calibration
 // grid (lambda in {0, 0.5, 1} x pressure in {dollar, sqrt}, other params from `base`) with gravity, temporal-placebo
 // and permutation nulls; the best config is the one with the highest mean lift over the placebo. Writes the reports
 // and returns the JSON report. Progress goes to `log`.
