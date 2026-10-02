@@ -23,6 +23,7 @@ FetchContent_Declare(doctest
   GIT_TAG v2.4.11)
 FetchContent_MakeAvailable(json httplib doctest)
 find_package(OpenSSL REQUIRED)
+find_package(OpenMP REQUIRED)
 
 file(GLOB_RECURSE FLUXCORE_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/*.cpp)
 list(REMOVE_ITEM FLUXCORE_SOURCES ${CMAKE_SOURCE_DIR}/src/main.cpp)
@@ -31,7 +32,7 @@ target_include_directories(fluxcore PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_compile_definitions(fluxcore PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT)
 target_compile_options(fluxcore PRIVATE -Wall -Wextra -Wpedantic)
 target_link_libraries(fluxcore PUBLIC nlohmann_json::nlohmann_json httplib::httplib
-                      OpenSSL::SSL OpenSSL::Crypto)
+                      OpenSSL::SSL OpenSSL::Crypto OpenMP::OpenMP_CXX)
 
 add_executable(fluxscape src/main.cpp)
 target_link_libraries(fluxscape PRIVATE fluxcore)
