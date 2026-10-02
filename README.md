@@ -44,6 +44,29 @@ SEC SIC, then `ETF/Fund` (name heuristic and `funds.csv`), then `Unclassified`; 
 Advisory and experimental. The flux is inferred from price and volume co-movement,
 not observed order flow.
 
+## Landscape UI
+
+```bash
+./build/fluxscape --serve --mode replay            # http://127.0.0.1:8080 (money-flow preset)
+./build/fluxscape --serve --mode synthetic --port 9000
+scripts/ui_smoke.sh                                # headless-Chrome smoke test + screenshot
+```
+
+The page shows a triangulated landscape of signed-log hotness. Hills are where money settles relative to size, and valleys are where it drains.
+
+**Placement.** Placement is solve-based. Each stock sits on a lattice point next to stocks whose money ends up in the same places after a few hops of the solved Markov chain (a money-destination embedding of P_offᵏ, then PCA, Procrustes-aligned frame to frame). It is not placed by raw graph adjacency.
+
+**Surface.** The mesh vertices are the lattice points. A vertex with a stock carries that stock's exact value, and an empty vertex is filled by IDW. Each triangle is Gouraud-shaded from its vertex colours, red for inflow and blue for outflow, with relief lighting on top.
+
+**Overlays.** The strongest flux arcs and your portfolio, as green rings, are drawn on top.
+
+**Left panel.** It lets you:
+- switch the preset and hotness reference;
+- set the IDW and height parameters;
+- set the arc count;
+- scrub or play through the last 300 bars;
+- apply a shock on the latest bar (`TICKER`, ±%) to show the Δh landscape of who absorbs the money and who loses it.
+
 ## How it works
 
 1. **Universe.** Start from every tradable US stock on Alpaca. Drop warrants, units, rights and
