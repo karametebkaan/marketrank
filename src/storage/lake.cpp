@@ -8,6 +8,7 @@
 #include <cerrno>
 #include <cstring>
 #include <fstream>
+#include <iostream>
 #include <nlohmann/json.hpp>
 #include <random>
 #include <set>
@@ -142,6 +143,23 @@ struct Lake::Impl {
     app.Close();
   }
 
+  // Moves every unreadable Parquet file of tf to _quarantine/ and clears that tf's coverage (the bad
+  // file's tickers are unknown), so the next sync back-fills. Returns the number of files moved.
+  std::size_t quarantine(Timeframe tf) {
+    std::size_t moved = 0;
+    for (const auto& f : parquet_files(root / "bars" / tf_dir_name(tf))) {
+      auto r = con.Query("SELECT count(*) FROM read_parquet(" + sql_str(f.string()) + ")");
+      if (!r->HasError()) continue;
+      const fs::path dest = root / "_quarantine" / fs::relative(f, root);
+      fs::create_directories(dest.parent_path());
+      fs::rename(f, dest);
+      std::cerr << "lake: quarantined " << f.string() << ": " << r->GetError() << "\n";
+      ++moved;
+    }
+    if (moved > 0) q("DELETE FROM coverage WHERE tf = " + sql_str(std::string(to_string(tf))));
+    return moved;
+  }
+
   // Moves pending rows into Parquet partitions, then applies pending coverage.
   void publish() {
     const auto n = q("SELECT count(*) FROM pending")->GetValue(0, 0).GetValue<int64_t>();
@@ -268,25 +286,38 @@ std::map<std::string, std::vector<Bar>> Lake::read(Timeframe tf, const std::vect
       std::to_string(year_of(e)) + " AND t BETWEEN " + std::to_string(s) + " AND " + std::to_string(e) +
       " AND ticker IN (SELECT ticker FROM want)"
       " QUALIFY row_number() OVER (PARTITION BY ticker, t ORDER BY seq DESC) = 1 ORDER BY ticker, t";
-  auto r = I.q(sql);
-  std::vector<Bar>* cur = nullptr;
-  std::string cur_name;
-  while (auto chunk = r->Fetch()) {
-    chunk->Flatten();
-    const std::size_t n = chunk->size();
-    auto* tk = duckdb::FlatVector::GetData<duckdb::string_t>(chunk->data[0]);
-    auto* t = duckdb::FlatVector::GetData<int64_t>(chunk->data[1]);
-    double* cols[6];
-    for (int k = 0; k < 6; ++k) cols[k] = duckdb::FlatVector::GetData<double>(chunk->data[2 + k]);
-    for (std::size_t i = 0; i < n; ++i)
-    {
-      if (!cur || tk[i].GetSize() != cur_name.size() ||
-          std::string_view(tk[i].GetData(), tk[i].GetSize()) != cur_name) {
-        cur_name = tk[i].GetString();
-        cur = &out[cur_name];
+  auto run = [&] {
+    out.clear();
+    auto r = I.q(sql);
+    std::vector<Bar>* cur = nullptr;
+    std::string cur_name;
+    while (auto chunk = r->Fetch()) {
+      chunk->Flatten();
+      const std::size_t n = chunk->size();
+      auto* tk = duckdb::FlatVector::GetData<duckdb::string_t>(chunk->data[0]);
+      auto* t = duckdb::FlatVector::GetData<int64_t>(chunk->data[1]);
+      double* cols[6];
+      for (int k = 0; k < 6; ++k) cols[k] = duckdb::FlatVector::GetData<double>(chunk->data[2 + k]);
+      for (std::size_t i = 0; i < n; ++i) {
+        if (!cur || tk[i].GetSize() != cur_name.size() ||
+            std::string_view(tk[i].GetData(), tk[i].GetSize()) != cur_name) {
+          cur_name = tk[i].GetString();
+          cur = &out[cur_name];
+        }
+        cur->push_back({t[i], cols[0][i], cols[1][i], cols[2][i], cols[3][i], cols[4][i], cols[5][i]});
       }
-      cur->push_back({t[i], cols[0][i], cols[1][i], cols[2][i], cols[3][i], cols[4][i], cols[5][i]});
     }
+  };
+  try {
+    run();
+  } catch (const std::exception&) {
+    // One bad file must not blank the whole timeframe: quarantine every unreadable file, then retry once.
+    if (I.quarantine(tf) == 0) throw;
+    if (!has_parquet(dir)) {
+      out.clear();
+      return out;
+    }
+    run();
   }
   return out;
 }

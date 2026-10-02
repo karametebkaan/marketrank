@@ -1,6 +1,7 @@
 #include "market/bar_store.hpp"
 
 #include <algorithm>
+#include <iostream>
 #include <limits>
 
 namespace fx {
@@ -103,8 +104,9 @@ void BarStore::load_range(const std::vector<std::string>& tickers, Timeframe tf,
       auto it = covered_.find({ticker, tf});
       if (it == covered_.end() || t < it->second) covered_[{ticker, tf}] = t;
     }
-  } catch (const std::exception&) {
+  } catch (const std::exception& e) {
     // Contract 4: unreadable data never aborts a load; the caller sees missing series.
+    std::cerr << "bar store: load of " << to_string(tf) << " failed: " << e.what() << "\n";
   }
 }
 

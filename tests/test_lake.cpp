@@ -134,3 +134,27 @@ TEST_CASE("fsync_path syncs an existing file and directory and throws on a missi
   CHECK_NOTHROW(fsync_path(dir));
   CHECK_THROWS_AS(fsync_path(dir / "missing.bin"), std::runtime_error);
 }
+
+TEST_CASE("an unreadable Parquet file is quarantined and the rest of the timeframe still reads") {
+  namespace fs = std::filesystem;
+  auto dir = test::temp_dir("lake_quarantine");
+  const TimePoint d0 = utc_seconds(2026, 9, 1, 4);
+  Lake lake(dir);
+  lake.write(Timeframe::Day, {row("AAPL", d0, 10), row("F", d0 + 86400, 3)}, {{"AAPL", d0}, {"F", d0}});
+  lake.write(Timeframe::Hour, {row("AAPL", d0 + 3600, 7)}, {{"AAPL", d0}});
+  fs::path part;
+  for (const auto& e : fs::recursive_directory_iterator(dir / "bars" / "tf=1d"))
+    if (e.path().extension() == ".parquet") part = e.path().parent_path();
+  REQUIRE_FALSE(part.empty());
+  const fs::path bad = part / "part-x.parquet";
+  test::write_file(bad, "this is not parquet");
+  auto got = lake.read(Timeframe::Day, {"AAPL", "F"}, d0, d0 + 10 * 86400);
+  REQUIRE(got["AAPL"].size() == 1);
+  CHECK(got["AAPL"][0].c == 10);
+  CHECK(got["F"].size() == 1);
+  CHECK_FALSE(fs::exists(bad));
+  CHECK(fs::exists(dir / "_quarantine" / fs::relative(bad, dir)));
+  CHECK(lake.coverage(Timeframe::Day, {"AAPL", "F"}).empty());
+  CHECK(lake.coverage(Timeframe::Hour, {"AAPL"}).at("AAPL") == d0);  // other timeframes untouched
+  CHECK(lake.read(Timeframe::Hour, {"AAPL"}, d0, d0 + 86400)["AAPL"].size() == 1);
+}

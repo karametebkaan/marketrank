@@ -168,4 +168,5 @@ TEST_CASE("a corrupt lake file does not abort a load") {
   test::write_file(part / "part-x.parquet", "this is not parquet");
   BarStore s2(dir);
   CHECK_NOTHROW(s2.load_range({"A"}, Timeframe::Day, 0, 2000000000));
+  CHECK(s2.bars("A", Timeframe::Day).size() == 1);  // the valid file still loads
 }
