@@ -404,10 +404,37 @@ TEST_CASE("liquidity floor is causal: a node is inactive until its median clears
     INFO("t = " << t);
     CHECK(f.active[0] == (t >= 29));
   }
-  // The same data, truncated: frames before the jump do not change when later bars differ.
+  // Frames before the jump do not depend on what happens after it.
   Panel q = liquidity_panel(40, 5, 1e4, 1e4, 20);
-  CorePipeline pipe2(q.N(), CoreParams{});
-  for (std::size_t t = 1; t < 30; ++t) CHECK_FALSE(pipe2.step(q, t).active[0]);
+  CorePipeline pa(p.N(), CoreParams{}), pb(q.N(), CoreParams{});
+  for (std::size_t t = 1; t < 20; ++t) {
+    const Frame fa = pa.step(p, t), fb = pb.step(q, t);
+    INFO("t = " << t);
+    CHECK(fa.active == fb.active);
+    CHECK(test::same_values(fa.pi, fb.pi));
+    CHECK(test::same_values(fa.h, fb.h));
+  }
+}
+
+TEST_CASE("a node below the liquidity floor leaves the active nodes' frame untouched") {
+  const std::size_t T = 30;
+  Panel base = liquidity_panel(T, 5, 1e8, 1e8, 1000);
+  Panel ext = liquidity_panel(T, 6, 1e8, 1e8, 1000);
+  // Node 5: ~1e4 dollars per bar, large volatile returns.
+  for (std::size_t t = 0; t < T; ++t) {
+    const double c = 10.0 * (1.0 + 0.3 * ((t % 2) ? 1.0 : -1.0)) + static_cast<double>(t % 3);
+    ext.close[ext.idx(t, 5)] = c;
+    ext.vwap[ext.idx(t, 5)] = c;
+    ext.volume[ext.idx(t, 5)] = 1e4 / c;
+  }
+  CorePipeline pa(base.N(), CoreParams{}), pb(ext.N(), CoreParams{});
+  for (std::size_t t = 1; t < T; ++t) {
+    const Frame fa = pa.step(base, t), fb = pb.step(ext, t);
+    INFO("t = " << t);
+    CHECK_FALSE(fb.active[5]);
+    CHECK(test::same_values(fa.pi, std::vector<double>(fb.pi.begin(), fb.pi.begin() + 5)));
+    CHECK(test::same_values(fa.h, std::vector<double>(fb.h.begin(), fb.h.begin() + 5)));
+  }
 }
 
 TEST_CASE("validate rejects bad liquidity floor and volume cap") {

@@ -131,7 +131,7 @@ Frame CorePipeline::step(const Panel& panel, std::size_t t) {
     volume[i] = panel.volume[panel.idx(t, i)];
     vwap[i] = panel.vwap[panel.idx(t, i)];
   }
-  const std::vector<double> pressure = pressure_.step(returns, volume, vwap);
+  std::vector<double> pressure = pressure_.step(returns, volume, vwap);
 
   // Active mask: traded within stale_bars AND above the liquidity floor. The floor uses the
   // trailing median dollar volume computed after the step, so it covers bars up to and including
@@ -147,6 +147,10 @@ Frame CorePipeline::step(const Panel& panel, std::size_t t) {
     if (active[i]) map[i] = n_active++;
   }
   if (n_active == 0) throw std::runtime_error("no nodes with data");
+  // Inactive nodes (stale or below the floor) must not take part in the flux at all: no sink slots,
+  // no outflow shares, no row/column totals.
+  for (std::size_t i = 0; i < n_; ++i)
+    if (!active[i]) pressure[i] = 0.0;
   // Affinity from the window before this bar: bar t's own return must not lower the correlation
   // of today's opposite-sign movers. The flux is built before the push, so `unit` stays valid.
   std::span<const double> unit;
