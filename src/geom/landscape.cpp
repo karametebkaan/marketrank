@@ -66,7 +66,7 @@ LandscapeFrame LandscapeBuilder::build(const Frame& f) {
   if (f.h.size() != n_ || f.pi.size() != n_ || f.P.n != n_ ||
       (!f.forecasts.empty() && f.forecasts.front().score.size() != n_))
     throw std::invalid_argument("LandscapeBuilder: frame vector sizes mismatch");
-  xy_ = embed_.positions(f.P, f.active);
+  xy_ = embed_.positions(f);
   std::size_t n_active = 0;
   double minx = 1e300, maxx = -1e300, miny = 1e300, maxy = -1e300;
   for (std::size_t i = 0; i < n_; ++i) {

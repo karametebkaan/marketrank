@@ -140,13 +140,12 @@ The report gives the shocked nodes' Δh and Δπ, the top-N receivers and losers
 
 Built per frame from the active nodes (about 6,000 at N = 10,000 under the $1M floor). Nothing is O(N²) or O(N³).
 
-1. **Solve-based placement (money-destination embedding; user decision 2026-10-01).** Neighbourhoods reflect how the *solved chain* treats stocks, not direct graph adjacency.
-   - P_off is P with self-loops removed and rows renormalized; rows without off-diagonal edges are zero.
-   - A stock's destination signature is row i of P_offᵏ (k = 4): where a dollar leaving it ends up after k hops.
-   - It is computed as Y = P_offᵏ·G, with G a fixed, seeded N×16 Gaussian projection (stable per node), using k sparse row-gather products, parallel per row.
-   - Positions are the top-2 principal components of the centered signatures over active nodes. The 16×16 covariance is accumulated serially, and the components come from deterministic power iteration with deflation.
+1. **Solve-based placement (placement by solver outputs; user decision 2026-10-02).** Neighbours are stocks with similar solve results, so the landscape reads as terrain.
+   - Per active stock, the feature vector is: signed-log hotness h, log π, and the signed-log score of each forecast horizon.
+   - Each feature column is robust-standardized over active rows, (x − median) / (1.4826·MAD), clipped to ±4. A degenerate column (MAD 0 or non-finite) becomes 0, as do non-finite entries.
+   - Positions are the top-2 principal components of the centered features over active nodes, scaled to unit RMS radius. The covariance is accumulated serially and the components come from deterministic power iteration with deflation.
    - Each frame is aligned to the previous one by orthogonal Procrustes (rotation, plus reflection if it fits better), then smoothed 50/50 with the previous positions.
-   - Stocks that send money to the same destinations end up adjacent even when no edge joins them.
+   - This replaces the earlier money-destination embedding of P_offᵏ, whose neighbouring-vertex hotness correlation on real data was 0.04.
 2. **Lattice snap (recursive coordinate bisection).**
    - The lattice is cols = ⌈√N_active⌉ by rows = ⌈N_active/cols⌉.
    - Active nodes are sorted by x (ties broken by index) into column bands of `rows` nodes, and each band is sorted by y. A node's cell is (band, rank). This is O(N log N), one node per cell, and it preserves locality.

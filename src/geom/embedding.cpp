@@ -2,27 +2,13 @@
 
 #include <algorithm>
 #include <cmath>
+#include <stdexcept>
+
+#include "geom/landscape.hpp"
 
 namespace fx {
 
 namespace {
-
-std::uint64_t splitmix64(std::uint64_t& s) {
-  std::uint64_t z = (s += 0x9E3779B97F4A7C15ULL);
-  z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
-  z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
-  return z ^ (z >> 31);
-}
-
-// Standard normal that depends only on (seed, i, d).
-double gauss(std::uint64_t seed, std::size_t i, std::size_t d) {
-  std::uint64_t s = seed ^ (static_cast<std::uint64_t>(i) * 0x9E3779B97F4A7C15ULL) ^
-                    (static_cast<std::uint64_t>(d) * 0xBF58476D1CE4E5B9ULL);
-  const double inv = 1.0 / 9007199254740992.0;  // 2^-53
-  double u1 = static_cast<double>((splitmix64(s) >> 11) + 1) * inv;
-  double u2 = static_cast<double>((splitmix64(s) >> 11) + 1) * inv;
-  return std::sqrt(-2.0 * std::log(u1)) * std::cos(6.283185307179586 * u2);
-}
 
 // Power iteration on the symmetric dims x dims matrix C. `against` (optional) is orthogonalized out of the start.
 std::vector<double> top_eigenvector(const std::vector<double>& C, std::size_t dims, const std::vector<double>* against,
@@ -82,49 +68,43 @@ Fit best_rotation(const double M[2][2], bool flip) {
 
 }  // namespace
 
-std::vector<double> destination_signatures(const Csr& P, const std::vector<bool>& active, const EmbeddingParams& p) {
-  const std::size_t n = P.n, D = static_cast<std::size_t>(p.dims);
-  std::vector<double> Y(n * D, 0.0), Z(n * D, 0.0);
-  for (std::size_t i = 0; i < n; ++i) {
-    if (!active[i]) continue;
-    for (std::size_t d = 0; d < D; ++d) Y[i * D + d] = gauss(p.seed, i, d);
-  }
-  // P_off row i: off-diagonal active columns, renormalized; absorbing when nothing remains.
-  std::vector<double> inv(n, 0.0);
-  std::vector<char> absorbing(n, 0);
-  for (std::size_t i = 0; i < n; ++i) {
-    if (!active[i]) continue;
-    double s = 0;
-    bool finite = true;
-    for (std::size_t e = P.row_ptr[i]; e < P.row_ptr[i + 1]; ++e) {
-      if (!std::isfinite(P.val[e])) finite = false;
-      std::uint32_t j = P.col[e];
-      if (j != i && active[j]) s += P.val[e];
-    }
-    if (finite && s > 0 && std::isfinite(s))
-      inv[i] = 1.0 / s;
-    else
-      absorbing[i] = 1;
-  }
-  for (int step = 0; step < p.steps; ++step) {
-#pragma omp parallel for schedule(static)
+std::vector<double> solve_features(const Frame& f, const EmbeddingParams& p, std::size_t& dims_out) {
+  const std::size_t n = f.active.size();
+  if (f.h.size() != n || f.pi.size() != n) throw std::invalid_argument("solve_features: h/pi size mismatch");
+  for (const auto& fc : f.forecasts)
+    if (fc.score.size() != n) throw std::invalid_argument("solve_features: forecast score size mismatch");
+  const std::size_t F = 2 + f.forecasts.size();
+  dims_out = F;
+  std::vector<double> Y(n * F, 0.0), col(n), tmp;
+  for (std::size_t d = 0; d < F; ++d) {
     for (std::size_t i = 0; i < n; ++i) {
-      double* z = &Z[i * D];
-      if (!active[i]) continue;  // stays zero
-      if (absorbing[i]) {
-        for (std::size_t d = 0; d < D; ++d) z[d] = Y[i * D + d];
-        continue;
-      }
-      for (std::size_t d = 0; d < D; ++d) z[d] = 0.0;
-      for (std::size_t e = P.row_ptr[i]; e < P.row_ptr[i + 1]; ++e) {
-        std::uint32_t j = P.col[e];
-        if (j == i || !active[j]) continue;
-        const double w = P.val[e] * inv[i];
-        const double* y = &Y[static_cast<std::size_t>(j) * D];
-        for (std::size_t d = 0; d < D; ++d) z[d] += w * y[d];
-      }
+      if (d == 0)
+        col[i] = display_height(f.h[i], HeightMode::SignedLog);
+      else if (d == 1)
+        col[i] = std::log(f.pi[i]);
+      else
+        col[i] = display_height(f.forecasts[d - 2].score[i], HeightMode::SignedLog);
     }
-    Y.swap(Z);
+    tmp.clear();
+    for (std::size_t i = 0; i < n; ++i)
+      if (f.active[i] && std::isfinite(col[i])) tmp.push_back(col[i]);
+    if (tmp.empty()) continue;
+    auto median = [](std::vector<double>& v) {
+      const std::size_t m = v.size() / 2;
+      std::nth_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(m), v.end());
+      double hi = v[m];
+      if (v.size() % 2) return hi;
+      double lo = *std::max_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(m));
+      return 0.5 * (lo + hi);
+    };
+    const double med = median(tmp);
+    for (double& v : tmp) v = std::fabs(v - med);
+    const double mad = 1.4826 * median(tmp);
+    if (!(mad > 0) || !std::isfinite(mad)) continue;  // degenerate column stays 0
+    for (std::size_t i = 0; i < n; ++i) {
+      if (!f.active[i] || !std::isfinite(col[i])) continue;
+      Y[i * F + d] = std::clamp((col[i] - med) / mad, -p.clip, p.clip);
+    }
   }
   return Y;
 }
@@ -209,8 +189,12 @@ void align_to(std::vector<double>& xy, const std::vector<double>& prev, const st
 SolveEmbedding::SolveEmbedding(std::size_t n, EmbeddingParams p)
     : n_(n), p_(p), prev_(2 * n, 0.0), prev_active_(n, false) {}
 
-const std::vector<double>& SolveEmbedding::positions(const Csr& P, const std::vector<bool>& active) {
-  std::vector<double> next = pca2(destination_signatures(P, active, p_), static_cast<std::size_t>(p_.dims), active);
+const std::vector<double>& SolveEmbedding::positions(const Frame& f) {
+  if (f.active.size() != n_) throw std::invalid_argument("SolveEmbedding: frame size mismatch");
+  const std::vector<bool>& active = f.active;
+  std::size_t F = 0;
+  std::vector<double> Y = solve_features(f, p_, F);
+  std::vector<double> next = pca2(Y, F, active);
   if (have_prev_) {
     std::vector<bool> both(n_, false);
     for (std::size_t i = 0; i < n_; ++i) both[i] = active[i] && prev_active_[i];
