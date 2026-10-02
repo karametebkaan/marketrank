@@ -27,6 +27,7 @@ struct CliArgs {
   bool migrate_cache = false;
   std::filesystem::path migrate_from = "data/cache";
   bool maintain = false;
+  bool refetch_full = false;  // alpaca only: refetch every ticker's full stored history once
   std::vector<std::pair<std::string, double>> shocks;  // --shock TICKER:SIZE, repeatable
   bool help = false;
   CoreParams params;

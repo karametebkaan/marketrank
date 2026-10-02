@@ -133,3 +133,11 @@ TEST_CASE("malformed --shock values throw") {
   CHECK_THROWS_AS(parse_cli({"--shock", "NVDA:inf"}), std::invalid_argument);
   CHECK_THROWS_AS(parse_cli({"--shock", "NVDA:-inf"}), std::invalid_argument);
 }
+
+TEST_CASE("--refetch-full is a sync-only flag") {
+  CHECK_FALSE(parse_cli({"--mode", "alpaca"}).refetch_full);
+  CHECK(parse_cli({"--mode", "alpaca", "--refetch-full"}).refetch_full);
+  CHECK_THROWS_AS(parse_cli({"--mode", "replay", "--refetch-full"}), std::invalid_argument);
+  CHECK_THROWS_AS(parse_cli({"--refetch-full"}), std::invalid_argument);
+  CHECK(cli_usage().find("--refetch-full") != std::string::npos);
+}

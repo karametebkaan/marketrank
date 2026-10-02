@@ -46,6 +46,8 @@ class Lake {
                                                TimePoint start, TimePoint end);
   std::map<std::string, TimePoint> coverage(Timeframe tf, const std::vector<std::string>& tickers);
   std::map<std::string, TimePoint> complete(Timeframe tf, const std::vector<std::string>& tickers);
+  // Earliest stored bar time per ticker (over the whole lake, not a window).
+  std::map<std::string, TimePoint> first_times(Timeframe tf, const std::vector<std::string>& tickers);
   std::size_t compact(Timeframe tf, std::size_t max_files);
   std::size_t apply_retention(const RetentionPolicy& policy, TimePoint now);
   std::size_t file_count(Timeframe tf) const;

@@ -25,6 +25,7 @@ cp .env.example .env                                        # add Alpaca keys
 ./build/fluxscape --help                                    # all switches (--pressure, --lift, --k-in, ...)
 ./build/fluxscape --migrate-cache                           # one-time: import the old data/cache CSVs into data/lake
 ./build/fluxscape --maintain                                # compact partitions and apply data/lake/retention.json
+./build/fluxscape --mode alpaca --refetch-full             # one-time: refetch every ticker's full stored history (repairs old split/dividend bases)
 python3 scripts/fetch_sp500.py                              # refresh the S&P 500 list
 ```
 

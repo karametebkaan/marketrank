@@ -554,3 +554,72 @@ TEST_CASE("a failed re-adjustment refetch leaves the data untouched and is retri
   }
   CHECK(mixed_basis(store) == 0);
 }
+
+TEST_CASE("refetch_full replaces all stored history and leaves a failing ticker untouched") {
+  auto dir = test::temp_dir("refetch_full");
+  const TimePoint day = 86400, d1 = utc_seconds(2026, 9, 1, 4);  // Tue 09-01 .. Fri 09-04, Tue 09-08
+  const std::vector<TimePoint> days = {d1, d1 + day, d1 + 2 * day, d1 + 3 * day, d1 + 7 * day};
+  {
+    BarStore s(dir);
+    std::vector<Bar> a, b;
+    for (std::size_t k = 0; k < days.size(); ++k) {
+      const double c = 10.0 + static_cast<double>(k);
+      a.push_back({days[k], c, c, c, c, 1, c});
+      if (k > 0) b.push_back({days[k], 2 * c, 2 * c, 2 * c, 2 * c, 1, 2 * c});  // own refetch group
+    }
+    s.merge("AAPL", Timeframe::Day, a);
+    s.merge("BAD", Timeframe::Day, b);
+    s.save("AAPL", Timeframe::Day);
+    s.save("BAD", Timeframe::Day);
+    s.flush();
+  }
+  // Vendor: AAPL's history was revised mid-way (09-02 close 99); BAD always fails.
+  std::vector<std::string> paths;
+  auto vendor = [&](const std::string& path) -> HttpResponse {
+    paths.push_back(path);
+    if (path.find("BAD") != std::string::npos) return {500, "down"};
+    const TimePoint s = SplitVendor::param(path, "start"), e = SplitVendor::param(path, "end");
+    std::string out = R"({"bars":{"AAPL":[)";
+    bool first = true;
+    for (std::size_t k = 0; k < days.size(); ++k) {
+      if (days[k] < s || days[k] > e) continue;
+      const double c = days[k] == d1 + day ? 99.0 : 10.0 + static_cast<double>(k);
+      const std::string cs = std::to_string(c);
+      out += std::string(first ? "" : ",") + R"({"t":")" + format_rfc3339(days[k]) + R"(","o":)" + cs +
+             R"(,"h":)" + cs + R"(,"l":)" + cs + R"(,"c":)" + cs + R"(,"v":1,"vw":)" + cs + "}";
+      first = false;
+    }
+    return {200, out + "]}}"};
+  };
+  const TimePoint end = utc_seconds(2026, 9, 9);
+  {
+    BarStore store(dir);
+    store.load_range({"AAPL", "BAD"}, Timeframe::Day, d1 + 2 * day, end);  // window misses 09-01/09-02
+    AlpacaClient client(no_retry_config(), vendor);
+    const auto stale =
+        sync_bars(client, store, {"AAPL", "BAD"}, Timeframe::Day, d1 + 2 * day, end, /*refetch_all=*/true);
+    CHECK(stale == std::vector<std::string>{"BAD"});
+    bool from_first = false;
+    for (const auto& p : paths)
+      from_first = from_first || (p.find("symbols=AAPL&") != std::string::npos &&
+                                  p.find("start=2026-09-01T04:00:00Z") != std::string::npos);
+    CHECK(from_first);  // from the lake's first stored bar, not the window start
+  }
+  {
+    BarStore reload(dir);
+    reload.load_all({"AAPL", "BAD"}, Timeframe::Day);
+    const auto& a = reload.bars("AAPL", Timeframe::Day);
+    REQUIRE(a.size() == days.size());
+    CHECK(a[1].c == 99.0);  // the mid-history change is replaced
+    CHECK(a[0].c == 10.0);
+    const auto& b = reload.bars("BAD", Timeframe::Day);
+    REQUIRE(b.size() == days.size() - 1);
+    for (std::size_t k = 0; k < b.size(); ++k) CHECK(b[k].c == 2 * (11.0 + static_cast<double>(k)));  // untouched
+    // A normal sync afterwards is a plain tail fetch again.
+    paths.clear();
+    AlpacaClient client(no_retry_config(), vendor);
+    sync_bars(client, reload, {"AAPL"}, Timeframe::Day, d1, end);
+    REQUIRE(paths.size() == 1);
+    CHECK(paths[0].find("start=2026-09-08T04:00:00Z") != std::string::npos);
+  }
+}

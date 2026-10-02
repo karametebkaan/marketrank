@@ -295,10 +295,11 @@ int main(int argc, char** argv) {
       store.load_range(universe.price_tickers(), args.tf, window_start, end);
       if (client) {
         const fx::TimePoint start = window_start;
-        std::cerr << "syncing " << universe.price_tickers().size() << " tickers ("
-                  << fx::to_string(args.tf) << ") from " << fx::format_rfc3339(start) << "...\n";
-        const auto stale =
-            fx::sync_bars(*client, store, universe.price_tickers(), args.tf, start, end);
+        std::cerr << (args.refetch_full ? "refetching full history of " : "syncing ")
+                  << universe.price_tickers().size() << " tickers (" << fx::to_string(args.tf) << ") from "
+                  << fx::format_rfc3339(start) << " (or earlier stored history)...\n";
+        const auto stale = fx::sync_bars(*client, store, universe.price_tickers(), args.tf, start, end,
+                                         args.refetch_full);
         if (!stale.empty()) std::cerr << stale.size() << " stale tickers\n";
         store.flush();
         maintain_lake(store, args.data, args.lookback_days, args.tf);

@@ -78,6 +78,7 @@ CliArgs parse_cli(const std::vector<std::string>& args) {
       a.migrate_cache = true;
       if (i + 1 < args.size() && args[i + 1].rfind("--", 0) != 0) a.migrate_from = args[++i];
     } else if (flag == "--maintain") a.maintain = true;
+    else if (flag == "--refetch-full") a.refetch_full = true;
     else if (flag == "--legacy" || flag == "--money-flow") continue;
     else if (flag == "--pressure") a.params.pressure = parse_pressure_mode(value());
     else if (flag == "--lift") a.params.transition.lift = parse_lift_mode(value());
@@ -96,6 +97,7 @@ CliArgs parse_cli(const std::vector<std::string>& args) {
   }
   if (a.mode != "synthetic" && a.mode != "replay" && a.mode != "alpaca")
     throw std::invalid_argument("--mode must be synthetic, replay or alpaca");
+  if (a.refetch_full && a.mode != "alpaca") throw std::invalid_argument("--refetch-full needs --mode alpaca");
   if (a.lookback_days < 0)
     a.lookback_days = a.tf == Timeframe::Hour ? 60 : a.tf == Timeframe::Day ? 365 : 5 * 365;
   a.params.validate();
@@ -119,7 +121,9 @@ std::string cli_usage() {
          "                 [--lambda X] [--min-dollar-volume X] [--max-volume-ratio X]\n"
          "                 [--vol-scale] [--vol-window N]\n"
          "                 [--shock TICKER:SIZE ...]   (extra SIZE% return at normal volume on the last bar)\n"
-         "                 [--migrate-cache [DIR]] [--maintain]\n";
+         "                 [--migrate-cache [DIR]] [--maintain]\n"
+         "                 [--refetch-full]   (alpaca: one-time refetch of every ticker's full stored history,\n"
+         "                                   replacing old-basis bars; failed tickers stay untouched)\n";
 }
 
 std::string describe(const CoreParams& p) {

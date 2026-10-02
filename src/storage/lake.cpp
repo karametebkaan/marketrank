@@ -377,6 +377,19 @@ std::map<std::string, TimePoint> Lake::complete(Timeframe tf, const std::vector<
   return out;
 }
 
+std::map<std::string, TimePoint> Lake::first_times(Timeframe tf, const std::vector<std::string>& tickers) {
+  std::map<std::string, TimePoint> out;
+  auto& I = *impl_;
+  const fs::path dir = I.root / "bars" / tf_dir_name(tf);
+  if (tickers.empty() || !has_parquet(dir)) return out;
+  I.set_want(tickers);
+  auto r = I.q("SELECT ticker, min(t) FROM read_parquet(" + sql_str((dir / "*" / "*" / "*.parquet").string()) +
+               ", hive_partitioning = true) WHERE ticker IN (SELECT ticker FROM want) GROUP BY ticker");
+  for (std::size_t i = 0; i < r->RowCount(); ++i)
+    out[r->GetValue(0, i).ToString()] = r->GetValue(1, i).GetValue<int64_t>();
+  return out;
+}
+
 std::size_t Lake::compact(Timeframe tf, std::size_t max_files) {
   auto& I = *impl_;
   const fs::path dir = I.root / "bars" / tf_dir_name(tf);

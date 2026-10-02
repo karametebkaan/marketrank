@@ -96,10 +96,19 @@ void fetch_into(AlpacaClient& client, BarStore& store, const std::vector<std::st
 // through end, grouped by that start. The newer seq wins in the lake.
 void refetch_full(AlpacaClient& client, BarStore& store, const std::set<std::string>& tickers, Timeframe tf,
                   TimePoint start, TimePoint end, std::set<std::string>& stale) {
+  if (tickers.empty()) return;
+  // The in-memory series may be a window; the lake knows the first bar ever stored.
+  std::map<std::string, TimePoint> lake_first;
+  try {
+    lake_first = store.lake().first_times(tf, std::vector<std::string>(tickers.begin(), tickers.end()));
+  } catch (const std::exception& e) {
+    std::cerr << "sync: cannot read first stored times: " << e.what() << "\n";
+  }
   std::map<TimePoint, std::vector<std::string>> by_from;
   for (const auto& t : tickers) {
     TimePoint from = start;
     if (const auto first = store.first_time(t, tf)) from = std::min(from, *first);
+    if (auto it = lake_first.find(t); it != lake_first.end()) from = std::min(from, it->second);
     if (const auto cov = store.covered_from(t, tf)) from = std::min(from, *cov);
     by_from[from].push_back(t);
   }
@@ -111,8 +120,12 @@ void refetch_full(AlpacaClient& client, BarStore& store, const std::set<std::str
 
 std::vector<std::string> sync_bars(AlpacaClient& client, BarStore& store,
                                    const std::vector<std::string>& tickers, Timeframe tf,
-                                   TimePoint start, TimePoint end) {
+                                   TimePoint start, TimePoint end, bool refetch_all) {
   std::set<std::string> stale;
+  if (refetch_all) {
+    refetch_full(client, store, std::set<std::string>(tickers.begin(), tickers.end()), tf, start, end, stale);
+    return {stale.begin(), stale.end()};
+  }
   // 1. Back-fill history missing before the first cached bar (one group, up to the latest first bar).
   std::vector<std::string> backfill;
   TimePoint backfill_to = start;
