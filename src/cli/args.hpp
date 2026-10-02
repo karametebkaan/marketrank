@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "core/types.hpp"
@@ -29,6 +30,10 @@ struct CliArgs {
   bool help = false;
   CoreParams params;
 };
+
+// Time range of bars to load and analyse: everything for synthetic (fixed historical dates),
+// [now - lookback, now - 16 min] for alpaca (free-tier delay), [now - lookback, now] for replay.
+std::pair<TimePoint, TimePoint> data_window(const CliArgs& args, TimePoint now);
 
 CliArgs parse_cli(const std::vector<std::string>& args);
 std::string cli_usage();

@@ -1,6 +1,7 @@
 #include "cli/args.hpp"
 
 #include <algorithm>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 
@@ -80,6 +81,13 @@ CliArgs parse_cli(const std::vector<std::string>& args) {
     a.lookback_days = a.tf == Timeframe::Hour ? 60 : a.tf == Timeframe::Day ? 365 : 5 * 365;
   a.params.validate();
   return a;
+}
+
+std::pair<TimePoint, TimePoint> data_window(const CliArgs& args, TimePoint now) {
+  if (args.mode == "synthetic")
+    return {std::numeric_limits<TimePoint>::min(), std::numeric_limits<TimePoint>::max()};
+  const TimePoint end = args.mode == "alpaca" ? now - 16 * 60 : now;
+  return {end - static_cast<TimePoint>(args.lookback_days) * 86400, end};
 }
 
 std::string cli_usage() {

@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -68,4 +69,17 @@ TEST_CASE("storage flags") {
   CliArgs b = parse_cli({"--migrate-cache", "/tmp/old", "--maintain"});
   CHECK(b.migrate_from == "/tmp/old");
   CHECK(b.maintain);
+}
+
+TEST_CASE("data_window: full range for synthetic, lookback window for replay and alpaca") {
+  const TimePoint now = 1790812800;
+  const auto syn = data_window(parse_cli({"--mode", "synthetic"}), now);
+  CHECK(syn.first == std::numeric_limits<TimePoint>::min());
+  CHECK(syn.second == std::numeric_limits<TimePoint>::max());
+  const auto rep = data_window(parse_cli({"--mode", "replay", "--lookback-days", "10"}), now);
+  CHECK(rep.second == now);
+  CHECK(rep.first == now - 10 * 86400);
+  const auto alp = data_window(parse_cli({"--mode", "alpaca", "--lookback-days", "10"}), now);
+  CHECK(alp.second == now - 16 * 60);
+  CHECK(alp.first == alp.second - 10 * 86400);
 }

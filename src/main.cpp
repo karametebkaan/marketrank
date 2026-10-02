@@ -205,19 +205,11 @@ int main(int argc, char** argv) {
     }
     if (args.maintain) {
       fx::BarStore lake_store(args.data / "lake");
-      const auto policy = fx::RetentionPolicy::load(args.data / "lake" / "retention.json");
-      std::size_t compacted = 0;
-      for (auto tf : {fx::Timeframe::Hour, fx::Timeframe::Day, fx::Timeframe::Week})
-        compacted += lake_store.lake().compact(tf, 8);
-      const auto removed = lake_store.lake().apply_retention(policy, now_utc());
-      std::cout << "compacted " << compacted << " partitions, removed " << removed
-                << " expired partitions\n";
+      maintain_lake(lake_store, args.data, args.lookback_days, args.tf);
       return 0;
     }
     fx::BarStore store(args.data / "lake");
-    const bool live = args.mode == "alpaca";
-    const fx::TimePoint end = live ? now_utc() - 16 * 60 : now_utc();
-    const fx::TimePoint window_start = end - static_cast<fx::TimePoint>(args.lookback_days) * 86400;
+    const auto [window_start, end] = fx::data_window(args, now_utc());
     fx::Universe universe;
     std::optional<fx::PortfolioSpec> portfolio;
 
