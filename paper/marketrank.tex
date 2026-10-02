@@ -51,7 +51,7 @@
 
 \begin{frontmatter}
 
-\title{MarketRank: a PageRank of estimated stock-to-stock money flows, with a topological landscape view}
+\title{MarketRank: ranking stocks by the stationary probabilities of a Markov chain over estimated money flows, with a topological landscape view}
 
 \author{B. Kaan Karamete\corref{cc}}
 
@@ -59,11 +59,11 @@
 \address{Graph AI LLC}
 
 \begin{abstract}
-We present \MR, a ranking of stocks by the stationary distribution of a damped Markov chain whose transitions are the out-shares of stock-to-stock dollar flows, in the way PageRank ranks web pages by the out-shares of their links. A stock's rank satisfies the \emph{MarketRank Condition} $r_i=(1-p)\sum_{j}r_j\,T_{j\to i}/\sum_k T_{j\to k}+p/N$ with damping $p=0.15$. Paired transactions between stocks are not public, so the flow matrix $T$ is \emph{estimated} from public daily bars: each bar's signed dollar pressure splits net sellers' outflow over net buyers with a correlation-tilted gravity model, the result is accumulated over the data window and pruned to a sparse graph. The engine is written in C++20 with OpenMP, gives bit-identical results for any thread count, and ranks a liquidity-ranked universe of 10,000 US tickers (about 6,200 active) from a DuckDB-catalogued Parquet lake. A 3D view, \FS, turns each frame into a landscape: flux communities from a deterministic, warm-started Louvain become territories, ordered by spectral bisection along a generalized Hilbert curve, filled centre-out on a spiral, interpolated by inverse-distance weighting, smoothed by a centroidal-Voronoi-style relaxation and Gouraud-shaded. On real data the top of the ranking is the large-cap semiconductor and technology complex (MU, SNDK, NVDA, TSLA, \dots), the landscape is stable between frames (median cell jump 0), and the flows show sector structure, but the evaluated scores have no material predictive information coefficient for next-day returns. We state these limits plainly and outline calibration against observed account-level pairings from SEC Form 13F.
+We present \MR, a Markov-chain transition-probability solver for the stock market. Its states are stocks, its transition probabilities are the out-shares of estimated stock-to-stock dollar flows, and a stock's MarketRank score is the chain's stationary probability $\pi_i$, computed by damped power iteration. The stationary condition of the damped chain is the \emph{MarketRank Condition} $r_i=(1-p)\sum_{j}r_j\,T_{j\to i}/\sum_k T_{j\to k}+p/N$, with damping $p=0.15$; PageRank is the best-known instance of the same construction, applied to hyperlinks. Paired transactions between stocks are not public, so the flow matrix $T$ is \emph{estimated} from public daily bars. Each bar's signed dollar pressure splits net sellers' outflow over net buyers by a correlation-tilted gravity model, and the result is accumulated over the data window and pruned to a sparse graph. The engine is written in C++20 with OpenMP and gives bit-identical results for any thread count. It ranks a liquidity-ranked universe of 10,000 US tickers (about 6,200 active) from a DuckDB-catalogued Parquet lake. A 3D view, \FS, turns each frame into a landscape. Flux communities from a deterministic, warm-started Louvain become territories, which are ordered by spectral bisection along a generalized Hilbert curve and filled centre-out on a spiral. The surface is interpolated by inverse-distance weighting, smoothed by a centroidal-Voronoi-style relaxation and Gouraud-shaded. On real data the top of the ranking is the large-cap semiconductor and technology complex (MU, SNDK, NVDA, TSLA, \dots), and the landscape is stable between frames (median cell jump 0). The flows show sector structure, but the evaluated scores have no material predictive information coefficient for next-day returns. We state these limits plainly and outline calibration against observed account-level pairings from SEC Form 13F.
 \end{abstract}
 
 \begin{keyword}
-\it PageRank, Markov chains, money flow, origin--destination estimation, community detection, spectral ordering, scattered-data interpolation
+\it Markov chains, stationary distribution, transition probabilities, PageRank, money flow, origin--destination estimation, community detection, spectral ordering, scattered-data interpolation
 \end{keyword}
 
 \end{frontmatter}
@@ -74,7 +74,7 @@ We present \MR, a ranking of stocks by the stationary distribution of a damped M
 
 Every trading day, dollars leave some stocks and enter others. A portfolio manager who trims one position and adds to another, an index rebalance, or a sector rotation each move money \emph{from} one name \emph{to} another. If those pairings were visible, the market would be a directed, weighted graph of money flows, and a natural question would be where money \emph{concentrates} in steady state, and how that concentration \emph{rotates} from day to day.
 
-PageRank~\cite{brinpage,pagerank} answers the same question for the web: a page is important if important pages link to it, each page dividing its importance among its out-links. \MR\ transplants that construction to money. Let $T_{j\to i}\ge 0$ be the dollars that moved from selling stock $j$ into buying stock $i$ over a window. Each stock passes its rank on in proportion to the out-share of its dollar flow, and with damping $p$ the ranks satisfy the \emph{MarketRank Condition} (MRC)
+A finite-state Markov chain~\cite{norris,kemenysnell} answers exactly this kind of question. If the states are stocks and the probability of moving from $j$ to $i$ is the share of $j$'s outflow that goes to $i$, then the chain's stationary distribution $\pi$ is the long-run fraction of money at each stock. \MR\ is a solver for that stationary distribution. Let $T_{j\to i}\ge 0$ be the dollars that moved from selling stock $j$ into buying stock $i$ over a window. The transition probability from $j$ to $i$ is the out-share $T_{j\to i}/\sum_k T_{j\to k}$. With damping $p$, the stationary condition of the damped chain is the \emph{MarketRank Condition} (MRC)
 \begin{equation}
 \begin{aligned}
 r_i&=(1-p)\sum_{j\in B(i)}P_i(r_j)+\frac{p}{N},\\
@@ -82,13 +82,13 @@ P_i(r_j)&=r_j\,\frac{T_{j\to i}}{\sum_k T_{j\to k}},
 \end{aligned}
 \label{eqn:mrc}
 \end{equation}
-where $B(i)$ is the set of stocks that send money to $i$, $N$ the number of active stocks and $p=0.15$. A stock ranks high when it receives a large share of what its senders give away, and when those senders themselves rank high. The rank is a property of the whole flow network, not of a stock's own volume.
+where $B(i)$ is the set of stocks that send money to $i$, $N$ the number of active stocks and $p=0.15$. Its solution $r=\pi$ is the MarketRank score. PageRank~\cite{brinpage,pagerank} is the best-known instance of the same construction: a damped chain whose transition probabilities are the out-shares of hyperlinks. MarketRank is analogous, with dollars in place of links. A stock ranks high when it receives a large share of what its senders give away, and when those senders themselves rank high. The rank is a property of the whole flow network, not of a stock's own volume.
 
 The difficulty is that trades are anonymous: a tape shows that a stock traded, not which stock the buyer sold to fund it. \MR\ therefore \emph{estimates} $T$ from public bars, and is explicit that every downstream number inherits that estimate.
 
 \paragraph{Contributions}
 \begin{itemize}
-\item \textbf{The model:} the MRC~(\ref{eqn:mrc}) on a paired dollar-flow matrix, with dangling stocks handled by teleport, and a worked three-stock example reproduced by the test suite (Section~\ref{Section:model}).
+\item \textbf{The model:} a damped Markov chain over stocks whose transition probabilities are dollar out-shares. Its stationary distribution, defined by the MRC~(\ref{eqn:mrc}), is the score. Dangling stocks are handled by teleport. A worked three-stock example reproduced by the test suite (Section~\ref{Section:model}).
 \item \textbf{Flow estimation from public bars:} signed dollar pressure, a correlation-tilted gravity pairing with exact row and column totals in $O(NW)$, sparse candidate sinks, cumulative accumulation and two-sided pruning (Section~\ref{Section:flows}).
 \item \textbf{A scalable deterministic engine:} C++20 and OpenMP with bit-identical results across thread counts, a CSR matrix and its transpose, and a DuckDB catalogue over a Hive-partitioned Parquet lake fed from the Alpaca SIP feed, at 10,000 tickers (Section~\ref{Section:engine}).
 \item \textbf{The \FS\ landscape:} a deterministic pipeline from the flow graph to a stable, shaded 3D terrain (Section~\ref{Section:landscape}).
@@ -99,7 +99,16 @@ Section~\ref{Section:results} reports results on real data, including an evaluat
 \section{Related work}
 \label{Section:related}
 
-\paragraph{PageRank and Markov ranking} PageRank~\cite{brinpage,pagerank} ranks nodes by the stationary distribution of a random surfer who follows out-links with probability $1-p$ and teleports with probability $p$; dangling pages are usually redistributed uniformly. \MR\ uses exactly this chain, with dollar out-shares in place of link out-shares. The author's earlier work applied Markov-chain probabilities to map matching of vehicle GPS trips~\cite{kineticamapmatching} and to graph analytics at scale in Kinetica-Graph~\cite{kineticagraph}, whose PageRank and probability-rank solvers use the same mathematics; the \MR\ solver here is native C++ with no database dependency.
+\paragraph{Markov chains and stationary distributions} An irreducible, aperiodic finite Markov chain has a unique stationary distribution $\pi=\pi P$, and power iteration converges to it~\cite{norris,kemenysnell}. Damping, that is mixing $P$ with a uniform jump of probability $p$, makes any chain irreducible and aperiodic, and the convergence rate is then at most $1-p$ per iteration. \MR\ is a solver for this stationary distribution, on a chain whose transition probabilities are estimated dollar out-shares.
+
+\paragraph{PageRank as an instance} PageRank~\cite{brinpage,pagerank} is the best-known application of the same transition-probability concept. A random surfer follows out-links with probability $1-p$ and teleports with probability $p$, and dangling pages are usually redistributed uniformly. \MR\ uses the same damped chain with dollar out-shares in place of link out-shares. Like PageRank, MarketRank is a Markov-chain ranking.
+
+\paragraph{The author's Markov-chain lineage} This work continues the author's earlier use of Markov-chain transition probabilities:
+\begin{itemize}
+\item an adaptive Markov chain for map matching of vehicle GPS trips~\cite{kineticamapmatching};
+\item the probability-rank and PageRank graph solvers of Kinetica-Graph~\cite{kineticagraph,kinetica}.
+\end{itemize}
+The \MR\ solver is native C++ with no database dependency.
 
 \paragraph{Money-flow indicators} Technical money-flow indicators combine price change and volume \emph{per stock}, so a stock's flow is a scalar with no counterparty. \MR\ keeps the same raw ingredients (return, volume, VWAP) but pairs sources with sinks, so that flow becomes an edge and the ranking a network property. Signed order-flow methods such as the Lee--Ready trade classification~\cite{leeready} sign trades from quotes; we treat them as future input (Section~\ref{Section:limits}).
 
@@ -117,13 +126,13 @@ Section~\ref{Section:results} reports results on real data, including an evaluat
 
 \paragraph{Paired flow matrix} For $N$ active stocks, $T\in\mathbb{R}_{\ge 0}^{N\times N}$ holds $T_{j\to i}$, the dollars that left $j$ (net selling) and entered $i$ (net buying) over the data window, with no diagonal. Section~\ref{Section:flows} describes how $T$ is estimated.
 
-\paragraph{Out-share functor} Row-normalizing $T$ gives the transition matrix $P_{j i}=T_{j\to i}/\sum_k T_{j\to k}$, and the functor $P_i(r_j)=r_j P_{ji}$ is the part of $j$'s rank that $j$ passes to $i$. Equation~(\ref{eqn:mrc}) is then the damped stationary equation $\pi=(1-p)\,\pi P+(p/N)\mathbf{1}$, so $r=\pi$ is PageRank on the money graph.
+\paragraph{Out-share functor} Row-normalizing $T$ gives the transition matrix $P_{j i}=T_{j\to i}/\sum_k T_{j\to k}$, and the functor $P_i(r_j)=r_j P_{ji}$ is the part of $j$'s rank that $j$ passes to $i$. $P$ is the transition matrix of a finite Markov chain on the stocks, and Equation~(\ref{eqn:mrc}) is the stationary condition $\pi=(1-p)\,\pi P+(p/N)\mathbf{1}$ of its damped version. The solution $r=\pi$ is the vector of stationary probabilities.
 
 \paragraph{Damping and dangling stocks} We use $p=0.15$ ($\alpha=1-p=0.85$), solved on the active sub-index. A stock with no kept outflow is a \emph{dangling} node: its row is empty, and its mass $d$ is spread uniformly, as in PageRank, so that
 \begin{equation}
 \pi'=\alpha\left(\pi P+\frac{d}{N}\mathbf{1}\right)+\frac{1-\alpha}{N}\mathbf{1}.
 \end{equation}
-Power iteration starts from the uniform vector (warm-started from the previous bar in the pipeline) and stops when $\lVert\Delta\pi\rVert_1<10^{-10}$ or after 1000 iterations. The \emph{MarketRank score} is $\pi_i N$ (1 = average), and the \emph{heartbeat} is its pulse $\Delta\log\pi_i$ between consecutive bars.
+Power iteration starts from the uniform vector (warm-started from the previous bar in the pipeline) and stops when $\lVert\Delta\pi\rVert_1<10^{-10}$ or after 1000 iterations. The \emph{MarketRank score} is $\pi_i N$ (1 = average), and the \emph{heartbeat} is the pulse of the score, $\Delta\log(\pi_i N)$ between consecutive bars. Using the score rather than $\pi_i$ removes the common-mode term $-\Delta\log N$ that a change in the number of active stocks adds to every $\log\pi_i$, so a stock whose score did not move reads 0.
 
 \paragraph{Worked example} Figure~\ref{Figure:abc} shows three stocks with six flows. Row-normalizing gives
 \[
@@ -274,23 +283,23 @@ Each lattice quad is split into two triangles with a fixed index buffer, so per 
 
 \begin{table}[t]
 \centering
-\caption{Top 10 by MarketRank score $\pi N$ (1 = average) on 2026-10-01, replay, 6,188 active stocks. $\Delta\log\pi$ is the heartbeat against the previous bar.}
+\caption{Top 10 by MarketRank score $\pi N$ (1 = average) on 2026-10-01, replay, 6,188 active stocks.}
 \label{Table:top}
 \small\setlength{\tabcolsep}{4pt}
-\begin{tabular}{rllrr}
+\begin{tabular}{rllr}
 \toprule
-\# & Ticker & Sector & $\pi N$ & $\Delta\log\pi$\\
+\# & Ticker & Sector & $\pi N$\\
 \midrule
-1 & MU & Inf.\ Technology & 387.43 & $+0.0075$\\
-2 & SNDK & Inf.\ Technology & 373.25 & $+0.0006$\\
-3 & NVDA & Inf.\ Technology & 245.87 & $-0.0005$\\
-4 & TSLA & Cons.\ Discretionary & 214.61 & $-0.0032$\\
-5 & SOXS & ETF/Fund & 203.70 & $-0.0022$\\
-6 & META & Comm.\ Services & 188.95 & $-0.0035$\\
-7 & MSFT & Inf.\ Technology & 157.76 & $-0.0019$\\
-8 & AAPL & Inf.\ Technology & 153.02 & $-0.0014$\\
-9 & AMD & Inf.\ Technology & 151.37 & $-0.0029$\\
-10 & INTC & Inf.\ Technology & 123.40 & $-0.0046$\\
+1 & MU & Inf.\ Technology & 387.43\\
+2 & SNDK & Inf.\ Technology & 373.25\\
+3 & NVDA & Inf.\ Technology & 245.87\\
+4 & TSLA & Cons.\ Discretionary & 214.61\\
+5 & SOXS & ETF/Fund & 203.70\\
+6 & META & Comm.\ Services & 188.95\\
+7 & MSFT & Inf.\ Technology & 157.76\\
+8 & AAPL & Inf.\ Technology & 153.02\\
+9 & AMD & Inf.\ Technology & 151.37\\
+10 & INTC & Inf.\ Technology & 123.40\\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -298,9 +307,10 @@ Each lattice quad is split into two triangles with a fixed index buffer, so per 
 \begin{figure*}[t]
 \centering
 \includegraphics[width=0.92\textwidth,keepaspectratio]{figs/fluxscape-cvt.png}
-\caption{\FS\ on real data, 2026-10-01, 6,188 active stocks, \MR\ preset, flux-community territories, IDW (power 2, radius 3, subdivision 1) and the CVT smoother (12 iterations, $\lambda=0.6$). Height here is $\log(\pi_i N)$. The table at the top right is the exact top 10 by $\pi N$ with sparklines of recent history; green rings are portfolio holdings.}
+\caption{\FS\ on real data, 2026-10-01, 6,188 active stocks, \MR\ preset, flux-community territories, IDW (power 2, radius 3, subdivision 1) and the CVT smoother (12 iterations, $\lambda=0.6$). Height here is $\log(\pi_i N)$. The table at the top right is the exact top 10 by $\pi N$ with sparklines of recent history; green rings are portfolio holdings. This screenshot predates the heartbeat redefinition: its pulse column shows $\Delta\log\pi$.}
 \label{Figure:landscape}
 \end{figure*}
+% TODO(fig-final): replace figs/fluxscape-cvt.png with the screenshot of the final UI (controller will supply it).
 % TODO(fig): add the README's graph-slice figure once docs/img/marketrank-slice.svg exists,
 % converted to PDF (e.g. figs/marketrank-slice.pdf); it does not exist yet.
 
@@ -369,7 +379,7 @@ The honest reading is as follows. \emph{Structure exists}: with dollar pressure,
 \section{Conclusion}
 \label{Section:conclusion}
 
-\MR\ applies the PageRank construction to money: a stock's rank is the share of the market's estimated dollar flow that settles on it in the steady state of a damped chain. The model is small enough to check by hand (the three-stock example) and the engine is fast and deterministic enough to rank 10,000 tickers bit-identically on any thread count. \FS\ makes the result legible as a stable landscape of flux communities. On real data the ranking puts the large-cap semiconductor and technology complex on top and the flow graph shows sector structure, but the evaluated scores have no material predictive power for next-day returns. The flows are inferred; calibrating them against observed pairings, starting with 13F holdings changes, is the most important next step.
+\MR\ is a Markov-chain transition-probability solver for money. A stock's score is its stationary probability: the share of the market's estimated dollar flow that settles on it in the steady state of a damped chain. PageRank is the best-known instance of the same idea. The model is small enough to check by hand (the three-stock example) and the engine is fast and deterministic enough to rank 10,000 tickers bit-identically on any thread count. \FS\ makes the result legible as a stable landscape of flux communities. On real data the ranking puts the large-cap semiconductor and technology complex on top and the flow graph shows sector structure, but the evaluated scores have no material predictive power for next-day returns. The flows are inferred; calibrating them against observed pairings, starting with 13F holdings changes, is the most important next step.
 
 \section*{Software availability}
 \MR\ is a C++20 program; the model, the evaluation harness and the \FS\ view described here are those of the current implementation.
