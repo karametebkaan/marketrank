@@ -91,6 +91,10 @@ json status_json(const FrameStore& s, const std::string& label) {
 
 }  // namespace
 
+bool is_loopback_host(const std::string& host) {
+  return host == "localhost" || host == "::1" || host == "[::1]" || host.rfind("127.", 0) == 0;
+}
+
 FluxServer::FluxServer(FrameStore& store, std::optional<PortfolioSpec> portfolio, std::string label)
     : store_(store), portfolio_(std::move(portfolio)), label_(std::move(label)) {
   routes();
@@ -102,7 +106,12 @@ int FluxServer::bind(const ServerOptions& opts) {
   const int port = opts.port == 0 ? svr_.bind_to_any_port(opts.host) : (svr_.bind_to_port(opts.host, opts.port) ? opts.port : -1);
   if (port < 0) throw std::runtime_error("cannot bind " + opts.host + ":" + std::to_string(opts.port));
   const std::string p = ":" + std::to_string(port);
-  allowed_origins_ = {"http://" + opts.host + p, "http://localhost" + p, "http://127.0.0.1" + p};
+  const std::string configured = opts.host.find(':') != std::string::npos && opts.host.front() != '[' ? "[" + opts.host + "]" : opts.host;
+  allowed_hosts_ = {"127.0.0.1" + p, "localhost" + p, "[::1]" + p};
+  if (std::find(allowed_hosts_.begin(), allowed_hosts_.end(), configured + p) == allowed_hosts_.end())
+    allowed_hosts_.push_back(configured + p);
+  allowed_origins_.clear();
+  for (const auto& h : allowed_hosts_) allowed_origins_.push_back("http://" + h);
   return port;
 }
 
@@ -127,8 +136,7 @@ void FluxServer::stop() {
 
 bool FluxServer::guard_post(const httplib::Request& req, httplib::Response& res) const {
   if (const auto origin = req.get_header_value("Origin"); !origin.empty()) {
-    const bool same_host = origin == "http://" + req.get_header_value("Host");
-    if (!same_host && std::find(allowed_origins_.begin(), allowed_origins_.end(), origin) == allowed_origins_.end()) {
+    if (std::find(allowed_origins_.begin(), allowed_origins_.end(), origin) == allowed_origins_.end()) {
       send_json(res, 403, {{"error", "cross-origin request refused"}});
       return false;
     }
@@ -143,6 +151,15 @@ bool FluxServer::guard_post(const httplib::Request& req, httplib::Response& res)
 
 void FluxServer::routes() {
   svr_.set_payload_max_length(64 * 1024);
+  // DNS rebinding: a page on evil.example rebound to 127.0.0.1 reaches us with Host evil.example:<port>. Every
+  // request (API and static files) must name this server by a loopback name or the configured --host.
+  svr_.set_pre_routing_handler([this](const httplib::Request& req, httplib::Response& res) {
+    const auto host = req.get_header_value("Host");
+    if (std::find(allowed_hosts_.begin(), allowed_hosts_.end(), host) != allowed_hosts_.end())
+      return httplib::Server::HandlerResponse::Unhandled;
+    send_json(res, 403, {{"error", "unexpected Host header"}});
+    return httplib::Server::HandlerResponse::Handled;
+  });
   svr_.set_exception_handler([](const httplib::Request&, httplib::Response& res, std::exception_ptr ep) {
     std::string what = "internal error";
     try {

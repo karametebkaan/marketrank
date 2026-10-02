@@ -13,6 +13,9 @@
 
 namespace fx {
 
+// Whether `host` names the loopback interface (127.0.0.0/8, localhost or ::1).
+bool is_loopback_host(const std::string& host);
+
 struct ServerOptions {
   std::string host = "127.0.0.1";
   int port = 8765;
@@ -35,7 +38,8 @@ class FluxServer {
   bool guard_post(const httplib::Request& req, httplib::Response& res) const;
   std::atomic<bool> stopping_{false};
   std::atomic<bool> listen_active_{false};
-  std::vector<std::string> allowed_origins_;  // lets SSE loops exit so listen() can join its workers
+  std::vector<std::string> allowed_hosts_;    // Host header values accepted (set by bind)
+  std::vector<std::string> allowed_origins_;  // "http://" + each allowed host
   std::mutex shock_m_;
   std::optional<Raster> last_shock_;
 };

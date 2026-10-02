@@ -321,3 +321,35 @@ TEST_CASE("server: posting params without a preset keeps the CLI model flags; st
   CHECK(status()["preset"] == "money-flow");
   CHECK(f.store->core_params().flux.lambda == CoreParams::money_flow().flux.lambda);
 }
+
+TEST_CASE("server: requests with a foreign Host are refused (DNS rebinding)") {
+  Fixture f;
+  httplib::Client c("127.0.0.1", f.port);
+  const std::string port = std::to_string(f.port);
+  httplib::Headers evil{{"Host", "evil.example:" + port}};
+  auto g = c.Get("/api/status", evil);
+  REQUIRE(g);
+  CHECK(g->status == 403);
+  CHECK(json::parse(g->body).contains("error"));
+  CHECK(c.Get("/", evil)->status == 403);
+  CHECK(c.Get("/api/frame/grid", evil)->status == 403);
+  CHECK(c.Post("/api/params", evil, R"({"smooth":2})", "application/json")->status == 403);
+  // a rebinding page's Origin matches its own (foreign) Host: still refused
+  httplib::Headers rebound{{"Host", "evil.example:" + port}, {"Origin", "http://evil.example:" + port}};
+  CHECK(c.Post("/api/params", rebound, R"({"smooth":2})", "application/json")->status == 403);
+  // a foreign Origin with a matching loopback Host is refused too
+  httplib::Headers foreign{{"Host", "127.0.0.1:" + port}, {"Origin", "http://evil.example:" + port}};
+  CHECK(c.Post("/api/params", foreign, R"({"smooth":2})", "application/json")->status == 403);
+  // loopback names are accepted
+  for (const std::string h : {"127.0.0.1:", "localhost:", "[::1]:"}) {
+    INFO(h);
+    CHECK(c.Get("/api/status", httplib::Headers{{"Host", h + port}})->status == 200);
+  }
+  CHECK(c.Get("/api/status", httplib::Headers{{"Host", "localhost:1"}})->status == 403);  // wrong port
+  CHECK(f.store->landscape_params().smooth == 1.0);
+  CHECK(is_loopback_host("127.0.0.1"));
+  CHECK(is_loopback_host("localhost"));
+  CHECK(is_loopback_host("::1"));
+  CHECK_FALSE(is_loopback_host("0.0.0.0"));
+  CHECK_FALSE(is_loopback_host("192.168.1.5"));
+}

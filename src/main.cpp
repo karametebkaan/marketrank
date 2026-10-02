@@ -369,6 +369,10 @@ int main(int argc, char** argv) {
     const fx::Panel panel = fx::build_panel(store, universe.node_tickers(), args.tf, window_start, end);
     if (panel.T() < 2) throw std::runtime_error("not enough cached bars; run with --mode alpaca first");
     if (args.serve) {
+      if (!fx::is_loopback_host(args.host))
+        std::cerr << "warning: --host " << args.host
+                  << " is not a loopback address: the server (which has no authentication) is reachable from the "
+                     "network\n";
       fx::FrameStore frames(panel, universe.nodes(), args.params, fx::LandscapeParams{});
       frames.start();
       fx::FluxServer server(frames, portfolio, args.mode + " " + std::string(fx::to_string(args.tf)));
