@@ -20,16 +20,18 @@ struct Level {
   std::vector<double> self;
 };
 
-// Phase 1. comm[i] starts as i. Returns whether any node moved.
-bool move_nodes(const Level& g, double m2, double res, std::vector<std::uint32_t>& comm) {
+// Phase 1. comm[i] starts as start[i] (ids < n), or as i when start is empty. Returns whether any node moved.
+bool move_nodes(const Level& g, double m2, double res, std::vector<std::uint32_t>& comm,
+                const std::vector<std::uint32_t>& start = {}) {
   const std::size_t n = g.nbr.size();
   comm.resize(n);
-  std::vector<double> k(n), tot(n), w_to(n, 0.0);
+  std::vector<double> k(n), tot(n, 0.0), w_to(n, 0.0);
   for (std::size_t i = 0; i < n; ++i) {
-    comm[i] = static_cast<std::uint32_t>(i);
+    comm[i] = start.empty() ? static_cast<std::uint32_t>(i) : start[i];
     double s = g.self[i];
     for (auto& e : g.nbr[i]) s += e.second;
-    k[i] = tot[i] = s;
+    k[i] = s;
+    tot[comm[i]] += s;
   }
   if (m2 <= 0) return false;
   bool any = false;
@@ -114,8 +116,9 @@ Csr symmetric_flux_graph(const Csr& P, const std::vector<bool>& active) {
 }
 
 CommunityResult louvain(const Csr& W, const std::vector<bool>& active, double resolution, int min_size,
-                        int max_communities) {
+                        int max_communities, const std::vector<std::int64_t>& init) {
   if (active.size() != W.n) throw std::invalid_argument("louvain: active size != W.n");
+  if (!init.empty() && init.size() != W.n) throw std::invalid_argument("louvain: init size != W.n");
   CommunityResult out;
   out.id.assign(W.n, -1);
   std::vector<std::uint32_t> compact(W.n, 0), members;  // node -> compact index; compact -> node
@@ -161,9 +164,27 @@ CommunityResult louvain(const Csr& W, const std::vector<bool>& active, double re
   // Phases 1 and 2.
   std::vector<std::uint32_t> assign(na);  // original compact node -> current level node
   for (std::size_t a = 0; a < na; ++a) assign[a] = static_cast<std::uint32_t>(a);
-  for (;;) {
+  // Warm start: level 0 begins from the previous partition (labels >= 0, compacted in order of first appearance);
+  // every other active node begins as a singleton.
+  std::vector<std::uint32_t> start;
+  if (!init.empty()) {
+    start.resize(na);
+    std::map<std::int64_t, std::uint32_t> cid;
+    for (std::size_t a = 0; a < na; ++a) {
+      const std::int64_t l = init[members[a]];
+      if (l < 0) {
+        start[a] = static_cast<std::uint32_t>(a);
+        continue;
+      }
+      auto it = cid.find(l);
+      if (it == cid.end()) it = cid.emplace(l, static_cast<std::uint32_t>(a)).first;  // id = first member: < na
+      start[a] = it->second;
+    }
+  }
+  for (bool first = true;; first = false) {
     std::vector<std::uint32_t> comm;
-    if (!move_nodes(g, m2, resolution, comm)) break;
+    const bool moved = move_nodes(g, m2, resolution, comm, first ? start : std::vector<std::uint32_t>{});
+    if (!moved && !(first && !start.empty())) break;  // a warm start is aggregated even when no node moved
     std::vector<std::int64_t> renum(g.nbr.size(), -1);  // renumber by first appearance (smallest member)
     std::uint32_t K = 0;
     for (std::size_t i = 0; i < comm.size(); ++i)
@@ -441,7 +462,7 @@ std::vector<int> spectral_order(const std::vector<double>& cw, const std::vector
 
 std::vector<std::int64_t> match_labels(const std::vector<std::int32_t>& new_id, int count, int loose_id,
                                        const std::vector<std::int64_t>& old_label, std::int64_t& next_label,
-                                       double min_jaccard) {
+                                       double min_jaccard, double min_contained) {
   const auto K = static_cast<std::size_t>(count);
   std::vector<std::int64_t> label(K, -1);
   std::vector<std::size_t> cnt(K, 0);
@@ -467,7 +488,8 @@ std::vector<std::int64_t> match_labels(const std::vector<std::int32_t>& new_id, 
   for (auto& [ov, nw, old] : pairs) {
     if (matched[static_cast<std::size_t>(nw)] || used_old.count(old)) continue;
     const double jac = static_cast<double>(ov) / static_cast<double>(cnt[static_cast<std::size_t>(nw)] + old_size[old] - ov);
-    if (jac < min_jaccard) continue;
+    const double contained = static_cast<double>(ov) / static_cast<double>(cnt[static_cast<std::size_t>(nw)]);
+    if (jac < min_jaccard && contained < min_contained) continue;
     matched[static_cast<std::size_t>(nw)] = true;
     used_old.insert(old);
     label[static_cast<std::size_t>(nw)] = old;
@@ -497,8 +519,9 @@ std::vector<std::int64_t> arrange_order(const std::vector<int>& spectral, int lo
   return ord;
 }
 
-CommunityTracker::CommunityTracker(std::size_t n, int recluster_bars, int min_size)
-    : n_(n), bars_(std::max(1, recluster_bars)), min_size_(min_size), label_(n, -1), group_(n, 0), node_group_(n, -1) {}
+CommunityTracker::CommunityTracker(std::size_t n, int recluster_bars, int min_size, double resolution)
+    : n_(n), bars_(std::max(1, recluster_bars)), min_size_(min_size), resolution_(resolution), label_(n, -1),
+      group_(n, 0), node_group_(n, -1) {}
 
 const std::vector<std::uint32_t>& CommunityTracker::update(const Csr& P, const std::vector<bool>& active) {
   if (active.size() != n_ || P.n != n_) throw std::invalid_argument("CommunityTracker: size mismatch");
@@ -508,7 +531,20 @@ const std::vector<std::uint32_t>& CommunityTracker::update(const Csr& P, const s
   if (reclustered_) {
     const auto t0 = std::chrono::steady_clock::now();
     Csr W = symmetric_flux_graph(P, active);
-    CommunityResult r = louvain(W, active, 1.0, min_size_);
+    // Warm start from the current labels. The very first clustering has none: it is refined by warm-starting from
+    // its own result until that is a fixed point (at most 4 rounds), so the first warm re-cluster does not
+    // reorganize a fragmented cold-start partition.
+    CommunityResult r = louvain(W, active, resolution_, min_size_, 256, label_);
+    if (!have_)
+      for (int round = 0; round < 4; ++round) {
+        std::vector<std::int64_t> seed(n_, -1);
+        for (std::size_t i = 0; i < n_; ++i)
+          if (r.id[i] >= 0 && r.id[i] != r.loose_id) seed[i] = r.id[i];
+        CommunityResult again = louvain(W, active, resolution_, min_size_, 256, seed);
+        const bool same = again.id == r.id;
+        r = std::move(again);
+        if (same) break;
+      }
     const auto K = static_cast<std::size_t>(r.count);
     std::vector<std::size_t> cnt(K, 0);
     for (std::size_t i = 0; i < n_; ++i)

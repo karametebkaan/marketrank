@@ -340,3 +340,119 @@ TEST_CASE("tracker keeps labels stable across re-clusters when the communities a
   CHECK(l2[0] == l1[40]);
   CHECK(l2[59] == l1[1]);
 }
+
+namespace {
+// A drifting flux graph: `groups` planted groups of `size` with weak structure (each node sends `intra` edges inside
+// its group and `inter` edges anywhere). Each step rewires `churn` of the edges; weights are uniform in [0.5, 1.5].
+struct DriftingFlux {
+  std::size_t n, size;
+  int intra, inter;
+  double churn;
+  std::mt19937_64 rng;
+  std::vector<std::vector<std::pair<std::uint32_t, double>>> rows;
+  DriftingFlux(std::size_t groups, std::size_t sz, int in, int out, double ch, std::uint64_t seed)
+      : n(groups * sz), size(sz), intra(in), inter(out), churn(ch), rng(seed), rows(groups * sz) {
+    for (std::size_t i = 0; i < n; ++i)
+      for (int k = 0; k < intra + inter; ++k) rows[i].push_back(edge(i, k < intra));
+  }
+  std::pair<std::uint32_t, double> edge(std::size_t i, bool inside) {
+    std::uint32_t j;
+    do {
+      j = inside ? static_cast<std::uint32_t>((i / size) * size + rng() % size) : static_cast<std::uint32_t>(rng() % n);
+    } while (j == i);
+    return {j, 0.5 + static_cast<double>(rng() % 1000) / 1000.0};
+  }
+  Csr step() {
+    for (std::size_t i = 0; i < n; ++i)
+      for (int k = 0; k < intra + inter; ++k)
+        if (static_cast<double>(rng() % 1000) < 1000.0 * churn) rows[i][static_cast<std::size_t>(k)] = edge(i, k < intra);
+    auto sorted = rows;
+    for (auto& r : sorted) std::sort(r.begin(), r.end());
+    return chain_p(sorted);
+  }
+};
+}  // namespace
+
+TEST_CASE("warm-started louvain is deterministic and keeps a good previous partition") {
+  const std::size_t n = 40;
+  Csr W = make_w(n, planted(4, 10, 10.0, 0.1));
+  std::vector<bool> active(n, true);
+  const auto cold = louvain(W, active);
+  std::vector<std::int64_t> init(n);
+  for (std::size_t i = 0; i < n; ++i) init[i] = 100 + static_cast<std::int64_t>(i / 10);  // any label values
+  init[7] = -1;                                                                         // newly active: singleton
+  const auto warm = louvain(W, active, 1.0, 8, 256, init);
+  CHECK(warm.id == cold.id);
+  CHECK(louvain(W, active, 1.0, 8, 256, init).id == warm.id);
+  // A warm start holds a partition that a cold start would not find: two pairs of cliques.
+  std::vector<std::int64_t> pairs(n);
+  for (std::size_t i = 0; i < n; ++i) pairs[i] = static_cast<std::int64_t>(i / 20);
+  Edges e = planted(4, 10, 1.0, 0.0);  // (planted's between-links have weight 0 and are ignored)
+  for (std::uint32_t q = 0; q < 4; q += 2)  // cliques q and q + 1 are linked node to node
+    for (std::uint32_t a = 0; a < 10; ++a) e.emplace_back(q * 10 + a, (q + 1) * 10 + a, 0.6);
+  Csr V = make_w(n, e);
+  const auto c2 = louvain(V, active), w2 = louvain(V, active, 1.0, 8, 256, pairs);
+  CHECK(w2.count == 2);
+  for (std::size_t i = 0; i < n; ++i) CHECK(w2.id[i] == w2.id[(i / 20) * 20]);
+  CHECK(louvain(V, active, 1.0, 8, 256, pairs).id == w2.id);
+  MESSAGE("two linked clique pairs: cold start finds " << c2.count << " communities, warm start " << w2.count);
+}
+
+TEST_CASE("matching also accepts a new community mostly contained in an old one") {
+  // old 4 = nodes 0..49; new 0 = nodes 0..11 (Jaccard 0.24 < 0.3, but 100% of the new community lies in old 4)
+  auto nw = ids_from(60, {range(0, 12), range(50, 60)});
+  auto old = labels_from(60, {{4, range(0, 50)}, {6, range(50, 60)}});
+  std::int64_t next = 10;
+  auto lab = match_labels(nw, 2, -1, old, next);
+  CHECK(lab[0] == 4);
+  CHECK(lab[1] == 6);
+  // under 60% contained and Jaccard < 0.3: fresh
+  auto nw2 = ids_from(60, {[&] { auto a = range(0, 5); auto b = range(50, 60); a.insert(a.end(), b.begin(), b.end()); return a; }()});
+  auto old2 = labels_from(60, {{4, range(0, 50)}});
+  next = 10;
+  CHECK(match_labels(nw2, 1, -1, old2, next)[0] == 10);
+}
+
+TEST_CASE("community labels and territory order persist across re-clusters of a drifting flux graph") {
+  DriftingFlux df(6, 100, 4, 8, 0.1, 31);  // weak structure (Q ~ 0.2), as on real data
+  const std::size_t n = df.n;
+  std::vector<bool> active(n, true);
+  CommunityTracker tr(n, 5);
+  tr.update(df.step(), active);
+  auto lab = tr.node_group();
+  auto pos = tr.update(df.step(), active);  // group = layout position
+  int reclusters = 0;
+  for (int f = 2; reclusters < 3; ++f) {
+    const auto prev_lab = tr.node_group();
+    const auto prev_pos = pos;
+    pos = tr.update(df.step(), active);
+    if (!tr.reclustered()) continue;
+    ++reclusters;
+    const auto& cur = tr.node_group();
+    std::size_t same = 0;
+    for (std::size_t i = 0; i < n; ++i) same += cur[i] == prev_lab[i] ? 1 : 0;
+    const double share = static_cast<double>(same) / static_cast<double>(n);
+    MESSAGE("re-cluster " << reclusters << ": " << 100 * share << "% keep their label, " << tr.communities()
+                          << " communities, Q " << tr.modularity());
+    CHECK(share >= 0.8);
+    // Territory order: labels present before and after keep their relative layout order.
+    std::map<std::int32_t, std::uint32_t> before, after;
+    for (std::size_t i = 0; i < n; ++i) {
+      if (prev_lab[i] >= 0) before[prev_lab[i]] = prev_pos[i];
+      if (cur[i] >= 0) after[cur[i]] = pos[i];
+    }
+    std::vector<std::pair<std::uint32_t, std::int32_t>> ob, oa;
+    for (auto& [l, p] : before)
+      if (after.count(l)) {
+        ob.push_back({p, l});
+        oa.push_back({after[l], l});
+      }
+    std::sort(ob.begin(), ob.end());
+    std::sort(oa.begin(), oa.end());
+    std::vector<std::int32_t> lb, la;
+    for (auto& x : ob) lb.push_back(x.second);
+    for (auto& x : oa) la.push_back(x.second);
+    CHECK(lb == la);
+    CHECK(lb.size() >= 3);
+  }
+}

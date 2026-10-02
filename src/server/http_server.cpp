@@ -180,7 +180,7 @@ void FluxServer::routes() {
                {"raster", raster_meta(f->raster)}, {"nodes", jn}, {"arcs", ja}, {"portfolio", jp},
                {"params", describe(store_.core_params())}, {"compute_ms", f->compute_ms},
                {"communities", {{"count", f->communities}, {"modularity", num(f->modularity)}, {"loose", f->loose},
-                                {"cluster_ms", f->cluster_ms}}}});
+                                {"cluster_ms", f->cluster_ms}, {"reclustered", f->reclustered}}}});
   });
 
   svr_.Get("/api/top", [this](const httplib::Request& req, httplib::Response& res) {

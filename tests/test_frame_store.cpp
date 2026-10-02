@@ -250,3 +250,26 @@ TEST_CASE("frame store recent() returns the cached frames ending at t, oldest fi
   CHECK(fs.recent(m.panel.times.front(), 5).empty());
   CHECK(fs.recent(std::nullopt, 0).empty());
 }
+
+TEST_CASE("frame store skips the warm-up bars: no landscape and no clustering before bar warmup_bars") {
+  Market m = market();
+  REQUIRE(m.panel.T() == 120);
+  FrameStore fs(m.panel, m.secs, CoreParams::money_flow(), LandscapeParams{}, 300);
+  fs.start();
+  wait_ready(fs);
+  const auto times = fs.times();
+  CHECK(LandscapeParams{}.warmup_bars == 5);
+  REQUIRE(times.size() == 120 - 5);
+  CHECK(times.front() == m.panel.times[5]);
+  CHECK(fs.landscape(times.front())->reclustered);  // the first landscape clusters
+  CHECK_FALSE(fs.landscape(times[1])->reclustered);
+  CHECK(fs.landscape(times[5])->reclustered);  // then every recluster_bars frames
+  // a short panel still yields its last bar
+  LandscapeParams lp;
+  lp.warmup_bars = 500;
+  FrameStore late(m.panel, m.secs, CoreParams::money_flow(), lp, 300);
+  late.start();
+  wait_ready(late);
+  REQUIRE(late.times().size() == 1);
+  CHECK(late.times().back() == m.panel.times.back());
+}

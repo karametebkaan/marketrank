@@ -68,7 +68,7 @@ Raster delta_raster(const LandscapeFrame& base, const std::vector<double>& delta
 
 LandscapeBuilder::LandscapeBuilder(std::size_t n, LandscapeParams params, std::vector<std::uint32_t> group)
     : n_(n), p_(params), group_(std::move(group)), s_prev_(n, 0.0), has_prev_(n, 0),
-      tracker_(n, params.recluster_bars) {
+      tracker_(n, params.recluster_bars, 8, params.resolution) {
   if (!group_.empty() && group_.size() != n) throw std::invalid_argument("LandscapeBuilder: group size mismatch");
   if (!(p_.order_smoothing >= 0.0 && p_.order_smoothing <= 1.0))
     throw std::invalid_argument("LandscapeBuilder: order_smoothing must be in [0, 1]");
@@ -140,6 +140,7 @@ LandscapeFrame LandscapeBuilder::build(const Frame& f) {
     lf.modularity = tracker_.modularity();
     lf.loose = tracker_.loose_nodes();
     lf.cluster_ms = tracker_.cluster_ms();
+    lf.reclustered = tracker_.reclustered();
   } else {
     std::set<std::int32_t> ids;
     for (const auto& nd : lf.nodes) ids.insert(nd.group);

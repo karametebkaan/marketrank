@@ -32,7 +32,9 @@ struct LandscapeParams {
                                  // size (at least 2 slots); see territory_layout
   std::size_t max_arcs = 2000;
   TerritoryMode territory = TerritoryMode::Flux;
-  int recluster_bars = 5;  // flux mode: re-cluster every this many frames
+  int recluster_bars = 5;   // flux mode: re-cluster every this many frames
+  double resolution = 1.0;  // flux mode: Louvain resolution
+  int warmup_bars = 5;      // serve mode: the first this many bars only feed the model (no landscape, no clustering)
 };
 
 struct LandscapeNode {
@@ -60,6 +62,7 @@ struct LandscapeFrame {
   double modularity = 0;        // flux mode: of the last re-cluster
   std::size_t loose = 0;        // flux mode: stocks in the loose pool
   double cluster_ms = 0;        // flux mode: duration of the last re-cluster
+  bool reclustered = false;     // flux mode: this frame re-clustered
 };
 
 std::vector<LandscapeArc> top_arcs(const Csr& P, const std::vector<bool>& active, std::size_t max_arcs);

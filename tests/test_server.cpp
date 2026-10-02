@@ -162,6 +162,7 @@ TEST_CASE("server: 503 before ready, shock grid 404, node field order") {
   CHECK(fr["communities"]["count"].is_number_integer());
   CHECK(fr["communities"].contains("modularity"));
   CHECK(fr["communities"].contains("loose"));
+  CHECK(fr["communities"]["reclustered"].is_boolean());
   CHECK(n0[0].is_number_integer());
   CHECK(n0[1].is_string());
   CHECK(n0[2].is_string());
