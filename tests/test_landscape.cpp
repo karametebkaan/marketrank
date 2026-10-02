@@ -586,3 +586,39 @@ TEST_CASE("smoother: default is CVT, none/gaussian/cvt differ, delta raster foll
   bad.cvt.lambda = 0;
   CHECK_THROWS_AS(LandscapeBuilder(f.active.size(), bad), std::invalid_argument);
 }
+
+TEST_CASE("pinned nodes: the CVT surface passes exactly through them in build, restyle and the delta raster") {
+  const Frame f = synthetic_frame();
+  LandscapeParams p;  // CVT default
+  LandscapeBuilder b0(f.active.size(), p);
+  const LandscapeFrame free_ = b0.build(f);
+  REQUIRE(free_.nodes.size() > 5);
+  LandscapeParams pp = p;
+  pp.pinned = {free_.nodes[0].i, free_.nodes[3].i, static_cast<std::uint32_t>(f.active.size() + 7)};  // last: not in the universe, ignored
+  LandscapeBuilder b1(f.active.size(), pp);
+  const LandscapeFrame pin = b1.build(f);
+  REQUIRE(pin.nodes.size() == free_.nodes.size());
+  const auto at = [](const LandscapeFrame& lf, std::size_t k) { return lf.raster.z[static_cast<std::size_t>(lf.nodes[k].cell)]; };
+  for (std::size_t k : {std::size_t(0), std::size_t(3)}) {
+    CHECK(pin.nodes[k].cell == free_.nodes[k].cell);  // pinning is display-only
+    CHECK(at(pin, k) == static_cast<float>(pin.nodes[k].hdisp));
+  }
+  CHECK(at(free_, 0) != static_cast<float>(free_.nodes[0].hdisp));  // without the pin CVT moves it
+  CHECK(same_placement(p, pp));
+  const LandscapeFrame re = restyle(free_, pp);
+  CHECK(at(re, 0) == static_cast<float>(re.nodes[0].hdisp));
+  std::vector<double> delta(f.active.size(), 0.0);
+  delta[pin.nodes[1].i] = 1.0;
+  delta[pin.nodes[0].i] = -0.5;
+  const Raster d = delta_raster(pin, delta, pp);
+  CHECK(d.z[static_cast<std::size_t>(pin.nodes[0].cell)] == static_cast<float>(display_height(-0.5, pp.height)));
+  CHECK(d.z[static_cast<std::size_t>(pin.nodes[3].cell)] == 0.0f);
+  // Subdivision 3: the pinned node's cell-centre pixel carries its exact value.
+  LandscapeParams s3 = pp;
+  s3.idw.subdivision = 3;
+  const LandscapeFrame r3 = restyle(free_, s3);
+  const auto& n0 = r3.nodes[0];
+  const std::size_t cols = r3.size.cols, px = (static_cast<std::size_t>(n0.cell) % cols) * 3 + 1,
+                    py = (static_cast<std::size_t>(n0.cell) / cols) * 3 + 1;
+  CHECK(r3.raster.z[py * r3.raster.w + px] == static_cast<float>(n0.hdisp));
+}

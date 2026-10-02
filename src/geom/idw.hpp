@@ -41,6 +41,12 @@ struct CvtParams {
 // (eps = 1 when that P90 is 0). One Jacobi iteration: z' = (1-lambda) z + lambda * sum(a rho z) / sum(a rho).
 // zmin/zmax are recomputed. Fixed-order sums, index-owned writes: bit-identical for any thread count.
 // Throws on iterations < 0 or lambda / eps_frac outside range.
-void cvt_smooth(Raster& r, const CvtParams& p);
+// Pins (Dirichlet constraint): after every iteration each pinned pixel is reset to its value, so the surface passes
+// exactly through it and its neighbours relax toward it. No pins = the unpinned smoother, bit for bit.
+struct CvtPin {
+  std::size_t px;  // pixel index (py * w + px)
+  double z;        // the value the surface must pass through
+};
+void cvt_smooth(Raster& r, const CvtParams& p, const std::vector<CvtPin>& pins = {});
 
 }  // namespace mr

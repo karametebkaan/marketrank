@@ -53,6 +53,10 @@ struct LandscapeParams {
   HeightMode height = HeightMode::SignedLog;
   Smoother smoother = Smoother::Cvt;
   CvtParams cvt;                  // used when smoother == Cvt
+  // Display pins: node indices (e.g. the portfolio holdings) the CVT surface must pass through exactly, at their
+  // cell-centre pixel (any subdivision). Indices that are inactive or outside the universe are ignored. CVT only:
+  // the Gaussian and none smoothers ignore pins (none is exact at subdivision 1 anyway). Display-only.
+  std::vector<std::uint32_t> pinned;
   double smooth = 1.0;            // Gaussian sigma in lattice cells after IDW; used only when smoother == Gaussian (0 = off)
   double order_smoothing = 0.5;  // weight on the previous frame's hotness when ranking nodes inside a territory
   double rank_tolerance = 0.15;  // cell hysteresis: keep the cell while the spiral slot moves <= this x territory
@@ -99,8 +103,12 @@ struct LandscapeFrame {
 // radius, subdivision) only change how a frame is drawn; everything else (value, territory, ranking, clustering,
 // arcs, warm-up) is placement. The value is placement because it orders the stocks inside a territory.
 bool same_placement(const LandscapeParams& a, const LandscapeParams& b);
-// IDW raster -> display raster under p.smoother.
-Raster apply_smoother(Raster r, const LandscapeParams& p);
+// IDW raster -> display raster under p.smoother (pins apply to CVT only).
+Raster apply_smoother(Raster r, const LandscapeParams& p, const std::vector<CvtPin>& pins = {});
+// CVT pins for p.pinned: each pinned node's cell-centre pixel (col·s + s/2, row·s + s/2) and its value.
+// cell[i] < 0 or a non-finite value[i] skips node i.
+std::vector<CvtPin> landscape_pins(const std::vector<std::int32_t>& cell, const std::vector<double>& value, LatticeSize size,
+                                   const LandscapeParams& p);
 // The frame redrawn with display parameters p: hdisp recomputed (landscape_value with p.value), the raster
 // rebuilt from (cell, hdisp).
 LandscapeFrame restyle(const LandscapeFrame& f, const LandscapeParams& p);

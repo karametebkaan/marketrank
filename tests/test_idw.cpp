@@ -271,3 +271,42 @@ TEST_CASE("cvt: bit-identical across thread counts") {
   CHECK(a.z == b.z);
   CHECK(a.z != r.z);
 }
+
+// ---- CVT pins (Dirichlet constraint): the terrain passes exactly through pinned pixels ----
+
+TEST_CASE("cvt pins: pinned pixels keep their exact value, neighbours still smooth toward it") {
+  Raster r = make_raster(20, 16, [](std::size_t x, std::size_t y) { return std::sin(0.9 * double(x)) * std::cos(0.7 * double(y)) * 3.0; });
+  const std::size_t p1 = 5 * 20 + 7, p2 = 11 * 20 + 13;
+  const std::vector<CvtPin> pins{{p1, 4.25}, {p2, -2.5}};
+  Raster a = r;
+  cvt_smooth(a, CvtParams{}, pins);
+  CHECK(a.z[p1] == 4.25f);  // exact, zero delta
+  CHECK(a.z[p2] == -2.5f);
+  Raster free_ = r;
+  cvt_smooth(free_, CvtParams{});
+  // An unpinned neighbour still changes from its input, and differs from the unpinned run (pulled toward the pin).
+  CHECK(a.z[p1 + 1] != r.z[p1 + 1]);
+  CHECK(a.z[p1 + 1] != free_.z[p1 + 1]);
+  CHECK(std::fabs(a.z[p1 + 1] - 4.25f) < std::fabs(free_.z[p1 + 1] - 4.25f));
+  CHECK(a.zmax == *std::max_element(a.z.begin(), a.z.end()));
+  CHECK_THROWS_AS(cvt_smooth(a, CvtParams{}, {{a.z.size(), 1.0}}), std::invalid_argument);
+}
+
+TEST_CASE("cvt pins: no pins is bit-identical to the unpinned smoother; pins are deterministic across threads") {
+  Raster r = make_raster(80, 64, [](std::size_t x, std::size_t y) { return std::sin(double(x * 7 + y * 13)); });
+  Raster a = r, b = r;
+  cvt_smooth(a, CvtParams{});
+  cvt_smooth(b, CvtParams{}, {});
+  CHECK(a.z == b.z);
+  std::vector<CvtPin> pins;
+  for (std::size_t k = 0; k < 40; ++k) pins.push_back({(k * 977) % r.z.size(), 0.1 * double(k)});
+  const int saved = omp_get_max_threads();
+  Raster c = r, d = r;
+  omp_set_num_threads(1);
+  cvt_smooth(c, CvtParams{}, pins);
+  omp_set_num_threads(8);
+  cvt_smooth(d, CvtParams{}, pins);
+  omp_set_num_threads(saved);
+  CHECK(c.z == d.z);
+  for (const auto& p : pins) CHECK(c.z[p.px] == static_cast<float>(p.z));
+}

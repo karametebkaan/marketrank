@@ -408,6 +408,15 @@ int main(int argc, char** argv) {
       // Fixed serve defaults (the UI has no knobs): flux territories, the CVT smoother, subdivision 1 (all
       // LandscapeParams{} defaults) and, under the marketrank preset, the height log(pi / size share).
       land.value = mr::default_landscape_value(args.preset);
+      // Pin the portfolio holdings: the smoothed surface passes exactly through each one (holdings missing from
+      // the universe are ignored).
+      if (portfolio) {
+        const auto& nodes = universe.nodes();
+        std::map<std::string, std::uint32_t> idx;
+        for (std::size_t i = 0; i < nodes.size(); ++i) idx.emplace(nodes[i].ticker, static_cast<std::uint32_t>(i));
+        for (const auto& hld : portfolio->holdings)
+          if (auto it = idx.find(hld.ticker); it != idx.end()) land.pinned.push_back(it->second);
+      }
       mr::FrameStore frames(std::move(panel), universe.nodes(), args.params, land);
       frames.start();
       mr::FluxServer server(frames, portfolio, args.mode + " " + std::string(mr::to_string(args.tf)));

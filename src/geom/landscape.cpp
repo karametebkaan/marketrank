@@ -43,13 +43,28 @@ Smoother parse_smoother(std::string_view s) {
 
 std::string_view to_string(Smoother s) { return s == Smoother::Cvt ? "cvt" : s == Smoother::Gaussian ? "gaussian" : "none"; }
 
-Raster apply_smoother(Raster r, const LandscapeParams& p) {
+Raster apply_smoother(Raster r, const LandscapeParams& p, const std::vector<CvtPin>& pins) {
   switch (p.smoother) {
     case Smoother::Gaussian: return smooth_raster(r, p.smooth, p.idw.subdivision);
-    case Smoother::Cvt: cvt_smooth(r, p.cvt); return r;
+    case Smoother::Cvt: cvt_smooth(r, p.cvt, pins); return r;
     case Smoother::None: break;
   }
   return r;
+}
+
+std::vector<CvtPin> landscape_pins(const std::vector<std::int32_t>& cell, const std::vector<double>& value, LatticeSize size,
+                                   const LandscapeParams& p) {
+  std::vector<CvtPin> pins;
+  if (p.pinned.empty() || size.cols == 0) return pins;
+  const std::size_t s = static_cast<std::size_t>(std::max(1, p.idw.subdivision)), w = size.cols * s;
+  std::vector<char> seen(cell.size(), 0);
+  for (const std::uint32_t i : p.pinned) {
+    if (i >= cell.size() || seen[i] || cell[i] < 0 || !std::isfinite(value[i])) continue;
+    seen[i] = 1;
+    const std::size_t c = static_cast<std::size_t>(cell[i]), px = (c % size.cols) * s + s / 2, py = (c / size.cols) * s + s / 2;
+    pins.push_back({py * w + px, value[i]});
+  }
+  return pins;
 }
 
 LandscapeValue parse_landscape_value(std::string_view s) {
@@ -97,7 +112,7 @@ Raster node_raster(const LandscapeFrame& f, const LandscapeParams& p) {
     cell[nd.i] = nd.cell;
     v[nd.i] = nd.hdisp;
   }
-  return apply_smoother(idw_raster(cell, v, f.size, p.idw), p);
+  return apply_smoother(idw_raster(cell, v, f.size, p.idw), p, landscape_pins(cell, v, f.size, p));
 }
 }  // namespace
 
@@ -139,7 +154,7 @@ Raster delta_raster(const LandscapeFrame& base, const std::vector<double>& delta
     cell[nd.i] = nd.cell;
     v[nd.i] = display_height(delta[nd.i], p.height);
   }
-  return apply_smoother(idw_raster(cell, v, base.size, p.idw), p);
+  return apply_smoother(idw_raster(cell, v, base.size, p.idw), p, landscape_pins(cell, v, base.size, p));
 }
 
 LandscapeBuilder::LandscapeBuilder(std::size_t n, LandscapeParams params, std::vector<std::uint32_t> group)

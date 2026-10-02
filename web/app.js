@@ -96,47 +96,6 @@ function sample(z, meta, lattice, col, row) {
   return { x: (px + 0.5) * lattice.cols / meta.w, y: (py + 0.5) * lattice.rows / meta.h, v: z[py * meta.w + px] };
 }
 
-// ---- Holding arrows: from the smoothed surface to the holding's exact (unsmoothed) height ----
-// Everything about the look lives here; swap arrowLayers() for another glyph (cylinder shaft, etc.) freely.
-const ARROW = {
-  up: [0, 170, 80, 255], down: [210, 40, 40, 255], flat: [120, 120, 120, 230],
-  shaftPx: 7,          // shaft width in pixels
-  minGapFrac: 0.02,    // gaps below this fraction of the span get a neutral marker instead of an arrow
-};
-// Arrowheads: billboarded triangles of a fixed pixel size (IconLayer), so the direction reads at any zoom even
-// when the gap is short. The triangle's tip is anchored on the exact-height point.
-const HEAD_PX = 28;
-function headAtlas() {
-  if (headAtlas.url) return headAtlas.url;
-  // A white halo under a dark outline keeps a red head readable on red terrain (and a green one on green).
-  const tri = (dx, pts, c) => `<g transform="translate(${dx} 0)" stroke-linejoin="round"><polygon points="${pts}" fill="white" stroke="white" stroke-width="9"/>` +
-    `<polygon points="${pts}" fill="rgb(${c.slice(0, 3).join(',')})" stroke="rgb(25,25,25)" stroke-width="3"/></g>`;
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="128" height="64">${tri(0, '32,7 57,57 7,57', ARROW.up)}${tri(64, '7,7 57,7 32,57', ARROW.down)}</svg>`;
-  headAtlas.url = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
-  return headAtlas.url;
-}
-const HEAD_MAPPING = { up: { x: 0, y: 0, width: 64, height: 64, anchorY: 7 }, down: { x: 64, y: 0, width: 64, height: 64, anchorY: 57 } };
-
-// items: holdings with x, y, zt (surface height), ez (exact height), dir ('up' | 'down' | 'flat').
-function arrowLayers(items, params) {
-  const arrows = items.filter((n) => n.dir === 'up' || n.dir === 'down');
-  return [
-    new deck.LineLayer({
-      id: 'holding-arrow-shafts', data: arrows, getSourcePosition: (n) => [n.x, n.y, n.zt], getTargetPosition: (n) => [n.x, n.y, n.ez],
-      getColor: (n) => ARROW[n.dir], getWidth: ARROW.shaftPx, widthUnits: 'pixels', pickable: true, parameters: params,
-    }),
-    new deck.IconLayer({
-      id: 'holding-arrowheads', data: arrows, iconAtlas: headAtlas(), iconMapping: HEAD_MAPPING, getIcon: (n) => n.dir,
-      getPosition: (n) => [n.x, n.y, n.ez], getSize: HEAD_PX, sizeUnits: 'pixels', billboard: true, pickable: true, parameters: params,
-    }),
-    new deck.ScatterplotLayer({
-      id: 'holding-flat-markers', data: items.filter((n) => n.dir === 'flat'), getPosition: (n) => [n.x, n.y, n.zt + 0.2],
-      getRadius: 5, radiusUnits: 'pixels', getFillColor: ARROW.flat, stroked: true, getLineColor: [255, 255, 255, 230],
-      getLineWidth: 1.5, lineWidthUnits: 'pixels', pickable: true, parameters: params,
-    }),
-  ];
-}
-
 function signColor(v, alpha) {
   if (v === null || v === undefined || !Number.isFinite(v) || v === 0) return [150, 150, 150, alpha];
   return v > 0 ? [...POS, alpha] : [...NEG, alpha];
@@ -177,25 +136,18 @@ function render() {
       getWidth: (a) => 0.5 + 1.5 * a.w / wmax, widthUnits: 'pixels', getSourceColor: [255, 140, 0, 80], getTargetColor: [255, 215, 0, 80],
     }),
   ];
-  // Portfolio: an arrow from the smoothed surface to each holding's exact height (base view only; in the shock
-  // view the server sends no per-stock Δh for every holding, so the rings stay on the Δh surface). The ring and
-  // ticker sit at the arrow tip. Drawn last without depth testing, so they stay visible at any lattice size.
+  // Portfolio: the server pins the holdings, so the smoothed surface passes exactly through each one and the ring
+  // and ticker sit on the surface at the holding's exact height. Drawn last without depth testing, so they stay
+  // visible at any lattice size.
   const onTop = { depthCompare: 'always', depthWriteEnabled: false };
   const ring0 = Math.max(0.6, 0.012 * span(L));
-  const minGap = ARROW.minGapFrac * span(L);
-  const hold = holdings.map((n) => {
-    if (shock || n.hd === null || !Number.isFinite(n.hd)) return { ...n, ez: n.zt, dir: 'none' };
-    const ez = heightOf(n.hd, scale, clip), gap = ez - n.zt;
-    return { ...n, exact: n.hd, surface: n.v, ez, dir: Math.abs(gap) < minGap ? 'flat' : gap > 0 ? 'up' : 'down' };
-  });
-  if (!shock) layers.push(...arrowLayers(hold, onTop));
+  const hold = holdings.map((n) => ({ ...n, holding: true }));
   layers.push(
     new deck.ScatterplotLayer({
-      id: 'portfolio', data: hold, getPosition: (n) => [n.x, n.y, n.ez + 0.1], getRadius: (n) => ring0 + 1.5 * n.weight, radiusUnits: 'common',
+      id: 'portfolio', data: hold, getPosition: (n) => pos(n, 0.1), getRadius: (n) => ring0 + 1.5 * n.weight, radiusUnits: 'common',
       stroked: true, filled: false, getLineColor: [0, 230, 90, 255], getLineWidth: 3, lineWidthUnits: 'pixels', pickable: true, parameters: onTop,
     }),
   );
-  S.holdingArrows = hold.map((n) => ({ ticker: n.ticker, exact: n.exact, surface: n.surface, dir: n.dir }));
   const hi = S.highlight === null ? undefined : byI.get(S.highlight);
   if (hi) {
     layers.push(new deck.ScatterplotLayer({
@@ -205,7 +157,7 @@ function render() {
   }
   S.baseLayers = layers;
   S.labelCands = {
-    hold: hold.map((n) => ({ ticker: n.ticker, p: [n.x, n.y, n.ez], dir: n.dir })),
+    hold: hold.map((n) => ({ ticker: n.ticker, p: [n.x, n.y, n.zt] })),
     others: $('labels').checked
       ? ranked.slice(0, 30).concat(ranked.slice(-30).reverse()).map((n) => ({ ticker: n.ticker, p: pos(n, 0.9) })) : [],
     onTop,
@@ -228,9 +180,6 @@ function labelLayers() {
     for (const l of c.hold) {  // holdings are always labelled; their boxes still block the others
       const [x, y] = vp.project(l.p);
       placed.push([x + 14, y - 9, x + 14 + 8.4 * l.ticker.length, y + 9]);
-      const r = HEAD_PX / 2;  // the arrowhead hangs above (down arrow) or below (up arrow) the tip
-      if (l.dir === 'down') placed.push([x - r, y - HEAD_PX, x + r, y]);
-      if (l.dir === 'up') placed.push([x - r, y, x + r, y + HEAD_PX]);
       hold.push(l);
     }
     for (const l of c.others) {
@@ -281,10 +230,10 @@ function initDeck(lattice) {
   });
 }
 
-// Holding tooltip line: exact (unsmoothed) value vs the smoothed surface under it.
+// Holding tooltip line: the exact value (the surface is pinned to it in the base view).
 function holdingLine(o) {
-  if (o.exact === undefined || o.surface === undefined) return '';
-  return `\nholding: exact ${fmtSigned(o.exact, 3)} · surface ${fmtSigned(o.surface, 3)} · Δ ${fmtSigned(o.exact - o.surface, 3)}`;
+  if (!o.holding) return '';
+  return `\nholding: exact ${fmtSigned(o.hd, 3)}`;
 }
 
 // "cluster #k · n stocks" (flux territories) or the sector's group size; loose stocks are the pooled remainder.

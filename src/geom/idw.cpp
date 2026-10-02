@@ -137,19 +137,29 @@ Raster smooth_raster(const Raster& r, double sigma_cells, int subdivision) {
   return out;
 }
 
-void cvt_smooth(Raster& r, const CvtParams& p) {
+void cvt_smooth(Raster& r, const CvtParams& p, const std::vector<CvtPin>& pins) {
   if (p.iterations < 0 || !(std::isfinite(p.lambda) && p.lambda > 0 && p.lambda <= 1) ||
       !(std::isfinite(p.eps_frac) && p.eps_frac > 0 && p.eps_frac <= 10))
     throw std::invalid_argument("cvt: iterations >= 0, lambda in (0, 1], eps_frac in (0, 10] required");
-  if (p.iterations == 0 || r.z.empty()) return;
+  for (const auto& pin : pins)
+    if (pin.px >= r.z.size() || !std::isfinite(pin.z)) throw std::invalid_argument("cvt: pin outside the raster or non-finite");
+  if (r.z.empty()) return;
+  if (p.iterations == 0) {
+    for (const auto& pin : pins) r.z[pin.px] = static_cast<float>(pin.z);
+    if (!pins.empty()) {
+      const auto [mn, mx] = std::minmax_element(r.z.begin(), r.z.end());
+      r.zmin = *mn;
+      r.zmax = *mx;
+    }
+    return;
+  }
   const long W = static_cast<long>(r.w), H = static_cast<long>(r.h);
   const std::size_t n = r.z.size();
   std::vector<double> a(n), b(n), rho(n), rz(n);
   std::vector<double> mag(n);
-  for (std::size_t i = 0; i < n; ++i) {
-    a[i] = r.z[i];
-    mag[i] = std::fabs(a[i]);
-  }
+  for (std::size_t i = 0; i < n; ++i) a[i] = r.z[i];
+  for (const auto& pin : pins) a[pin.px] = pin.z;
+  for (std::size_t i = 0; i < n; ++i) mag[i] = std::fabs(a[i]);
   const std::size_t k = static_cast<std::size_t>(0.9 * static_cast<double>(n - 1));
   std::nth_element(mag.begin(), mag.begin() + static_cast<std::ptrdiff_t>(k), mag.end());
   const double v = mag[k];
@@ -181,6 +191,7 @@ void cvt_smooth(Raster& r, const CvtParams& p) {
         b[i] = (1.0 - lam) * a[i] + lam * (num / den);
       }
     a.swap(b);
+    for (const auto& pin : pins) a[pin.px] = pin.z;  // Dirichlet: pinned pixels keep their exact value
   }
   for (std::size_t i = 0; i < n; ++i) r.z[i] = static_cast<float>(a[i]);
   const auto [mn, mx] = std::minmax_element(r.z.begin(), r.z.end());
