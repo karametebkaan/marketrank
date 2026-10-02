@@ -27,6 +27,14 @@ PortfolioSpec load_portfolio(const std::filesystem::path& path) {
   return p;
 }
 
+std::vector<Fund> load_funds(const std::filesystem::path& funds_csv) {
+  std::vector<Fund> funds;
+  const CsvRows fu = read_csv_file(funds_csv);
+  for (std::size_t r = 1; r < fu.size(); ++r)
+    if (fu[r].size() >= 2) funds.push_back({fu[r][0], fu[r][1]});
+  return funds;
+}
+
 Universe Universe::load(const std::filesystem::path& sp500_csv,
                         const std::filesystem::path& funds_csv) {
   Universe u;
@@ -35,16 +43,13 @@ Universe Universe::load(const std::filesystem::path& sp500_csv,
     if (sp[r].size() < 3) continue;
     u.add_node({sp[r][0], sp[r][1], sp[r][2]});
   }
-  const CsvRows fu = read_csv_file(funds_csv);
-  for (std::size_t r = 1; r < fu.size(); ++r) {
-    if (fu[r].size() < 2) continue;
-    u.funds_.push_back({fu[r][0], fu[r][1]});
-  }
+  u.funds_ = load_funds(funds_csv);
   return u;
 }
 
-Universe Universe::from_securities(std::vector<Security> securities) {
+Universe Universe::from_securities(std::vector<Security> securities, std::vector<Fund> funds) {
   Universe u;
+  u.funds_ = std::move(funds);
   for (auto& s : securities) u.add_node(std::move(s));
   return u;
 }

@@ -28,12 +28,13 @@ struct PortfolioSpec {
 };
 
 PortfolioSpec load_portfolio(const std::filesystem::path& path);
+std::vector<Fund> load_funds(const std::filesystem::path& funds_csv);
 
 class Universe {
  public:
   static Universe load(const std::filesystem::path& sp500_csv,
                        const std::filesystem::path& funds_csv);
-  static Universe from_securities(std::vector<Security> securities);
+  static Universe from_securities(std::vector<Security> securities, std::vector<Fund> funds = {});
 
   // Adds held single stocks that are not yet nodes (sector "Extra"). Funds are skipped.
   void add_extras(const PortfolioSpec& portfolio);

@@ -1,4 +1,5 @@
 #pragma once
+#include <chrono>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -32,6 +33,8 @@ struct AlpacaConfig {
   int backoff_initial_ms = 500;
   int backoff_max_ms = 30000;
   int max_retries = 6;
+  int min_request_interval_ms = 334;  // <= 180 requests/minute
+  std::string trading_host = "paper-api.alpaca.markets";
 };
 
 void load_dotenv(const std::filesystem::path& path);
@@ -50,8 +53,11 @@ class AlpacaClient {
 
   FetchResult fetch_bars(const std::vector<std::string>& symbols, std::string_view timeframe,
                          TimePoint start, TimePoint end);
+  std::string get(const std::string& path);
 
  private:
+  void throttle();
+  std::optional<std::chrono::steady_clock::time_point> last_request_;
   HttpResponse get_with_retry(const std::string& path);
   AlpacaConfig config_;
   HttpGet get_;

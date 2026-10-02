@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include <chrono>
 #include <cstdlib>
 
 #include "core/time.hpp"
@@ -23,6 +24,7 @@ AlpacaConfig test_config() {
   c.secret = "s";
   c.backoff_initial_ms = 0;
   c.backoff_max_ms = 0;
+  c.min_request_interval_ms = 0;
   return c;
 }
 }  // namespace
@@ -141,7 +143,9 @@ TEST_CASE("sync_bars fetches incrementally and saves") {
   sync_bars(client, store, {"AAPL"}, Timeframe::Day, utc_seconds(2026, 9, 1),
             utc_seconds(2026, 10, 2));
   REQUIRE_FALSE(paths.empty());
-  CHECK(paths[0].find("start=2026-09-30T04:00:00Z") != std::string::npos);
+  bool tail = false;
+  for (const auto& p : paths) tail = tail || p.find("start=2026-09-30T04:00:00Z") != std::string::npos;
+  CHECK(tail);
 }
 
 TEST_CASE("sync_bars reports stale tickers and keeps the rest") {
@@ -179,4 +183,43 @@ TEST_CASE("load_dotenv trims trailing whitespace before unquoting") {
   CHECK(std::string(std::getenv("FLUX_TEST_TRIM")) == "sip");
   CHECK(std::string(std::getenv("FLUX_TEST_TAB")) == "iex");
   CHECK(std::string(std::getenv("FLUX_TEST_QUOTED")) == "a b");
+}
+
+TEST_CASE("sync_bars back-fills history before the first cached bar") {
+  BarStore store(test::temp_dir("backfill"));
+  store.merge("AAPL", Timeframe::Day, {{utc_seconds(2026, 9, 29, 4), 1, 1, 1, 1, 1, 1}});
+  CHECK(store.first_time("AAPL", Timeframe::Day).value() == utc_seconds(2026, 9, 29, 4));
+  std::vector<std::string> paths;
+  AlpacaClient client(test_config(), [&](const std::string& path) {
+    paths.push_back(path);
+    return HttpResponse{200, R"({"bars":{}})"};
+  });
+  sync_bars(client, store, {"AAPL"}, Timeframe::Day, utc_seconds(2026, 9, 1), utc_seconds(2026, 10, 1));
+  REQUIRE(paths.size() == 2);
+  CHECK(paths[0].find("start=2026-09-01T00:00:00Z") != std::string::npos);
+  CHECK(paths[0].find("end=2026-09-29T04:00:00Z") != std::string::npos);
+  CHECK(paths[1].find("start=2026-09-29T04:00:00Z") != std::string::npos);
+
+  paths.clear();
+  sync_bars(client, store, {"AAPL"}, Timeframe::Day, utc_seconds(2026, 9, 27), utc_seconds(2026, 10, 1));
+  CHECK(paths.size() == 1);  // first bar within tolerance of start: no back-fill
+}
+
+TEST_CASE("client spaces requests by min_request_interval_ms and get returns the body") {
+  AlpacaConfig c = test_config();
+  c.min_request_interval_ms = 40;
+  int calls = 0;
+  AlpacaClient client(c, [&](const std::string&) {
+    ++calls;
+    return HttpResponse{200, "[]"};
+  });
+  const auto t0 = std::chrono::steady_clock::now();
+  for (int i = 0; i < 3; ++i) CHECK(client.get("/v2/assets") == "[]");
+  const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                      std::chrono::steady_clock::now() - t0)
+                      .count();
+  CHECK(calls == 3);
+  CHECK(ms >= 80);
+  AlpacaClient bad(test_config(), [](const std::string&) { return HttpResponse{403, "no"}; });
+  CHECK_THROWS_AS(bad.get("/v2/assets"), std::runtime_error);
 }

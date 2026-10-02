@@ -17,6 +17,7 @@ class BarStore {
   void merge(const std::string& ticker, Timeframe tf, const std::vector<Bar>& incoming);
   const std::vector<Bar>& bars(const std::string& ticker, Timeframe tf) const;
   std::optional<TimePoint> last_time(const std::string& ticker, Timeframe tf) const;
+  std::optional<TimePoint> first_time(const std::string& ticker, Timeframe tf) const;
   void save(const std::string& ticker, Timeframe tf) const;
   void load_all(const std::vector<std::string>& tickers, Timeframe tf);
 

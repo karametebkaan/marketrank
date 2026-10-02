@@ -59,6 +59,7 @@ std::optional<AlpacaConfig> alpaca_config_from_env() {
   c.key_id = key;
   c.secret = secret;
   if (const char* feed = std::getenv("APCA_DATA_FEED"); feed && *feed) c.feed = feed;
+  if (const char* th = std::getenv("APCA_TRADING_HOST"); th && *th) c.trading_host = th;
   return c;
 }
 
@@ -102,10 +103,21 @@ AlpacaClient::AlpacaClient(AlpacaConfig config, HttpGet get)
   }
 }
 
+void AlpacaClient::throttle() {
+  if (config_.min_request_interval_ms <= 0) return;
+  const auto gap = std::chrono::milliseconds(config_.min_request_interval_ms);
+  const auto now = std::chrono::steady_clock::now();
+  if (last_request_ && now - *last_request_ < gap) std::this_thread::sleep_for(gap - (now - *last_request_));
+  last_request_ = std::chrono::steady_clock::now();
+}
+
+std::string AlpacaClient::get(const std::string& path) { return get_with_retry(path).body; }
+
 HttpResponse AlpacaClient::get_with_retry(const std::string& path) {
   std::mt19937 jitter_rng(std::random_device{}());
   int delay_ms = config_.backoff_initial_ms;
   for (int attempt = 0;; ++attempt) {
+    throttle();
     HttpResponse res = get_(path);
     if (res.status == 200) return res;
     const bool retryable = res.status == 0 || res.status == 429 || res.status >= 500;

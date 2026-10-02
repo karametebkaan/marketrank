@@ -85,3 +85,11 @@ void BarStore::load_all(const std::vector<std::string>& tickers, Timeframe tf) {
 }
 
 }  // namespace fx
+
+namespace fx {
+std::optional<TimePoint> BarStore::first_time(const std::string& ticker, Timeframe tf) const {
+  const auto& b = bars(ticker, tf);
+  if (b.empty()) return std::nullopt;
+  return b.front().t;
+}
+}  // namespace fx
