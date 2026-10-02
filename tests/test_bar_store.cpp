@@ -22,21 +22,51 @@ TEST_CASE("merge keeps bars sorted, unique, newest wins") {
   CHECK(s.bars("MSFT", Timeframe::Day).empty());
 }
 
-TEST_CASE("save and load round trip") {
-  auto dir = test::temp_dir("bars_io");
+TEST_CASE("merge-only stores never touch disk") {
+  auto dir = test::temp_dir("bars_mem");
+  {
+    BarStore s(dir / "lake");
+    s.merge("AAPL", Timeframe::Day, {{100, 1, 1, 1, 1, 10, 1}});
+  }
+  CHECK_FALSE(std::filesystem::exists(dir / "lake"));
+}
+
+TEST_CASE("saved bars and coverage persist losslessly through the lake") {
+  auto dir = test::temp_dir("bars_lake");
   {
     BarStore s(dir);
-    s.merge("BRK.B", Timeframe::Hour, {{1759239000, 470.25, 471.5, 469.0, 470.75, 123456, 470.4}});
+    s.merge("BRK.B", Timeframe::Hour, {{1759239000, 470.25, 471.5, 469.0, 0.1 + 0.2, 123456, 1.0 / 3.0}});
+    s.save("BRK.B", Timeframe::Hour);
+    s.set_covered_from("BRK.B", Timeframe::Hour, 1759000000);
+    s.flush();
+    s.merge("BRK.B", Timeframe::Hour, {{1759239000, 1, 1, 1, 9.5, 1, 1}});  // upsert, saved by destructor
     s.save("BRK.B", Timeframe::Hour);
   }
   BarStore s2(dir);
   s2.load_all({"BRK.B", "MISSING"}, Timeframe::Hour);
   const auto& b = s2.bars("BRK.B", Timeframe::Hour);
   REQUIRE(b.size() == 1);
-  CHECK(b[0].t == 1759239000);
-  CHECK(b[0].c == doctest::Approx(470.75));
-  CHECK(b[0].v == doctest::Approx(123456));
-  CHECK(b[0].vw == doctest::Approx(470.4));
+  CHECK(b[0].c == 9.5);
+  CHECK(s2.covered_from("BRK.B", Timeframe::Hour).value() == 1759000000);
+  CHECK(s2.bars("MISSING", Timeframe::Hour).empty());
+}
+
+TEST_CASE("load_range only loads the window and panel windows and carries OHLC") {
+  auto dir = test::temp_dir("bars_window");
+  {
+    BarStore s(dir);
+    s.merge("A", Timeframe::Day, {{100, 9, 12, 8, 10, 5, 10}, {200, 10, 13, 9, 11, 6, 11}, {300, 11, 14, 10, 12, 7, 12}});
+    s.save("A", Timeframe::Day);
+  }
+  BarStore s2(dir);
+  s2.load_range({"A"}, Timeframe::Day, 150, 400);
+  CHECK(s2.bars("A", Timeframe::Day).size() == 2);
+  Panel p = build_panel(s2, {"A"}, Timeframe::Day, 250, 400);
+  REQUIRE(p.T() == 1);
+  CHECK(p.open[p.idx(0, 0)] == 11);
+  CHECK(p.high[p.idx(0, 0)] == 14);
+  CHECK(p.low[p.idx(0, 0)] == 10);
+  CHECK(p.close[p.idx(0, 0)] == 12);
 }
 
 TEST_CASE("panel aligns tickers on the union of times with NaN gaps") {
@@ -52,36 +82,4 @@ TEST_CASE("panel aligns tickers on the union of times with NaN gaps") {
   CHECK(p.close[p.idx(1, 1)] == 20);
   CHECK(std::isnan(p.volume[p.idx(2, 0)]));
   CHECK(p.vwap[p.idx(2, 1)] == 21);
-}
-
-TEST_CASE("load_all skips malformed rows and keeps the good ones") {
-  auto dir = test::temp_dir("bars_corrupt_row");
-  test::write_file(dir / "1d" / "AAA.csv",
-                   "t,o,h,l,c,v,vw\n100,1,1,1,1,10,1\nnot,a,row,at,all,x,y\n200,2,2,2,2,20,2\n"
-                   "300,3,3\n");
-  BarStore s(dir);
-  CHECK_NOTHROW(s.load_all({"AAA"}, Timeframe::Day));
-  const auto& b = s.bars("AAA", Timeframe::Day);
-  REQUIRE(b.size() == 2);
-  CHECK(b[0].t == 100);
-  CHECK(b[1].t == 200);
-}
-
-TEST_CASE("load_all skips files with a wrong header") {
-  auto dir = test::temp_dir("bars_bad_header");
-  test::write_file(dir / "1d" / "BAD.csv", "time,open\n100,1,1,1,1,10,1\n");
-  test::write_file(dir / "1d" / "EMPTY.csv", "");
-  BarStore s(dir);
-  CHECK_NOTHROW(s.load_all({"BAD", "EMPTY"}, Timeframe::Day));
-  CHECK(s.bars("BAD", Timeframe::Day).empty());
-  CHECK(s.bars("EMPTY", Timeframe::Day).empty());
-}
-
-TEST_CASE("save is atomic and leaves no temp file") {
-  auto dir = test::temp_dir("bars_atomic");
-  BarStore s(dir);
-  s.merge("AAPL", Timeframe::Day, {{100, 1, 1, 1, 1, 10, 1}});
-  s.save("AAPL", Timeframe::Day);
-  CHECK(std::filesystem::exists(dir / "1d" / "AAPL.csv"));
-  CHECK_FALSE(std::filesystem::exists(dir / "1d" / "AAPL.csv.tmp"));
 }

@@ -1,23 +1,39 @@
 #include "market/bar_store.hpp"
 
-#include <fstream>
-#include <iomanip>
-#include <stdexcept>
-
-#include "core/csv.hpp"
+#include <algorithm>
+#include <limits>
 
 namespace fx {
 
-BarStore::BarStore(std::filesystem::path cache_dir) : cache_dir_(std::move(cache_dir)) {}
+BarStore::BarStore(std::filesystem::path lake_root) : root_(std::move(lake_root)) {}
 
-void BarStore::merge(const std::string& ticker, Timeframe tf, const std::vector<Bar>& incoming) {
-  auto& series = series_[{ticker, tf}];
+BarStore::~BarStore() {
+  try {
+    flush();
+  } catch (...) {
+  }
+}
+
+Lake& BarStore::lake() {
+  if (!lake_) lake_ = std::make_unique<Lake>(root_);
+  return *lake_;
+}
+
+void BarStore::upsert(const Key& key, const std::vector<Bar>& incoming) {
+  auto& series = series_[key];
   std::map<TimePoint, Bar> by_time;
   for (const Bar& b : series) by_time[b.t] = b;
   for (const Bar& b : incoming) by_time[b.t] = b;
   series.clear();
   series.reserve(by_time.size());
   for (const auto& [t, b] : by_time) series.push_back(b);
+}
+
+void BarStore::merge(const std::string& ticker, Timeframe tf, const std::vector<Bar>& incoming) {
+  const Key key{ticker, tf};
+  upsert(key, incoming);
+  auto& q = queued_[key];
+  q.insert(q.end(), incoming.begin(), incoming.end());
 }
 
 const std::vector<Bar>& BarStore::bars(const std::string& ticker, Timeframe tf) const {
@@ -32,34 +48,10 @@ std::optional<TimePoint> BarStore::last_time(const std::string& ticker, Timefram
   return b.back().t;
 }
 
-std::filesystem::path BarStore::file_for(const std::string& ticker, Timeframe tf) const {
-  return cache_dir_ / std::string(to_string(tf)) / (ticker + ".csv");
-}
-
-void BarStore::save(const std::string& ticker, Timeframe tf) const {
-  const auto path = file_for(ticker, tf);
-  std::filesystem::create_directories(path.parent_path());
-  auto tmp = path;
-  tmp += ".tmp";
-  {
-    std::ofstream out(tmp, std::ios::trunc);
-    out << "t,o,h,l,c,v,vw\n" << std::setprecision(15);
-    for (const Bar& b : bars(ticker, tf)) {
-      out << b.t << ',' << b.o << ',' << b.h << ',' << b.l << ',' << b.c << ',' << b.v << ','
-          << b.vw << '\n';
-    }
-    out.flush();
-    if (!out) {
-      out.close();
-      std::filesystem::remove(tmp);
-      throw std::runtime_error("failed to write " + tmp.string());
-    }
-  }
-  std::filesystem::rename(tmp, path);
-}
-
-std::filesystem::path BarStore::from_file_for(const std::string& ticker, Timeframe tf) const {
-  return cache_dir_ / std::string(to_string(tf)) / (ticker + ".from");
+std::optional<TimePoint> BarStore::first_time(const std::string& ticker, Timeframe tf) const {
+  const auto& b = bars(ticker, tf);
+  if (b.empty()) return std::nullopt;
+  return b.front().t;
 }
 
 std::optional<TimePoint> BarStore::covered_from(const std::string& ticker, Timeframe tf) const {
@@ -69,67 +61,55 @@ std::optional<TimePoint> BarStore::covered_from(const std::string& ticker, Timef
 }
 
 void BarStore::set_covered_from(const std::string& ticker, Timeframe tf, TimePoint t) {
-  auto it = covered_.find({ticker, tf});
+  const Key key{ticker, tf};
+  auto it = covered_.find(key);
   if (it != covered_.end() && it->second <= t) return;
-  covered_[{ticker, tf}] = t;
-  const auto path = from_file_for(ticker, tf);
-  std::filesystem::create_directories(path.parent_path());
-  auto tmp = path;
-  tmp += ".tmp";
-  {
-    std::ofstream out(tmp, std::ios::trunc);
-    out << t << '\n';
-    out.flush();
-    if (!out) {
-      out.close();
-      std::filesystem::remove(tmp);
-      throw std::runtime_error("failed to write " + tmp.string());
-    }
+  covered_[key] = t;
+  auto [w, inserted] = cov_to_write_.emplace(key, t);
+  if (!inserted) w->second = std::min(w->second, t);
+}
+
+void BarStore::save(const std::string& ticker, Timeframe tf) {
+  const Key key{ticker, tf};
+  auto it = queued_.find(key);
+  if (it == queued_.end()) return;
+  auto& w = to_write_[key];
+  w.insert(w.end(), it->second.begin(), it->second.end());
+  queued_.erase(it);
+}
+
+void BarStore::flush() {
+  if (to_write_.empty() && cov_to_write_.empty()) return;
+  for (Timeframe tf : {Timeframe::Hour, Timeframe::Day, Timeframe::Week}) {
+    std::vector<LakeRow> rows;
+    std::vector<std::pair<std::string, TimePoint>> cov;
+    for (const auto& [key, bars] : to_write_)
+      if (key.second == tf)
+        for (const Bar& b : bars) rows.push_back({key.first, b});
+    for (const auto& [key, t] : cov_to_write_)
+      if (key.second == tf) cov.emplace_back(key.first, t);
+    if (!rows.empty() || !cov.empty()) lake().write(tf, rows, cov);
   }
-  std::filesystem::rename(tmp, path);
+  to_write_.clear();
+  cov_to_write_.clear();
+}
+
+void BarStore::load_range(const std::vector<std::string>& tickers, Timeframe tf, TimePoint start,
+                          TimePoint end) {
+  lake();  // an open failure (e.g. lake in use by another process) must surface
+  try {
+    for (auto& [ticker, loaded] : lake().read(tf, tickers, start, end)) upsert({ticker, tf}, loaded);
+    for (const auto& [ticker, t] : lake().coverage(tf, tickers)) {
+      auto it = covered_.find({ticker, tf});
+      if (it == covered_.end() || t < it->second) covered_[{ticker, tf}] = t;
+    }
+  } catch (const std::exception&) {
+    // Contract 4: unreadable data never aborts a load; the caller sees missing series.
+  }
 }
 
 void BarStore::load_all(const std::vector<std::string>& tickers, Timeframe tf) {
-  static const std::vector<std::string> kHeader = {"t", "o", "h", "l", "c", "v", "vw"};
-  for (const auto& ticker : tickers) {
-    try {
-      std::ifstream from_in(from_file_for(ticker, tf));
-      long long v = 0;
-      if (from_in && (from_in >> v)) {
-        auto it = covered_.find({ticker, tf});
-        if (it == covered_.end() || v < it->second) covered_[{ticker, tf}] = v;
-      }
-    } catch (const std::exception&) {
-    }
-    try {
-      const auto path = file_for(ticker, tf);
-      if (!std::filesystem::exists(path)) continue;
-      const CsvRows rows = read_csv_file(path);
-      if (rows.empty() || rows[0] != kHeader) continue;
-      std::vector<Bar> loaded;
-      for (std::size_t r = 1; r < rows.size(); ++r) {
-        const auto& f = rows[r];
-        if (f.size() < 7) continue;
-        try {
-          loaded.push_back({std::stoll(f[0]), std::stod(f[1]), std::stod(f[2]), std::stod(f[3]),
-                            std::stod(f[4]), std::stod(f[5]), std::stod(f[6])});
-        } catch (const std::exception&) {
-          continue;  // malformed row
-        }
-      }
-      merge(ticker, tf, loaded);
-    } catch (const std::exception&) {
-      continue;  // unreadable file: treat as missing
-    }
-  }
+  load_range(tickers, tf, std::numeric_limits<TimePoint>::min(), std::numeric_limits<TimePoint>::max());
 }
 
-}  // namespace fx
-
-namespace fx {
-std::optional<TimePoint> BarStore::first_time(const std::string& ticker, Timeframe tf) const {
-  const auto& b = bars(ticker, tf);
-  if (b.empty()) return std::nullopt;
-  return b.front().t;
-}
 }  // namespace fx

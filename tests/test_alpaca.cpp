@@ -127,6 +127,7 @@ TEST_CASE("fetch_bars batches 100 symbols per request") {
 
 TEST_CASE("sync_bars fetches incrementally and saves") {
   auto dir = test::temp_dir("sync");
+  {
   BarStore store(dir);
   std::vector<std::string> paths;
   AlpacaClient client(test_config(), [&](const std::string& path) {
@@ -137,7 +138,6 @@ TEST_CASE("sync_bars fetches incrementally and saves") {
                          utc_seconds(2026, 10, 1));
   CHECK(stale.empty());
   CHECK(store.bars("AAPL", Timeframe::Day).size() == 2);
-  CHECK(std::filesystem::exists(dir / "1d" / "AAPL.csv"));
 
   paths.clear();
   sync_bars(client, store, {"AAPL"}, Timeframe::Day, utc_seconds(2026, 9, 1),
@@ -146,6 +146,10 @@ TEST_CASE("sync_bars fetches incrementally and saves") {
   bool tail = false;
   for (const auto& p : paths) tail = tail || p.find("start=2026-09-30T04:00:00Z") != std::string::npos;
   CHECK(tail);
+  }
+  BarStore reload(dir);
+  reload.load_all({"AAPL"}, Timeframe::Day);
+  CHECK(reload.bars("AAPL", Timeframe::Day).size() == 2);
 }
 
 TEST_CASE("sync_bars reports stale tickers and keeps the rest") {
@@ -248,7 +252,7 @@ TEST_CASE("covered history is not re-requested; an earlier start back-fills agai
   CHECK(store.covered_from("AAPL", Timeframe::Day).value() == utc_seconds(2026, 8, 1));
 }
 
-TEST_CASE("covered_from persists through the sidecar file") {
+TEST_CASE("covered_from persists through the lake") {
   auto dir = test::temp_dir("covered_persist");
   {
     BarStore store(dir);
@@ -262,6 +266,7 @@ TEST_CASE("covered_from persists through the sidecar file") {
 
 TEST_CASE("sync_bars saves each group as it completes") {
   auto dir = test::temp_dir("pergroup");
+  {
   BarStore store(dir);
   store.merge("AAPL", Timeframe::Day, {{utc_seconds(2026, 9, 29, 4), 1, 1, 1, 1, 1, 1}});
   AlpacaClient client(test_config(), [&](const std::string& path) {
@@ -272,10 +277,7 @@ TEST_CASE("sync_bars saves each group as it completes") {
   auto stale = sync_bars(client, store, {"AAPL"}, Timeframe::Day, utc_seconds(2026, 9, 1),
                          utc_seconds(2026, 10, 1));
   CHECK(stale.size() == 1);
-  bool found = false;
-  for (const auto& e : std::filesystem::recursive_directory_iterator(dir))
-    found = found || e.path().filename() == "AAPL.csv";
-  CHECK(found);
+  }
   BarStore reload(dir);
   reload.load_all({"AAPL"}, Timeframe::Day);
   CHECK(reload.bars("AAPL", Timeframe::Day).size() == 2);
