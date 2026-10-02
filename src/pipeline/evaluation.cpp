@@ -58,9 +58,19 @@ bool known_sector(const std::string& s) { return !s.empty() && s != "Unclassifie
 
 }  // namespace
 
-double spearman(std::span<const double> a, std::span<const double> b) {
+double spearman(std::span<const double> a_in, std::span<const double> b_in) {
   const double nan = std::numeric_limits<double>::quiet_NaN();
-  if (a.size() != b.size() || a.size() < 3) return nan;
+  if (a_in.size() != b_in.size()) return nan;
+  // Only pairs where both values are finite take part (NaN would break the rank sort).
+  std::vector<double> a, b;
+  a.reserve(a_in.size());
+  b.reserve(b_in.size());
+  for (std::size_t i = 0; i < a_in.size(); ++i) {
+    if (!std::isfinite(a_in[i]) || !std::isfinite(b_in[i])) continue;
+    a.push_back(a_in[i]);
+    b.push_back(b_in[i]);
+  }
+  if (a.size() < 3) return nan;
   const auto ra = ranks(a), rb = ranks(b);
   const double n = static_cast<double>(a.size());
   double ma = 0, mb = 0;
@@ -111,7 +121,7 @@ EvalMetrics evaluate(const Panel& panel, const std::vector<Security>& nodes,
   const std::size_t T = panel.T(), N = panel.N();
   if (T < 3) throw std::runtime_error("evaluate: need at least three bars");
   if (nodes.size() != N) throw std::invalid_argument("evaluate: nodes/panel size mismatch");
-  const std::size_t e0 = T > eval_bars + 1 ? T - eval_bars : 1;
+  const std::size_t e0 = eval_bars >= T ? 1 : T - eval_bars;  // no eval_bars + 1 overflow
   const std::size_t warmup = std::max<std::size_t>(
       params.corr_window, static_cast<std::size_t>(std::ceil(3.0 * params.halflife_slow)));
   const std::size_t s0 = e0 > warmup + 1 ? e0 - warmup : 1;
@@ -121,6 +131,13 @@ EvalMetrics evaluate(const Panel& panel, const std::vector<Security>& nodes,
   std::vector<double> ics, ics_h;
   std::size_t frames = 0;
   double ms = 0;
+  // IC uses the one-bar-ahead forecast when the horizons include k = 1, else the first one.
+  std::size_t fc = 0;
+  for (std::size_t k = 0; k < params.horizons.size(); ++k)
+    if (params.horizons[k] == 1) {
+      fc = k;
+      break;
+    }
   for (std::size_t t = s0; t < T; ++t) {
     const Frame f = pipe.step(panel, t);
     if (t < e0) continue;
@@ -136,7 +153,7 @@ EvalMetrics evaluate(const Panel& panel, const std::vector<Security>& nodes,
       std::vector<double> s, h, r;
       for (std::size_t i = 0; i < N; ++i) {
         const double c0 = panel.close[panel.idx(t, i)], c1 = panel.close[panel.idx(t + 1, i)];
-        const double sc = f.forecasts.front().score[i];
+        const double sc = f.forecasts[fc].score[i];
         if (!f.active[i] || !std::isfinite(c0) || !std::isfinite(c1) || !(c0 > 0) ||
             !std::isfinite(sc) || !std::isfinite(f.h[i]))
           continue;

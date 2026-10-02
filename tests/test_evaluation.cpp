@@ -1,6 +1,8 @@
 #include <doctest/doctest.h>
 
 #include <cmath>
+#include <limits>
+#include <string>
 #include <vector>
 
 #include "market/panel.hpp"
@@ -74,4 +76,55 @@ TEST_CASE("defaults leave fewer nodes at the teleport floor than legacy on a hea
   CHECK(defaults.sector_coherence >= 0.0);
   CHECK(defaults.sector_coherence <= 1.0);
   CHECK_THROWS_AS(evaluate(panel, std::vector<Security>{}, CoreParams{}, 30), std::invalid_argument);
+}
+
+TEST_CASE("spearman drops non-finite pairs before ranking") {
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  const double inf = std::numeric_limits<double>::infinity();
+  CHECK(spearman(std::vector<double>{1, nan, 2, 3, 4, 5},
+                 std::vector<double>{10, 15, 20, inf, 40, 50}) == doctest::Approx(1.0));
+  CHECK(spearman(std::vector<double>{4, 3, nan, 2, 1}, std::vector<double>{1, 2, 3, 3, 4}) ==
+        doctest::Approx(-1.0));
+  CHECK(std::isnan(spearman(std::vector<double>{1, 2, nan, 3}, std::vector<double>{1, 2, 3, nan})));
+}
+
+namespace {
+Panel eval_panel(std::vector<Security>& secs) {
+  SyntheticConfig cfg;
+  cfg.bars = 70;
+  cfg.rotation_start = 30;
+  BarStore store(test::temp_dir("evalrobust"));
+  secs = generate_synthetic(cfg, store);
+  std::vector<std::string> tickers;
+  for (auto& s : secs) tickers.push_back(s.ticker);
+  return build_panel(store, tickers, cfg.tf);
+}
+}  // namespace
+
+TEST_CASE("eval_bars beyond the panel evaluates every bar") {
+  std::vector<Security> secs;
+  const Panel panel = eval_panel(secs);
+  const EvalMetrics all = evaluate(panel, secs, CoreParams{}, panel.T());
+  const EvalMetrics huge =
+      evaluate(panel, secs, CoreParams{}, std::numeric_limits<std::size_t>::max());
+  CHECK(all.ic_samples > 0);
+  CHECK(huge.ic_samples == all.ic_samples);
+  CHECK(huge.ic_mean == all.ic_mean);
+  CHECK(huge.floor_share == all.floor_share);
+}
+
+TEST_CASE("the IC uses the k = 1 forecast wherever it sits in the horizons") {
+  std::vector<Security> secs;
+  const Panel panel = eval_panel(secs);
+  CoreParams one, four_one, four;
+  one.horizons = {1};
+  four_one.horizons = {4, 1};
+  four.horizons = {4};
+  const EvalMetrics a = evaluate(panel, secs, one, 30);
+  const EvalMetrics b = evaluate(panel, secs, four_one, 30);
+  const EvalMetrics c = evaluate(panel, secs, four, 30);
+  REQUIRE(a.ic_samples > 0);
+  CHECK(b.ic_mean == a.ic_mean);
+  CHECK(b.ic_t == a.ic_t);
+  CHECK(c.ic_mean != a.ic_mean);  // no k = 1: falls back to the first horizon
 }
