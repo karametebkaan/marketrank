@@ -112,37 +112,52 @@ python3 scripts/openfigi_map.py --data data --min-value 1e7     # CUSIP -> ticke
 **Method.**
 - **Holdings.** 13F-HR only. Per (CIK, period) we keep the latest filing: a RESTATEMENT replaces the holdings and
   a NEW HOLDINGS amendment adds rows. Rows must be shares (`SH`) and not options.
-- **VALUE units.** These are repaired against each CUSIP's consensus price (median value/shares over at least 5
-  holders):
-  - a manager whose prices are a power of ten (100x or more) off has all its values rescaled;
-  - a single row whose value is that much too large is rescaled on its own.
+- **VALUE units.** Repaired per manager only, against each CUSIP's consensus price (median value/shares over at
+  least 5 holders).
+  - A manager is rescaled when it has at least 5 consensus rows, its median deviation is 1000x (or 10^6x) off,
+    within a factor 3, and at least 60% of its rows sit at that same power of 1000. All of its values are
+    then rescaled.
+  - The consensus is computed twice. The second pass leaves out the managers flagged in the first, so a CUSIP
+    held mostly by mis-unit filers cannot drag the consensus.
+  - Single rows and share counts are never rewritten. A row far off the consensus is as consistent with a
+    SHARES error as with a VALUE error, so it is left as filed for the position guard below.
 
-  About 60-80 managers per quarter reported dollars before the 2023 cutover, which inflated the raw totals to
-  $150-530T. From 2023 on, 340-1,140 managers per quarter still report thousands.
+  Before the repair the raw totals were $110-530T per quarter before 2023 and $32-72T after. 1,743
+  manager-quarters were rescaled down (dollars filed before the 2023 cutover) and 8,190 up (thousands filed
+  after it). 45,036 rows remain 100x or more off the consensus.
 - **Mapping.** CUSIPs map to tickers through OpenFIGI.
-- **Observed matrix.** Per manager, d = Δshares × the quarter's mean lake close (split-adjusted to the filing
-  basis). Each manager's outflow is paired with its inflow proportionally:
-  F_ij = out_i · in_j / Σin · min(1, Σin/Σout).
-  The observed matrix T_q is the sum over managers, on the top 2,000 tickers by 13F value.
-- **Dropped positions.** A position is dropped (and counted) when its value/shares is 100x or more off the
-  lake price, because that is a SHARES or VALUE filing error that would otherwise become a phantom flow.
+- **Observed matrix.** Per manager, d = Δshares × P_q. P_q is the quarter's mean lake close, moved onto the
+  filing's share basis by the 13F-median price. Each manager's outflow is paired with its inflow
+  proportionally: F_ij = out_i · in_j / Σin · min(1, Σin/Σout). The observed matrix T_q is the sum over
+  managers, on the top 2,000 tickers by 13F value.
+- **Dropped positions.** A position is dropped (and counted) when either quarter's value/shares is 100x or more
+  off P_q (q−1 at P_q × split ratio). It is also dropped when a side filed at value 0 holds more than $1M of
+  shares at that price. Either case is a SHARES or VALUE filing error that would otherwise become a phantom flow.
 - **Splits.** A split is accepted only when the holders' share counts confirm it; unconfirmed candidates are
   listed.
 - **Estimate.** The estimate is the pipeline's exact per-bar flux summed over the quarter's bars, warmed up on at
   least 60 prior returns, and restricted to the same node set.
 
 **Data (run of 2026-10-02).**
-- **Download.** 43 SEC ZIPs (2.65 GB), 42 quarters 2016Q1-2026Q2: 4,253-8,900 managers and 1.05M-2.40M
-  holdings per quarter, $21T (2016Q1) to $75T (2026Q2) after the unit repair.
-- **Mapping.** OpenFIGI mapped 23,554 CUSIPs (10,034 to a ticker). This covers every CUSIP with a holding of at
-  least $10M; no top-3,000 CUSIP falls below that.
-- **Coverage.** In the latest quarter, 2026Q2, **94.4%** of 13F dollar value maps to a ticker in the current
-  10,000-ticker universe. The share falls steadily going back: 72.2% in 2016Q1, 84.2% in 2019Q4, 89.4% in
-  2022Q4, 87.5% over all quarters. The universe holds only today's tickers, so delisted names are missing.
+- **Download.** 43 SEC ZIPs (2.65 GB) covering 42 quarters, 2016Q1-2026Q2. Per quarter there are 4,253-8,900
+  managers and 1.05M-2.40M holdings. Total value runs from $20.8T (2016Q1) to $75.7T (2026Q2) after the repair.
+  2021Q2 reads $51T because one unrepaired $6.6T row is left as filed.
+- **Mapping.** OpenFIGI mapped 23,554 CUSIPs, 10,034 of them to a ticker. That covers every CUSIP with a holding
+  of at least $10M, apart from 3,711 malformed or unmappable ones (under 0.6% of value).
+  - In every one of the 42 quarters, each of the top 3,000 CUSIPs by value has a holding of at least $10M.
+  - After the round-1 re-ingest, 9 newly qualifying CUSIPs were not queried.
+- **Coverage.** In the latest quarter, 2026Q2, **94.2%** of 13F dollar value maps to a ticker in the current
+  10,000-ticker universe. The share falls going back:
+  - 93.1% in 2024Q4, 87.8% in 2022Q4, 84.1% in 2019Q4 and 71.9% in 2016Q1;
+  - 87.0% over all quarters;
+  - 2021Q2 dips to 73.6% because of the $6.6T row above.
+
+  The universe holds only today's tickers, so delisted names are missing.
 - **Quarters compared.** 39, 2016Q4-2026Q2. 2016Q1-Q3 lack a previous quarter or warm-up.
-- **Observed flows per quarter.** 4,300-9,000 managers and 3.1M-3.7M observed edges. Paired flow runs from
-  $0.9T to $3.4T per quarter.
-- **Grid.** 6 configurations (λ ∈ {0, 0.5, 1} × pressure ∈ {dollar, sqrt}), 23.5 min, 7 GB peak memory.
+- **Observed flows per quarter.** 4,313-9,006 managers and 3.08M-3.71M observed edges. Paired flow runs from
+  $0.91T to $3.37T per quarter.
+- **Grid.** 6 configurations (λ ∈ {0, 0.5, 1} × pressure ∈ {dollar, sqrt}). The run took 64 min on a busy
+  machine (23.5 min when idle) and peaked at 7 GB.
 
 **Agreement.** The table below is for the base preset (λ = 1, dollar pressure). Values are mean ± sd over 39
 quarters. Lift = estimate − null:
@@ -155,12 +170,12 @@ quarters. Lift = estimate − null:
 | edge Spearman, observed top-5000 | 0.162 ± 0.059 | +0.036 ± 0.032 | −0.024 ± 0.008 | +0.163 ± 0.058 | 34/39 |
 | edge Spearman, all pairs | 0.357 ± 0.019 | +0.015 ± 0.022 | −0.065 ± 0.010 | +0.358 ± 0.019 | 28/39 |
 | row cosine | 0.182 ± 0.043 | +0.010 ± 0.041 | −0.050 ± 0.020 | +0.152 ± 0.042 | 24/39 |
-| π Spearman | 0.613 ± 0.030 | +0.044 ± 0.031 | +0.001 ± 0.002 | +0.614 ± 0.030 | 35/39 |
-| π top-50 overlap | 0.432 ± 0.064 | +0.048 ± 0.063 | +0.015 ± 0.026 | +0.406 ± 0.063 | 26/39 |
+| π Spearman | 0.613 ± 0.031 | +0.045 ± 0.031 | +0.001 ± 0.002 | +0.613 ± 0.031 | 36/39 |
+| π top-50 overlap | 0.432 ± 0.064 | +0.048 ± 0.062 | +0.016 ± 0.025 | +0.406 ± 0.063 | 27/39 |
 
 **Size baselines for π.**
 - Observed π vs quarter ADV: Spearman **0.896 ± 0.015**.
-- Observed π vs 13F value: 0.871 ± 0.017.
+- Observed π vs 13F value: 0.870 ± 0.017.
 - Estimated π vs observed π: 0.613.
 - Estimated π vs ADV: 0.687.
 
@@ -176,27 +191,39 @@ and its gravity lift is 0.001. Here π is a function of the marginals.
   - λ = 0 sqrt for row cosine.
 - **Dollar vs sqrt.** Dollar pressure has clearly higher raw agreement than sqrt (π 0.613 vs 0.523; observed
   top-5000 edge 0.162 vs 0.117).
-- **λ.** λ moves the metrics by ≤ 0.04 on π and ≤ 0.007 on edges.
+- **λ.** Within a pressure, λ moves π by at most 0.043, the all-pairs edge Spearman by at most 0.010 and the
+  observed top-5000 edge Spearman by at most 0.005.
 - **Verdict.** The data do not support changing the preset.
 
-**Unconfirmed split candidates.** There are 1,262 over 39 quarters, against 607 confirmed splits. The large ones
-are spin-offs and mergers that the lake's adjustment factors reflect but holders' share counts do not, for
+**Unconfirmed split candidates.** There are 1,249 over 39 quarters, against 606 confirmed splits. The large ones
+are mostly spin-offs and mergers that the lake's adjustment factors reflect but holders' share counts do not, for
 example:
 - APD, MET and HPE (spin-offs; share ratio 1.00);
 - RTX in 2020Q2 (merger; price ratio 0.50, share ratio 1.67);
 - HLT in 2017Q1 (reverse split plus spin-offs).
 
-They are treated as no split and listed in the report. 15,999 positions ($276B in total) were dropped as
-inconsistent.
+They are treated as no split and listed in the report.
+
+**Dropped positions.** 50,915 positions were dropped over 39 quarters. Their 13F value, $17.9T, is summed over
+both quarters' rows as filed, so it double-counts pairs and includes the bogus values themselves. Two patterns
+drive the spikes:
+- **Position counts.** 2,300-3,500 per quarter in 2022Q4-2023Q2 and 2024Q2-Q4. They come from a few managers
+  (in the quarters checked, the top 5 hold 50-77% of the off rows) whose filings mix units across rows or sit at other powers of ten,
+  which the manager-wide rule deliberately leaves alone. The 2023 cutover makes this worse.
+- **Dollar spikes.** $1.0-2.4T in 2017Q4-2018Q2 and 2021Q4-2022Q2. They are a handful of single rows filed 1000x
+  too large, e.g. a $594B SPY row; these are now dropped rather than rewritten.
 
 **What this means.**
 - **Beyond the marginals, nothing.** Every primary metric clears the permutation null by a wide margin, but
-  almost all of that is size and the marginals. On all three edge metrics the estimate's own rank-1 gravity null
-  (its marginals, with its pairing structure discarded) agrees with 13F **better** than the estimate itself, in
-  39 of 39 quarters. Measured against observed institutional pairing, the correlation-tilted pairing adds
-  nothing beyond the marginals, and on these metrics it subtracts a little.
+  almost all of that is size and the marginals. The estimate's own rank-1 gravity null (its marginals, with its
+  pairing structure discarded) agrees with 13F **better** than the estimate itself:
+  - for the base preset, in 39 of 39 quarters on both edge Spearman metrics and 38 of 39 on row cosine;
+  - for the other five configurations, in 39 of 39 on all three.
+
+  Measured against observed institutional pairing, the correlation-tilted pairing adds nothing beyond the
+  marginals, and on these metrics it subtracts a little.
 - **A small timing signal.** The temporal placebo lift is small but mostly positive: 0.01-0.05, positive in
-  24-35 of 39 quarters. So the estimate for the right quarter carries a little quarter-specific information that
+  24-36 of 39 quarters. So the estimate for the right quarter carries a little quarter-specific information that
   another quarter's estimate lacks.
 - **ADV is better.** For π, plain ADV ranks the observed 13F π far better (0.90) than estimated π does (0.61).
 

@@ -541,25 +541,25 @@ Anything less is ``no''.
 \section{Observed paired flows from SEC Form 13F}
 \label{Section:13f}
 
-The flows of Section~\ref{Section:flows} are inferred from bars. SEC Form 13F~\cite{sec13f} gives an \emph{observed}, if coarse, pairing. Every institutional manager with more than \$100M in US equities files its quarter-end long holdings on EDGAR~\cite{edgar}. Between two quarters a manager's cuts are its sources and its adds are its sinks. We build that observed quarterly flow matrix and compare it with the estimate summed over the same quarter's bars.
+The flows of Section~\ref{Section:flows} are inferred from bars. SEC Form 13F~\cite{sec13f} gives an \emph{observed}, if coarse, pairing. Every institutional manager with more than \$100M in Section~13(f) securities files its quarter-end long holdings on EDGAR~\cite{edgar}. Between two quarters a manager's cuts are its sources and its adds are its sinks. We build that observed quarterly flow matrix and compare it with the estimate summed over the same quarter's bars.
 
 \paragraph{Method}
 \begin{itemize}
 \item \textbf{Holdings.} We ingest the SEC's 13F data sets and keep only 13F-HR filings. Per manager and period the latest filing wins: a restatement replaces the holdings, and a new-holdings amendment adds rows. Only share positions count, with options excluded.
-\item \textbf{Value repair.} The VALUE field is repaired against each CUSIP's consensus price, the median value/shares over at least five holders. A manager whose prices sit a power of ten (at least $100\times$) off has all its values rescaled, and a single row whose value is that much too large is rescaled on its own. About 60--80 managers per quarter reported dollars before the 2023 switch from thousands, which inflated the raw totals to \$150--530T. From 2023 on, 340--1,140 managers per quarter still report thousands.
+\item \textbf{Value repair.} The VALUE field is repaired per manager only, against each CUSIP's consensus price (the median value/shares over at least five holders). A manager is rescaled when it has at least five consensus rows, its median deviation sits at $1000\times$ (or $10^6\times$) within a factor of 3, and at least 60\% of its rows sit at that same power. The consensus is then recomputed without the flagged managers and the test repeated, so a CUSIP held mostly by mis-unit filers cannot drag it. Single rows and share counts are never rewritten: a row far off the consensus is as consistent with a share-count error as with a value error, so it is left for the position guard below. Before the repair the raw totals were \$110--530T per quarter before the 2023 switch from thousands to dollars, and \$32--72T after it. Over all quarters, 1,743 manager-quarters were rescaled down (dollars filed before the switch) and 8,190 up (thousands filed after it).
 \item \textbf{Mapping.} CUSIPs map to tickers through OpenFIGI~\cite{openfigi}.
-\item \textbf{Observed matrix.} For manager $m$ and stock $i$, $d_{mi}=\Delta\text{shares}_{mi}\,\bar P_{iq}$, where $\bar P_{iq}$ is the quarter's mean lake close on the filing's share basis. A split counts only when the holders' share counts confirm it. Each manager's outflow is paired with its inflow proportionally, $F^{m}_{ij}=\mathrm{out}_i\,\mathrm{in}_j/\sum\mathrm{in}\cdot\min(1,\sum\mathrm{in}/\sum\mathrm{out})$; the remainder is unpaired cash. The observed matrix is $T_q=\sum_m F^m$ on the top 2,000 tickers by 13F value.
-\item \textbf{Dropped positions.} A position whose value/shares is at least $100\times$ off the lake price is dropped, because a share-count error would otherwise become a phantom flow.
+\item \textbf{Observed matrix.} For manager $m$ and stock $i$, $d_{mi}=\Delta\text{shares}_{mi}\,\bar P_{iq}$, where $\bar P_{iq}$ is the quarter's mean lake close, moved onto the filing's share basis by the 13F-median price. A split counts only when the holders' share counts confirm it. Each manager's outflow is paired with its inflow proportionally, $F^{m}_{ij}=\mathrm{out}_i\,\mathrm{in}_j/\sum\mathrm{in}\cdot\min(1,\sum\mathrm{in}/\sum\mathrm{out})$; the remainder is unpaired cash. The observed matrix is $T_q=\sum_m F^m$ on the top 2,000 tickers by 13F value.
+\item \textbf{Dropped positions.} A position is dropped when either quarter's value/shares is at least $100\times$ off $\bar P_{iq}$ (the 13F-median price moved through lake returns; $q-1$ at $\bar P_{iq}$ times the split ratio). It is also dropped when a side filed at value 0 holds more than \$1M of shares at that price. Either error would otherwise become a phantom flow.
 \item \textbf{Estimate.} The estimate $\hat T_q$ is the exact per-bar flux of Equation~(\ref{eqn:gravity}) summed over the quarter's bars. It is warmed up on at least 60 prior returns and restricted to the same nodes.
 \end{itemize}
 
 \paragraph{Data and coverage} The run uses 43 SEC data-set archives (2.65\,GB) covering 42 quarters, 2016Q1--2026Q2:
 \begin{itemize}
-\item 4,253--8,900 managers and 1.05M--2.40M holdings per quarter, \$21T (2016Q1) to \$75T (2026Q2) after the unit repair;
-\item 23,554 CUSIPs queried on OpenFIGI, every one with a holding of at least \$10M; no top-3,000 CUSIP falls below that floor;
-\item in the latest quarter, 2026Q2, \textbf{94.4\%} of 13F dollar value maps to a ticker of the current 10,000-ticker universe. The share falls going back (93.1\% in 2024Q4, 89.4\% in 2022Q4, 84.2\% in 2019Q4, 72.2\% in 2016Q1; 87.5\% over all quarters) because the universe holds only today's tickers.
+\item 4,253--8,900 managers and 1.05M--2.40M holdings per quarter, \$20.8T (2016Q1) to \$75.7T (2026Q2) after the unit repair;
+\item 23,554 CUSIPs queried on OpenFIGI, covering every CUSIP with a holding of at least \$10M; in each of the 42 quarters, all top-3,000 CUSIPs by value have such a holding;
+\item in the latest quarter, 2026Q2, \textbf{94.2\%} of 13F dollar value maps to a ticker of the current 10,000-ticker universe. The share falls going back (93.1\% in 2024Q4, 87.8\% in 2022Q4, 84.1\% in 2019Q4, 71.9\% in 2016Q1; 87.0\% over all quarters) because the universe holds only today's tickers. One unrepaired \$6.6T row pulls 2021Q2 down to 73.6\%.
 \end{itemize}
-Thirty-nine quarters, 2016Q4--2026Q2, have a previous quarter and enough warm-up. Each has 4,300--9,000 managers, 3.1M--3.7M observed edges and \$0.9T--\$3.4T of paired flow.
+Thirty-nine quarters, 2016Q4--2026Q2, have a previous quarter and enough warm-up. Each has 4,313--9,006 managers, 3.08M--3.71M observed edges and \$0.91T--\$3.37T of paired flow.
 
 \paragraph{Nulls} A lift is the metric minus a null. We use three nulls:
 \begin{itemize}
@@ -571,8 +571,8 @@ Thirty-nine quarters, 2016Q4--2026Q2, have a previous quarter and enough warm-up
 \paragraph{Results} Table~\ref{Table:13f} reports the base preset ($\lambda=1$, dollar pressure).
 \begin{itemize}
 \item \textbf{Permutation null.} Every metric clears it by a wide margin.
-\item \textbf{Gravity null.} On all three edge metrics the estimate is \emph{below} the gravity null built from its own marginals, in 39 of 39 quarters. Discarding the correlation-tilted pairing and keeping only the estimated inflow and outflow totals agrees better with 13F than the full estimate does.
-\item \textbf{Placebo.} The lift over the placebo is small but mostly positive. The estimate for the right quarter beats another quarter's estimate by 0.01--0.04 on the edge metrics and 0.044 on $\pi$. The lift is positive in 24--35 of 39 quarters, depending on the metric.
+\item \textbf{Gravity null.} On the edge metrics the estimate is \emph{below} the gravity null built from its own marginals. For the base preset this holds in 39 of 39 quarters on both edge Spearman metrics and in 38 of 39 on row cosine; for the other five configurations, in 39 of 39 on all three. Discarding the correlation-tilted pairing and keeping only the estimated inflow and outflow totals agrees better with 13F than the full estimate does.
+\item \textbf{Placebo.} The lift over the placebo is small but mostly positive. The estimate for the right quarter beats another quarter's estimate by 0.01--0.04 on the edge metrics and 0.045 on $\pi$. The lift is positive in 24--36 of 39 quarters, depending on the metric.
 \end{itemize}
 
 \begin{table*}[t]
@@ -587,15 +587,15 @@ metric & estimate & lift vs placebo & lift vs gravity & lift vs perm & $>0$ \\
 edge $\rho$, obs.\ top-5000 & $0.162\pm0.059$ & $+0.036\pm0.032$ & $-0.024\pm0.008$ & $+0.163\pm0.058$ & 34 \\
 edge $\rho$, all pairs & $0.357\pm0.019$ & $+0.015\pm0.022$ & $-0.065\pm0.010$ & $+0.358\pm0.019$ & 28 \\
 row cosine & $0.182\pm0.043$ & $+0.010\pm0.041$ & $-0.050\pm0.020$ & $+0.152\pm0.042$ & 24 \\
-$\pi$ Spearman & $0.613\pm0.030$ & $+0.044\pm0.031$ & $+0.001\pm0.002$ & $+0.614\pm0.030$ & 35 \\
-$\pi$ top-50 overlap & $0.432\pm0.064$ & $+0.048\pm0.063$ & $+0.015\pm0.026$ & $+0.406\pm0.063$ & 26 \\
+$\pi$ Spearman & $0.613\pm0.031$ & $+0.045\pm0.031$ & $+0.001\pm0.002$ & $+0.613\pm0.031$ & 36 \\
+$\pi$ top-50 overlap & $0.432\pm0.064$ & $+0.048\pm0.062$ & $+0.016\pm0.025$ & $+0.406\pm0.063$ & 27 \\
 \bottomrule
 \end{tabular}
 \end{table*}
 
 \paragraph{$\pi$ against size} Observed 13F $\pi$ is mostly size:
 \begin{itemize}
-\item its Spearman correlation with the quarter's average dollar volume (ADV) is $0.896\pm0.015$, and with 13F value $0.871\pm0.017$;
+\item its Spearman correlation with the quarter's average dollar volume (ADV) is $0.896\pm0.015$, and with 13F value $0.870\pm0.017$;
 \item estimated $\pi$ reaches only $0.613$ against observed $\pi$, and $0.687$ against ADV.
 \end{itemize}
 So plain ADV ranks the observed flow destinations much better than estimated $\pi$ does. Estimated $\pi$ agrees with observed $\pi$ about as well as estimated inflow agrees with observed inflow ($0.621$), and its gravity lift is $0.001$: here $\pi$ is a function of the marginals.
@@ -605,11 +605,11 @@ So plain ADV ranks the observed flow destinations much better than estimated $\p
 \item \textbf{Winner.} The best configuration by mean placebo lift on $\pi$ is $\lambda=1$ with $\sqrt{V}$ pressure, at $+0.046\pm0.034$ (range $-0.025$ to $+0.112$). It leads the base preset by 0.002, far inside the quarter-to-quarter spread.
 \item \textbf{Other metrics.} The winners differ by metric, all by margins of at most 0.002.
 \item \textbf{Dollar vs $\sqrt{V}$.} Dollar pressure has clearly higher raw agreement ($\pi$ $0.613$ vs $0.523$; observed top-5000 edges $0.162$ vs $0.117$).
-\item \textbf{$\lambda$.} It moves $\pi$ by at most 0.04 and the edge metrics by at most 0.007.
+\item \textbf{$\lambda$.} Within a pressure, it moves $\pi$ by at most 0.043 and the edge Spearman metrics by at most 0.010.
 \end{itemize}
 The 13F data therefore give no reason to change $\lambda$ or the pressure of the preset.
 
-\paragraph{Split candidates} Price-factor jumps that the holders' share counts do not confirm are treated as no split and listed: 1,262 over 39 quarters, against 607 confirmed splits. The large ones are spin-offs and mergers that the lake's adjustment factors reflect but holders' share counts do not. Examples are APD, MET and HPE (share ratio 1.00), RTX in 2020Q2 (price ratio 0.50, share ratio 1.67) and HLT in 2017Q1. Another 15,999 positions (\$276B in total) were dropped as inconsistent.
+\paragraph{Split candidates} Price-factor jumps that the holders' share counts do not confirm are treated as no split and listed: 1,249 over 39 quarters, against 606 confirmed splits. The large ones are spin-offs and mergers that the lake's adjustment factors reflect but holders' share counts do not. Examples are APD, MET and HPE (share ratio 1.00), RTX in 2020Q2 (price ratio 0.50, share ratio 1.67) and HLT in 2017Q1. Separately, the position guard dropped 50,915 positions. Their 13F value, \$17.9T, is summed over both quarters' rows as filed, so it double-counts pairs and includes the bogus values. The count spikes to 2,300--3,500 per quarter in 2022Q4--2023Q2 and 2024Q2--Q4. These drops come from a few managers whose filings mix units across rows, which the manager-wide repair deliberately leaves alone; the 2023 switch made this worse. The dollar spikes (\$1.0--2.4T in 2017Q4--2018Q2 and 2021Q4--2022Q2) are a handful of single rows filed $1000\times$ too large.
 
 \paragraph{Limits}
 \begin{itemize}
@@ -619,7 +619,7 @@ The 13F data therefore give no reason to change $\lambda$ or the pressure of the
 \item \textbf{Cleaning heuristics.} The unit repair and the $100\times$ position filter are heuristics against a per-CUSIP consensus.
 \end{itemize}
 
-\paragraph{Reading} Measured against observed institutional pairing, the bar-level estimate carries information about \emph{which} stocks send and receive money, and a little about \emph{when}. The placebo lift is small but mostly positive. It carries no information about \emph{who pairs with whom} beyond the marginals: the gravity lift is negative on every edge metric in every quarter. Even its marginal information is weaker than plain dollar volume.
+\paragraph{Reading} Measured against observed institutional pairing, the bar-level estimate carries information about \emph{which} stocks send and receive money, and a little about \emph{when}. The placebo lift is small but mostly positive. It carries no information about \emph{who pairs with whom} beyond the marginals: the gravity lift is negative on every edge metric, in all 39 quarters except one quarter of row cosine under the base preset. Even its marginal information is weaker than plain dollar volume.
 
 %% ------------------------------------------------------------------
 \section{Limitations and future work}
