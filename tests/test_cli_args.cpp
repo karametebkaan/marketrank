@@ -170,3 +170,15 @@ TEST_CASE("serve flags default to the marketrank preset") {
   CHECK(c.params.transition.lift == LiftMode::Off);
   CHECK(c.params.h_ref == HotRef::Uniform);
 }
+
+TEST_CASE("cli --cluster-persistence") {
+  CliArgs a = parse_cli({"--mode", "replay", "--cluster-persistence", "--cp-stride", "10", "--cp-out", "x/y"});
+  CHECK(a.cluster_persistence);
+  CHECK(a.cp_stride == 10);
+  CHECK(a.cp_out == "x/y");
+  CHECK(parse_cli({}).cp_stride == 5);
+  CHECK_FALSE(parse_cli({}).cluster_persistence);
+  CHECK_THROWS_AS(parse_cli({"--cluster-persistence"}), std::invalid_argument);  // needs replay
+  CHECK_THROWS_AS(parse_cli({"--mode", "replay", "--cluster-persistence", "--serve"}), std::invalid_argument);
+  CHECK_THROWS_AS(parse_cli({"--mode", "replay", "--cluster-persistence", "--cp-stride", "0"}), std::invalid_argument);
+}

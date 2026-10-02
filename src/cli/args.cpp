@@ -150,6 +150,9 @@ CliArgs parse_cli(const std::vector<std::string>& args) {
     else if (flag == "--wf-largecap-run") a.wf_largecap_run = value();
     else if (flag == "--wf-blend") a.wf_blend = to_blend(flag, value());
     else if (flag == "--wf-rereport") a.wf_rereport = value();
+    else if (flag == "--cluster-persistence") a.cluster_persistence = true;
+    else if (flag == "--cp-stride") a.cp_stride = to_size(flag, value());
+    else if (flag == "--cp-out") a.cp_out = value();
     else if (flag == "--help" || flag == "-h") a.help = true;
     else throw std::invalid_argument("unknown flag " + flag);
   }
@@ -160,6 +163,10 @@ CliArgs parse_cli(const std::vector<std::string>& args) {
   if (a.walkforward && a.mode != "replay") throw std::invalid_argument("--walkforward needs --mode replay");
   if (a.walkforward && (a.serve || a.export_slice > 0 || !a.shocks.empty() || a.eval))
     throw std::invalid_argument("--walkforward cannot be combined with --serve, --export-slice, --shock or --eval");
+  if (a.cluster_persistence && a.mode != "replay") throw std::invalid_argument("--cluster-persistence needs --mode replay");
+  if (a.cluster_persistence && (a.walkforward || a.serve || a.export_slice > 0 || !a.shocks.empty() || a.eval))
+    throw std::invalid_argument("--cluster-persistence cannot be combined with --walkforward, --serve, --export-slice, --shock or --eval");
+  if (a.cp_stride == 0) throw std::invalid_argument("--cp-stride must be >= 1");
   if (wf_flag && !a.walkforward && a.wf_rereport.empty())
     a.warnings.push_back("--wf-* flags have no effect without --walkforward");
   if (!a.wf_rereport.empty()) check_run_id(a.wf_rereport, "--wf-rereport");
@@ -227,6 +234,9 @@ std::string cli_usage() {
          "                   [--wf-largecap-run ID]   (sibling --wf-top-n 500 run in the same --wf-out: gate c5)\n"
          "                   [--wf-blend TRAIN/EMBARGO/GATE/MIN]   (blend windows in rebalance periods; default\n"
          "                                   156/1/104/52 weekly, 36/1/24/12 monthly)\n"
+         "                 [--cluster-persistence [--cp-stride N (5)] [--cp-out DIR (<data>/analysis)]]   (replay: from-\n"
+         "                                   scratch Louvain persistence of the flux communities vs lag, seeds, chance\n"
+         "                                   and sectors; writes cluster_persistence*.csv and exits)\n"
          "                 [--wf-rereport ID [--wf-out DIR]]   (dev: regenerate results.json and report.md of a\n"
          "                                   stored run from its equity.csv; no lake, no pass)\n";
 }

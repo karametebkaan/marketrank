@@ -18,6 +18,7 @@
 #include <utility>
 #include <vector>
 
+#include "analysis/cluster_persistence.hpp"
 #include "cli/args.hpp"
 #include "cli/rank_report.hpp"
 #include "core/time.hpp"
@@ -449,6 +450,14 @@ int main(int argc, char** argv) {
     }
     if (panel.T() < 2) throw std::runtime_error("not enough cached bars; run with --mode alpaca first");
     if (args.walkforward) return run_walkforward_cli(args, panel, portfolio);
+    if (args.cluster_persistence) {
+      mr::ClusterPersistenceOptions opt;
+      opt.stride = args.cp_stride;
+      opt.out_dir = args.cp_out.empty() ? args.data / "analysis" : args.cp_out;
+      std::printf("params: %s\n", mr::describe(args.params).c_str());
+      mr::run_cluster_persistence(panel, universe.nodes(), args.params, opt);
+      return 0;
+    }
     if (args.serve) {
       if (!mr::is_loopback_host(args.host))
         std::cerr << "warning: --host " << args.host

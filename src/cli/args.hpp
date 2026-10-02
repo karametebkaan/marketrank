@@ -56,6 +56,10 @@ struct CliArgs {
   std::string wf_largecap_run;   // sibling large-cap run id for gate c5
   std::string wf_rereport;       // dev: regenerate results.json/report.md of this stored run (no lake, no pass)
   std::optional<BlendParams> wf_blend;  // --wf-blend TRAIN/EMBARGO/GATE/MIN; default blend_defaults(wf_rebalance)
+  // Flux-community persistence study (--cluster-persistence, replay only): writes CSVs to cp_out and exits.
+  bool cluster_persistence = false;
+  std::size_t cp_stride = 5;      // anchor bars every N bars
+  std::filesystem::path cp_out;   // empty = <data>/analysis
   std::vector<std::string> warnings;    // non-fatal problems found while parsing (main prints them)
 };
 

@@ -210,12 +210,13 @@ Frame CorePipeline::step(const Panel& panel, std::size_t t, const std::vector<Sh
   // of today's opposite-sign movers. The flux is built before the push, so `unit` stays valid.
   std::span<const double> unit;
   if (params_.flux.lambda > 0) unit = window_.unit_vectors();
-  const BarFlux bar = bar_flux_sparse(pressure, unit, window_.window(), params_.flux);
+  BarFlux bar = bar_flux_sparse(pressure, unit, window_.window(), params_.flux);
   last_pressure_ = pressure;
   window_.push(returns);
   slow_.add(bar);
   fast_.add(bar);
   if (long_) long_->add(bar);
+  last_bar_ = std::move(bar);
 
   Frame f;
   f.t = panel.times[t];
