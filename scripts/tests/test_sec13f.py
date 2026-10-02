@@ -73,7 +73,7 @@ class Sec13fTests(unittest.TestCase):
         self.assertEqual(sec13f.quarter_of("01-JAN-2020"), "2020Q1")
 
     def test_read_zip_rows(self):
-        rows = sorted(sec13f.read_zip(self.zip))
+        rows = sorted(sec13f.aggregate(sec13f.read_zip(self.zip)))
         self.assertEqual(rows, [
             ("2021Q4", "111", "037833100", "APPLE INC", 15, 150000),
             ("2023Q4", "222", "594918104", "MSFT", 20, 2000),
@@ -162,6 +162,192 @@ class Sec13fTests(unittest.TestCase):
             self.assertEqual(os.environ["QQ_A"], "one two")
             self.assertEqual(os.environ["QQ_B"], "orig")
             os.environ.pop("QQ_A", None)
+
+    # ---- fix round 1 ----
+    def _zip2(self):
+        p = os.path.join(self.tmp.name, "y_form13f.zip")
+        sub_h = ["ACCESSION_NUMBER", "FILING_DATE", "SUBMISSIONTYPE", "CIK", "PERIODOFREPORT"]
+        cov_h = ["ACCESSION_NUMBER", "REPORTCALENDARORQUARTER", "ISAMENDMENT", "AMENDMENTTYPE"]
+        info_h = ["ACCESSION_NUMBER", "NAMEOFISSUER", "TITLEOFCLASS", "CUSIP", "VALUE",
+                  "SSHPRNAMT", "SSHPRNAMTTYPE", "PUTCALL"]
+        with zipfile.ZipFile(p, "w") as z:
+            z.writestr("SUBMISSION.tsv", tsv(sub_h, [["C1", "10-AUG-2022", "13F-HR", "222", "30-JUN-2022"]]))
+            z.writestr("COVERPAGE.tsv", tsv(cov_h, [["C1", "30-JUN-2022", "N", ""]]))
+            z.writestr("INFOTABLE.tsv", tsv(info_h, [["C1", "TSLA", "COM", "88160R101", "4", "9", "SH", ""],
+                                                      ["C1", "TSLA", "COM", "88160R101", "1", "1", "SH", ""]]))
+        return p
+
+    def test_staging_matches_in_memory_three_quarters(self):
+        z2 = self._zip2()
+        blobs = {}
+        for n, p in (("01jan2022-29feb2024_form13f.zip", self.zip), ("01mar2024-31may2024_form13f.zip", z2)):
+            with open(p, "rb") as f:
+                blobs[n] = f.read()
+        index = "".join('<a href="/d/%s">z</a>' % n for n in blobs)
+
+        def get(url, ua):
+            if url.endswith("index"):
+                return 200, index.encode(), 0
+            return 200, blobs[url.rsplit("/", 1)[-1]], 0
+        data = os.path.join(self.tmp.name, "data")
+        client = sec13f.SecClient("ua", min_interval=0, get=get, sleep=lambda s: None)
+        with mock.patch.object(sec13f, "read_meta", wraps=sec13f.read_meta) as rm:
+            qs = sec13f.run(data, None, None, "https://x/index", client)
+        self.assertEqual(rm.call_count, 2)
+        self.assertEqual(qs, ["2021Q4", "2022Q2", "2023Q4"])
+        self.assertTrue(os.path.exists(os.path.join(data, "13f", "staging.sqlite")))
+        # in-memory reference
+        subs, cov = {}, {}
+        for p in (self.zip, z2):
+            s, c = sec13f.read_meta(p)
+            subs.update(s); cov.update(c)
+        dec = sec13f.apply_amendments(subs, cov)
+        ref = {}
+        for p in (self.zip, z2):
+            for r in sec13f.aggregate(sec13f.read_zip(p, dec)):
+                ref.setdefault(r[0], []).append(r)
+        for q, rows in ref.items():
+            refp = os.path.join(self.tmp.name, "ref_%s.csv" % q)
+            sec13f.write_quarter(rows, refp)
+            with open(refp) as a, open(os.path.join(data, "13f", "holdings_%s.csv" % q)) as b:
+                self.assertEqual(a.read(), b.read())
+
+    def test_download_streams_in_chunks(self):
+        class Body:
+            def __init__(self): self.sizes = []; self.n = 3
+            def read(self, size=-1):
+                self.sizes.append(size)
+                self.n -= 1
+                return b"x" * 10 if self.n >= 0 else b""
+            def close(self): pass
+        body = Body()
+        c = sec13f.SecClient("ua", min_interval=0, get=lambda u, ua: (200, body, 0), sleep=lambda s: None)
+        dest = os.path.join(self.tmp.name, "d.zip")
+        c.download("https://x/d.zip", dest)
+        self.assertEqual(os.path.getsize(dest), 30)
+        self.assertTrue(all(0 < n <= 1 << 20 for n in body.sizes))
+        self.assertFalse(os.path.exists(dest + ".part"))
+
+    def test_find_dotenv_order(self):
+        cwd = os.path.join(self.tmp.name, "cwd"); par = os.path.join(self.tmp.name, "par")
+        root = os.path.join(self.tmp.name, "root")
+        for d in (cwd, par, root, os.path.join(par, "data")):
+            os.makedirs(d, exist_ok=True)
+        data = os.path.join(par, "data")
+        self.assertIsNone(sec13f.find_dotenv(data, cwd, root))
+        open(os.path.join(root, ".env"), "w").close()
+        self.assertEqual(sec13f.find_dotenv(data, cwd, root), os.path.join(root, ".env"))
+        open(os.path.join(par, ".env"), "w").close()
+        self.assertEqual(sec13f.find_dotenv(data, cwd, root), os.path.join(par, ".env"))
+        open(os.path.join(cwd, ".env"), "w").close()
+        self.assertEqual(sec13f.find_dotenv(data, cwd, root), os.path.join(cwd, ".env"))
+
+    def test_main_uses_parent_of_data_env(self):
+        par = os.path.join(self.tmp.name, "par"); os.makedirs(os.path.join(par, "data"))
+        with open(os.path.join(par, ".env"), "w") as f:
+            f.write("SEC_USER_AGENT=FAKE-UA-zzz\n")
+        seen = {}
+        def fake_run(data, qf, qt, url, client, stats=None):
+            seen["ua"] = client._ua
+            return []
+        with mock.patch.dict(os.environ, {}):
+            os.environ.pop("SEC_USER_AGENT", None)
+            with mock.patch.object(sec13f, "run", fake_run), mock.patch.object(sec13f, "find_dotenv",
+                    lambda d, c=None, r=None, _f=sec13f.find_dotenv: _f(d, self.tmp.name, self.tmp.name)):
+                sec13f.main(["--data", os.path.join(par, "data")])
+        self.assertEqual(seen["ua"], "FAKE-UA-zzz")
+
+    def test_pacing(self):
+        t = [0.0]; stamps = []
+        def get(u, ua):
+            stamps.append(t[0]); return 200, b"", 0
+        def sleep(s): t[0] += s
+        c = sec13f.SecClient("ua", min_interval=0.15, get=get, sleep=sleep, now=lambda: t[0])
+        for _ in range(4):
+            c.get("https://x/p")
+        gaps = [b - a for a, b in zip(stamps, stamps[1:])]
+        self.assertTrue(all(g >= 0.15 - 1e-9 for g in gaps), gaps)
+
+    def test_exactly_20_calls(self):
+        n = [0]
+        def get(u, ua):
+            n[0] += 1; return 500, b"", 0
+        c = sec13f.SecClient("ua", min_interval=0, get=get, sleep=lambda s: None)
+        with self.assertRaises(sec13f.SecAbort):
+            c.get("https://x/p")
+        self.assertEqual(n[0], 20)
+
+    def test_retry_after_on_503(self):
+        seq = [(503, b"", 5), (200, b"ok", 0)]
+        slept = []
+        c = sec13f.SecClient("ua", min_interval=0, get=lambda u, ua: seq.pop(0), sleep=slept.append)
+        c.get("https://x/p")
+        self.assertEqual(slept, [5])
+
+    def test_ua_never_leaks(self):
+        ua = "SECRET-UA-xyz"
+        buf = io.StringIO()
+        with mock.patch("sys.stdout", buf):
+            for status in (403, 500, 404):
+                c = sec13f.SecClient(ua, min_interval=0, get=lambda u, a: (status, b"", 0), sleep=lambda s: None)
+                with self.assertRaises(Exception) as cm:
+                    c.get("https://x/p")
+                self.assertNotIn(ua, str(cm.exception))
+        self.assertNotIn(ua, buf.getvalue())
+
+    def _custom_zip(self, sub, cov, info, info_bytes=None):
+        p = os.path.join(self.tmp.name, "c_form13f.zip")
+        sub_h = ["ACCESSION_NUMBER", "FILING_DATE", "SUBMISSIONTYPE", "CIK", "PERIODOFREPORT"]
+        cov_h = ["ACCESSION_NUMBER", "REPORTCALENDARORQUARTER", "ISAMENDMENT", "AMENDMENTTYPE"]
+        with zipfile.ZipFile(p, "w") as z:
+            z.writestr("SUBMISSION.tsv", tsv(sub_h, sub))
+            z.writestr("COVERPAGE.tsv", tsv(cov_h, cov))
+            z.writestr("INFOTABLE.tsv", info_bytes if info_bytes is not None else info)
+        return p
+
+    def test_tsv_robustness(self):
+        h = "ACCESSION_NUMBER\tNAMEOFISSUER\tTITLEOFCLASS\tCUSIP\tVALUE\tSSHPRNAMT\tSSHPRNAMTTYPE\tPUTCALL\n"
+        body = (h +
+                "A\tNAME\tCOM\tAAA111111\t5\t12345678901234567\tSH\t\n"   # big int, exact
+                "A\tFRAC\tCOM\tBBB222222\t5\t10.5\tSH\t\n"                 # Decimal
+                "A\tNOCUSIP\tCOM\t\t5\t1\tSH\t\n"                         # empty cusip
+                "A\tSHORT\tCOM\tCCC333333\t5\t2\tSH\n")                    # short row (no PUTCALL)
+        raw = b"\xef\xbb\xbf" + body.encode()
+        p = self._custom_zip([["A", "10-FEB-2024", "13F-HR", "9", "31-DEC-2023"]],
+                             [["A", "31-DEC-2023", "N", ""]], None, raw)
+        stats = {}
+        rows = list(sec13f.read_zip(p, stats=stats))
+        d = {r[2]: r for r in rows}
+        self.assertEqual(d["AAA111111"][4], 12345678901234567)
+        self.assertEqual(str(d["BBB222222"][4]), "10.5")
+        self.assertEqual(d["CCC333333"][3], "SHORT")
+        self.assertEqual(stats["empty_cusip"], 1)
+
+    def test_blank_amendment_type_skipped(self):
+        subs = {"O": {"cik": "1", "period": "31-DEC-2023", "filing_date": "01-FEB-2024", "type": "13F-HR"},
+                "U": {"cik": "1", "period": "31-DEC-2023", "filing_date": "05-FEB-2024", "type": "13F-HR/A"}}
+        cov = {"O": {"amendment_type": "", "is_amendment": "N"},
+               "U": {"amendment_type": "", "is_amendment": "Y"}}
+        stats = {}
+        self.assertEqual(sec13f.apply_amendments(subs, cov, stats), {"O": "keep"})
+        self.assertEqual(stats["unknown_amendments"], 1)
+
+    def test_to_skips_late_zips(self):
+        blob = open(self.zip, "rb").read()
+        fetched = []
+        index = ('<a href="/d/01jan2022-31mar2022_form13f.zip">a</a>'
+                 '<a href="/d/01jan2030-31mar2030_form13f.zip">b</a>')
+        def get(url, ua):
+            fetched.append(url)
+            return (200, index.encode(), 0) if url.endswith("index") else (200, blob, 0)
+        c = sec13f.SecClient("ua", min_interval=0, get=get, sleep=lambda s: None)
+        sec13f.run(os.path.join(self.tmp.name, "dd"), None, "2023Q4", "https://x/index", c)
+        self.assertEqual(len(fetched), 2)
+        self.assertFalse(any("2030" in u for u in fetched))
+
+    def test_gitignore_pycache(self):
+        root = os.path.join(os.path.dirname(__file__), "..", "..", ".gitignore")
+        self.assertIn("__pycache__/", open(root).read().split())
 
 
 if __name__ == "__main__":
