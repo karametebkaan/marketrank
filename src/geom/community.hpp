@@ -32,6 +32,21 @@ std::vector<double> community_graph(const Csr& W, const CommunityResult& r);
 // community, if any, always goes last. `cw` is the dense K x K matrix, `count[c]` the stock count of community c.
 std::vector<int> spectral_order(const std::vector<double>& cw, const std::vector<std::size_t>& count, int loose_id);
 
+// Matches new communities to previous labels. new_id: per node, -1 for none; old_label: per node, -1 none, -2 loose,
+// >= 0 label. Pairs are taken greedily by overlap (desc), then lower new id, then lower old id, and count only when
+// their Jaccard overlap is >= min_jaccard. Returns one label per new id (0..count-1): the matched old label, or a
+// fresh one from next_label (ascending new id) when unmatched; the loose id gets -1.
+std::vector<std::int64_t> match_labels(const std::vector<std::int32_t>& new_id, int count, int loose_id,
+                                       const std::vector<std::int64_t>& old_label, std::int64_t& next_label,
+                                       double min_jaccard = 0.3);
+
+// Layout order of labels. `spectral` is the spectral order of the new ids; the loose id is dropped. Labels that also
+// appear in old_order are matched: they are stably re-sorted into their old relative order within the slots they
+// occupy, while unmatched labels stay at their spectral positions.
+std::vector<std::int64_t> arrange_order(const std::vector<int>& spectral, int loose_id,
+                                        const std::vector<std::int64_t>& new_label,
+                                        const std::vector<std::int64_t>& old_order);
+
 // Flux-community assignment that is stable across frames. Re-clusters on the first update and then every
 // `recluster_bars` updates, matching new communities to the previous ones so labels and layout order stay put.
 // Between re-clusters a newly active node joins its strongest active neighbour's community (else loose) and an
@@ -41,7 +56,7 @@ class CommunityTracker {
   CommunityTracker(std::size_t n, int recluster_bars = 5, int min_size = 8);
   // Per-node group = position of the node's community in the layout order (the loose pool is last). 0 for inactive.
   const std::vector<std::uint32_t>& update(const Csr& P, const std::vector<bool>& active);
-  // Per node: group position, or -1 for loose / inactive.
+  // Per node: the persistent community label (stable across re-clusters), or -1 for loose / inactive.
   const std::vector<std::int32_t>& node_group() const { return node_group_; }
   int communities() const { return communities_; }          // non-loose communities with members
   std::size_t loose_nodes() const { return loose_nodes_; }  // nodes in the loose pool

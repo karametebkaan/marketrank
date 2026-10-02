@@ -439,6 +439,64 @@ std::vector<int> spectral_order(const std::vector<double>& cw, const std::vector
   return out;
 }
 
+std::vector<std::int64_t> match_labels(const std::vector<std::int32_t>& new_id, int count, int loose_id,
+                                       const std::vector<std::int64_t>& old_label, std::int64_t& next_label,
+                                       double min_jaccard) {
+  const auto K = static_cast<std::size_t>(count);
+  std::vector<std::int64_t> label(K, -1);
+  std::vector<std::size_t> cnt(K, 0);
+  std::map<std::int64_t, std::size_t> old_size;
+  std::map<std::pair<int, std::int64_t>, std::size_t> overlap;
+  for (std::size_t i = 0; i < new_id.size(); ++i) {
+    const bool has_new = new_id[i] >= 0 && new_id[i] != loose_id;
+    if (has_new) ++cnt[static_cast<std::size_t>(new_id[i])];
+    if (i < old_label.size() && old_label[i] >= 0) {
+      ++old_size[old_label[i]];
+      if (has_new) ++overlap[{new_id[i], old_label[i]}];
+    }
+  }
+  std::vector<std::tuple<std::size_t, int, std::int64_t>> pairs;
+  for (auto& kv : overlap) pairs.emplace_back(kv.second, kv.first.first, kv.first.second);
+  std::sort(pairs.begin(), pairs.end(), [](const auto& a, const auto& b) {
+    if (std::get<0>(a) != std::get<0>(b)) return std::get<0>(a) > std::get<0>(b);
+    if (std::get<1>(a) != std::get<1>(b)) return std::get<1>(a) < std::get<1>(b);
+    return std::get<2>(a) < std::get<2>(b);
+  });
+  std::set<std::int64_t> used_old;
+  std::vector<bool> matched(K, false);
+  for (auto& [ov, nw, old] : pairs) {
+    if (matched[static_cast<std::size_t>(nw)] || used_old.count(old)) continue;
+    const double jac = static_cast<double>(ov) / static_cast<double>(cnt[static_cast<std::size_t>(nw)] + old_size[old] - ov);
+    if (jac < min_jaccard) continue;
+    matched[static_cast<std::size_t>(nw)] = true;
+    used_old.insert(old);
+    label[static_cast<std::size_t>(nw)] = old;
+  }
+  for (std::size_t c = 0; c < K; ++c)
+    if (static_cast<int>(c) != loose_id && !matched[c]) label[c] = next_label++;
+  return label;
+}
+
+std::vector<std::int64_t> arrange_order(const std::vector<int>& spectral, int loose_id,
+                                        const std::vector<std::int64_t>& new_label,
+                                        const std::vector<std::int64_t>& old_order) {
+  std::map<std::int64_t, std::size_t> old_pos;
+  for (std::size_t k = 0; k < old_order.size(); ++k) old_pos[old_order[k]] = k;
+  std::vector<std::int64_t> ord;
+  for (int c : spectral)
+    if (c != loose_id) ord.push_back(new_label[static_cast<std::size_t>(c)]);
+  std::vector<std::size_t> slots;
+  std::vector<std::int64_t> kept;
+  for (std::size_t k = 0; k < ord.size(); ++k)
+    if (old_pos.count(ord[k])) {
+      slots.push_back(k);
+      kept.push_back(ord[k]);
+    }
+  std::stable_sort(kept.begin(), kept.end(), [&](auto a, auto b) { return old_pos[a] < old_pos[b]; });
+  for (std::size_t k = 0; k < slots.size(); ++k) ord[slots[k]] = kept[k];
+  return ord;
+}
+
 CommunityTracker::CommunityTracker(std::size_t n, int recluster_bars, int min_size)
     : n_(n), bars_(std::max(1, recluster_bars)), min_size_(min_size), label_(n, -1), group_(n, 0), node_group_(n, -1) {}
 
@@ -456,51 +514,8 @@ const std::vector<std::uint32_t>& CommunityTracker::update(const Csr& P, const s
     for (std::size_t i = 0; i < n_; ++i)
       if (r.id[i] >= 0) ++cnt[static_cast<std::size_t>(r.id[i])];
     const std::vector<int> spectral = spectral_order(community_graph(W, r), cnt, r.loose_id);
-    // Match new communities to old labels: greedy by overlap, Jaccard >= 0.3.
-    std::vector<std::int64_t> new_label(K, -1);
-    std::map<std::int64_t, std::size_t> old_size;
-    std::map<std::pair<int, std::int64_t>, std::size_t> overlap;
-    for (std::size_t i = 0; i < n_; ++i)
-      if (label_[i] >= 0) {
-        ++old_size[label_[i]];
-        if (r.id[i] >= 0 && r.id[i] != r.loose_id) ++overlap[{r.id[i], label_[i]}];
-      }
-    std::vector<std::tuple<std::size_t, int, std::int64_t>> pairs;
-    for (auto& kv : overlap) pairs.emplace_back(kv.second, kv.first.first, kv.first.second);
-    std::sort(pairs.begin(), pairs.end(), [](const auto& a, const auto& b) {
-      if (std::get<0>(a) != std::get<0>(b)) return std::get<0>(a) > std::get<0>(b);
-      if (std::get<1>(a) != std::get<1>(b)) return std::get<1>(a) < std::get<1>(b);
-      return std::get<2>(a) < std::get<2>(b);
-    });
-    std::set<std::int64_t> used_old;
-    std::vector<bool> matched(K, false);
-    for (auto& [ov, nw, old] : pairs) {
-      if (matched[static_cast<std::size_t>(nw)] || used_old.count(old)) continue;
-      const double jac = static_cast<double>(ov) /
-                         static_cast<double>(cnt[static_cast<std::size_t>(nw)] + old_size[old] - ov);
-      if (jac < 0.3) continue;
-      matched[static_cast<std::size_t>(nw)] = true;
-      used_old.insert(old);
-      new_label[static_cast<std::size_t>(nw)] = old;
-    }
-    for (std::size_t c = 0; c < K; ++c)
-      if (static_cast<int>(c) != r.loose_id && !matched[c]) new_label[c] = next_label_++;
-    // Layout order: spectral order, with matched communities stably re-sorted into their old relative order.
-    std::map<std::int64_t, std::size_t> old_pos;
-    for (std::size_t k = 0; k < order_.size(); ++k) old_pos[order_[k]] = k;
-    std::vector<std::int64_t> ord;
-    for (int c : spectral)
-      if (c != r.loose_id) ord.push_back(new_label[static_cast<std::size_t>(c)]);
-    std::vector<std::size_t> slots;
-    std::vector<std::int64_t> kept;
-    for (std::size_t k = 0; k < ord.size(); ++k)
-      if (used_old.count(ord[k])) {
-        slots.push_back(k);
-        kept.push_back(ord[k]);
-      }
-    std::stable_sort(kept.begin(), kept.end(), [&](auto a, auto b) { return old_pos[a] < old_pos[b]; });
-    for (std::size_t k = 0; k < slots.size(); ++k) ord[slots[k]] = kept[k];
-    order_ = ord;
+    std::vector<std::int64_t> new_label = match_labels(r.id, r.count, r.loose_id, label_, next_label_);
+    order_ = arrange_order(spectral, r.loose_id, new_label, order_);
     for (std::size_t i = 0; i < n_; ++i) {
       if (!active[i])
         label_[i] = -1;
@@ -553,7 +568,7 @@ const std::vector<std::uint32_t>& CommunityTracker::update(const Csr& P, const s
       ++loose_nodes_;
     } else {
       group_[i] = pos[static_cast<std::size_t>(label_[i])];
-      node_group_[i] = static_cast<std::int32_t>(group_[i]);
+      node_group_[i] = static_cast<std::int32_t>(label_[i]);
       present.insert(label_[i]);
     }
   }

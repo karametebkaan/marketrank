@@ -38,7 +38,7 @@ struct LandscapeNode {
   std::int32_t cell;
   float fx, fy;  // cell centre normalized to [0, 1]
   double h, hdisp, pi, score;
-  std::int32_t group = -1;  // territory id (flux community position or sector id); -1 for the loose pool
+  std::int32_t group = -1;  // flux: persistent community label (stable across re-clusters); sector: sector id; -1 = loose
 };
 
 struct LandscapeArc {

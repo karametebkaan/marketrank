@@ -143,6 +143,7 @@ Built per frame from the active nodes (about 6,000 at N = 10,000 under the $1M f
 1. **Territories (user decisions 2026-10-02): flux communities by default, sectors as an option.** Each territory is one contiguous region of the lattice with area proportional to its active stock count, laid out along a generalized Hilbert (gilbert2d) curve (every cell once, consecutive cells at Chebyshev distance 1, starting at (0,0)). `LandscapeParams.territory = flux | sector`; the API accepts `"territory":"flux"|"sector"`.
    - **Flux communities.** The graph is the off-diagonal kept edges of the slow P among active nodes, weighted by `raw` (edges with raw ≤ 0 or non-finite ignored), symmetrized W = R + Rᵀ. Deterministic two-phase Louvain (nodes visited in ascending index, ties to the lowest community id, at most 50 passes per level, aggregated until no change) finds communities of stocks that trade money among themselves. Communities smaller than 8 merge into their most strongly connected neighbour; those with no neighbour pool into one "loose" community that is laid out last. At most 256 communities are kept by merging the smallest.
    - **Order.** The community graph (summed weights) is ordered by recursive spectral bisection: the Fiedler vector of the normalized Laplacian (500 power iterations on 2I − L_sym with the trivial vector deflated), sorted, split where the cumulative stock count is nearest half; disconnected sets fall back to their components. Communities that trade with each other therefore sit next to each other.
+   - **Half orientation.** After recursing, each half is reversed if needed so that its end nearer the other half is the one more strongly connected to it. The sign rule alone orients every recursive call independently, so on a chain A–B–C–D it gives BADC (each pair is flipped arbitrarily) instead of ABCD or DCBA.
    - **Stability.** The clustering is recomputed on the first frame, every 5 frames and whenever parameters change. In between, membership and order are kept; a newly active stock joins its strongest active neighbour's community (else loose) and an inactive stock leaves. On a re-cluster, new communities are matched to the old ones greedily by overlap (Jaccard ≥ 0.3) so ids and relative order persist.
    - **Sectors.** In sector mode a node's group is its `Security::sector` (ids in ascending string order); a sector with no active stocks has no territory.
    - **Sizes.** With A active stocks and C lattice cells, territory g gets c_g = a_g plus its largest-remainder share of the C − A spare cells (ties to the lower id). Territories are consecutive ranges of the curve in ascending group order.
@@ -255,7 +256,7 @@ data/       universe/, cache/ (ignored), ledger/, portfolio.json
 ```
 
 ### 9.2 Frame pipeline (one Δt)
-`bars(t) → flux update → prune → solve π → forecast → layout → lattice snap → IDW → optimize (if horizon closes) → fill previous proposals → NAV → publish`
+`bars(t) → flux update → prune → solve π → forecast → territories (flux communities: Louvain, spectral order, Hilbert-curve ranges, hotness centre-outward; §6.1) → IDW → display smoothing → optimize (if horizon closes) → fill previous proposals → NAV → publish`
 
 Changing a parameter re-runs only the affected stage and those after it. Replay speed is clamped so that the frame interval ≥ max(user Δt, 1.5 × measured compute time), so larger graphs automatically slow playback rather than queuing frames.
 
@@ -268,16 +269,17 @@ Changing a parameter re-runs only the affected stage and those after it. Replay 
 ### 9.3 API
 | Endpoint | Purpose |
 |---|---|
-| `GET /api/frame/latest` (or `?t=`) | JSON: nodes (ticker, sector, π, h, forecasts, cell, raw xy), pruned edges, portfolio markers |
+| `GET /api/frame` (or `?t=`) | JSON (milestone 2). `nodes` are arrays `[i, ticker, sector, cell, fx, fy, h, hdisp, pi, score, group]`: `group` is the persistent flux-community label (stable across re-clusters; the sector id in sector mode; −1 for the loose pool). Also `arcs`, `portfolio`, `lattice`, `raster` meta, `compute_ms`, and `communities: {count, modularity, loose, cluster_ms}` (count excludes the loose pool; loose is its stock count) |
+| `GET /api/top?n=&bars=&t=` | the hottest n stocks by exact model h with their last `bars` h values (the UI heartbeat table) |
 | `GET /api/frame/latest/grid` | Binary Float32 raster + header (w, h, min, max) |
 | `GET /api/events` | SSE: `frame`, `proposal`, `status`, `error` |
-| `GET/POST /api/params` | all parameters; POST of strategy parameters creates a new version |
+| `GET/POST /api/params` | all parameters; POST of strategy parameters creates a new version. Landscape parameters (milestone 2): `height`, `idw_power`, `idw_radius`, `subdivision`, `smooth` (Gaussian σ in cells, 0–4) and `territory` (`flux` or `sector`, otherwise 400) |
 | `GET/PUT /api/portfolio` | initial portfolio definition |
 | `GET /api/books`, `GET /api/books/{id}/nav` | books, metrics, NAV curves |
 | `GET /api/proposals?book=` | proposal history with fills |
 | `GET /api/strategies` | version tree |
 | `POST /api/replay` | play / pause / seek / speed |
-| `GET /api/status`, `GET /api/times` | computation progress and parameters; frame times (milestone 2) |
+| `GET /api/status`, `GET /api/times` | computation progress and parameters (including `smooth` and `territory`); frame times (milestone 2) |
 | `POST /api/shock`, `GET /api/shock/grid` | counterfactual shocks at the latest bar (§5.3): deltas plus a Δh raster (milestone 2) |
 
 ### 9.4 UI

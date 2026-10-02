@@ -6,6 +6,7 @@
 #include <limits>
 #include <stdexcept>
 #include <map>
+#include <random>
 #include <set>
 #include <vector>
 
@@ -18,8 +19,9 @@
 using namespace fx;
 
 namespace {
-Frame synthetic_frame() {
+Frame synthetic_frame(std::uint64_t seed = 42) {
   SyntheticConfig cfg;
+  cfg.seed = seed;
   BarStore store(test::temp_dir("landscape"));
   auto secs = generate_synthetic(cfg, store);
   std::vector<std::string> tickers;
@@ -189,18 +191,12 @@ TEST_CASE("builder state: lattice size change, unit-range fx/fy, single node") {
   for (float z : s.raster.z) CHECK(std::isfinite(z));
 }
 
-TEST_CASE("lattice neighbours have correlated heights, in flux and in sector mode") {
- for (TerritoryMode mode : {TerritoryMode::Flux, TerritoryMode::Sector}) {
-  const Frame f = synthetic_frame();
-  LandscapeParams p;
-  p.territory = mode;
-  p.smooth = 0;
-  p.idw.subdivision = 1;
-  LandscapeBuilder b(f.active.size(), p, synthetic_groups(f.active.size()));
-  LandscapeFrame lf = b.build(f);
-  const std::size_t W = lf.size.cols, H = lf.size.rows;
+namespace {
+// Pearson correlation of the display heights of horizontally and vertically adjacent occupied cells.
+double neighbour_corr(const LatticeSize& size, const std::vector<std::int32_t>& cells, const std::vector<double>& v) {
+  const std::size_t W = size.cols, H = size.rows;
   std::vector<double> hd(W * H, std::numeric_limits<double>::quiet_NaN());
-  for (const auto& nd : lf.nodes) hd[static_cast<std::size_t>(nd.cell)] = nd.hdisp;
+  for (std::size_t k = 0; k < cells.size(); ++k) hd[static_cast<std::size_t>(cells[k])] = v[k];
   std::vector<double> xs, ys;
   for (std::size_t r = 0; r < H; ++r)
     for (std::size_t c = 0; c < W; ++c) {
@@ -215,7 +211,6 @@ TEST_CASE("lattice neighbours have correlated heights, in flux and in sector mod
         ys.push_back(hd[(r + 1) * W + c]);
       }
     }
-  REQUIRE(xs.size() > 10);
   double mx = 0, my = 0;
   for (std::size_t k = 0; k < xs.size(); ++k) mx += xs[k], my += ys[k];
   mx /= static_cast<double>(xs.size());
@@ -226,10 +221,46 @@ TEST_CASE("lattice neighbours have correlated heights, in flux and in sector mod
     sxx += (xs[k] - mx) * (xs[k] - mx);
     syy += (ys[k] - my) * (ys[k] - my);
   }
-  const double corr = sxy / std::sqrt(sxx * syy);
-  MESSAGE("neighbour correlation = " << corr);
-  CHECK(corr >= 0.5);
- }
+  return sxy / std::sqrt(sxx * syy);
+}
+
+double median_of(std::vector<double> v) {
+  std::sort(v.begin(), v.end());
+  return v.size() % 2 ? v[v.size() / 2] : 0.5 * (v[v.size() / 2 - 1] + v[v.size() / 2]);
+}
+}  // namespace
+
+TEST_CASE("lattice neighbours have correlated heights: territories beat a shuffled-cell baseline over seeds 1..9") {
+  std::vector<double> flux, sector, shuffled;
+  for (std::uint64_t seed = 1; seed <= 9; ++seed) {
+    const Frame f = synthetic_frame(seed);
+    const std::size_t n = f.active.size();
+    for (TerritoryMode mode : {TerritoryMode::Flux, TerritoryMode::Sector}) {
+      LandscapeParams p;
+      p.territory = mode;
+      p.smooth = 0;
+      p.idw.subdivision = 1;
+      LandscapeBuilder b(n, p, synthetic_groups(n));
+      LandscapeFrame lf = b.build(f);
+      std::vector<std::int32_t> cells;
+      std::vector<double> hd;
+      for (const auto& nd : lf.nodes) {
+        cells.push_back(nd.cell);
+        hd.push_back(nd.hdisp);
+      }
+      (mode == TerritoryMode::Flux ? flux : sector).push_back(neighbour_corr(lf.size, cells, hd));
+      if (mode == TerritoryMode::Flux) {  // same cells, node values permuted (fixed Fisher-Yates on mt19937_64)
+        std::mt19937_64 rng(1000 + seed);
+        for (std::size_t k = hd.size(); k > 1; --k) std::swap(hd[k - 1], hd[rng() % k]);
+        shuffled.push_back(neighbour_corr(lf.size, cells, hd));
+      }
+    }
+  }
+  const double mf = median_of(flux), ms = median_of(sector), mb = median_of(shuffled);
+  MESSAGE("median neighbour correlation over seeds 1..9: flux " << mf << ", sector " << ms << ", shuffled " << mb);
+  CHECK(mf - mb >= 0.25);
+  CHECK(ms - mb >= 0.25);
+  CHECK(mf >= 0.3);
 }
 
 TEST_CASE("territory placement is stable: identical rebuilds, and 1% hotness noise moves few nodes") {

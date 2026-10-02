@@ -62,9 +62,10 @@ The page shows a triangulated landscape of signed-log hotness. Hills are where m
 
 **Left panel.** It lets you:
 - switch the preset and hotness reference;
-- set the IDW and height parameters;
-- set the arc count;
-- scrub or play through the last 300 bars;
+- choose the territories (flux communities or sectors);
+- set the IDW and height parameters and the display smoothing;
+- set the arc count with the Arcs slider;
+- scrub or play through the last 300 bars (the Hottest-10 table at the top right shows the ten highest model h with their recent history);
 - apply a shock on the latest bar (`TICKER`, ±%) to show the Δh landscape of who absorbs the money and who loses it.
 
 ## How it works
