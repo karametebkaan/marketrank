@@ -141,7 +141,8 @@ python3 scripts/openfigi_map.py --data data --min-value 1e7     # CUSIP -> ticke
 **Data (run of 2026-10-02).**
 - **Download.** 43 SEC ZIPs (2.65 GB) covering 42 quarters, 2016Q1-2026Q2. Per quarter there are 4,253-8,900
   managers and 1.05M-2.40M holdings. Total value runs from $20.8T (2016Q1) to $75.7T (2026Q2) after the repair.
-  2021Q2 reads $51T because one unrepaired $6.6T row is left as filed.
+  2021Q2 reads $51T because one unrepaired $6.6T row is left as filed; its CUSIP has no ticker, so it never enters
+  the flows.
 - **Mapping.** OpenFIGI mapped 23,554 CUSIPs, 10,034 of them to a ticker. That covers every CUSIP with a holding
   of at least $10M, apart from 3,711 malformed or unmappable ones (under 0.6% of value).
   - In every one of the 42 quarters, each of the top 3,000 CUSIPs by value has a holding of at least $10M.

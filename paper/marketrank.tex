@@ -556,8 +556,8 @@ The flows of Section~\ref{Section:flows} are inferred from bars. SEC Form 13F~\c
 \paragraph{Data and coverage} The run uses 43 SEC data-set archives (2.65\,GB) covering 42 quarters, 2016Q1--2026Q2:
 \begin{itemize}
 \item 4,253--8,900 managers and 1.05M--2.40M holdings per quarter, \$20.8T (2016Q1) to \$75.7T (2026Q2) after the unit repair;
-\item 23,554 CUSIPs queried on OpenFIGI, covering every CUSIP with a holding of at least \$10M; in each of the 42 quarters, all top-3,000 CUSIPs by value have such a holding;
-\item in the latest quarter, 2026Q2, \textbf{94.2\%} of 13F dollar value maps to a ticker of the current 10,000-ticker universe. The share falls going back (93.1\% in 2024Q4, 87.8\% in 2022Q4, 84.1\% in 2019Q4, 71.9\% in 2016Q1; 87.0\% over all quarters) because the universe holds only today's tickers. One unrepaired \$6.6T row pulls 2021Q2 down to 73.6\%.
+\item 23,554 CUSIPs queried on OpenFIGI, covering every CUSIP with a holding of at least \$10M in the first ingest (9 CUSIPs that reach \$10M only after the unit repair were not queried and stay unmapped); in each of the 42 quarters, all top-3,000 CUSIPs by value have such a holding;
+\item in the latest quarter, 2026Q2, \textbf{94.2\%} of 13F dollar value maps to a ticker of the current 10,000-ticker universe. The share falls going back (93.1\% in 2024Q4, 87.8\% in 2022Q4, 84.1\% in 2019Q4, 71.9\% in 2016Q1; 87.0\% over all quarters) because the universe holds only today's tickers. One unrepaired \$6.6T row, whose CUSIP has no ticker and so never enters the flows, pulls 2021Q2 down to 73.6\%. Node selection and the 13F-value baseline use values as filed; rows 100x or more off the price, dropped from the flows, change at most 4 of the 2,000 nodes in a quarter pair (checked on 2021Q4/2022Q1 and 2024Q2/Q3).
 \end{itemize}
 Thirty-nine quarters, 2016Q4--2026Q2, have a previous quarter and enough warm-up. Each has 4,313--9,006 managers, 3.08M--3.71M observed edges and \$0.91T--\$3.37T of paired flow.
 
