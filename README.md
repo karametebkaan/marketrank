@@ -23,6 +23,18 @@ MarketRank shows where money concentrates. The goal is to learn whether followin
 - **If yes, consistently:** we build the optimizer that moves the portfolio, and paper-track it before anyone trusts it.
 - **If no:** we have learned that cheaply, without risking money, and we look for better flow data, such as ETF flows or 13F.
 
+**What we found (2026-10-02).** The answer on public daily bars is no, and we know why.
+
+- **Walk-forward:** following MarketRank lost 3–5% a year against simply holding, in every run; only a small
+  short-term reversal is real, and it is too small to pay for trading ([Results](#results-m3a-2026-10-02)).
+- **Observed flows (13F):** against the holding changes that institutions report to the SEC, the estimated
+  flows get the senders and receivers roughly right but say nothing about who pairs with whom; plain trading
+  volume ranks the observed destinations better ([Observed flows from 13F](#observed-flows-from-13f)).
+- **Communities:** the flux clusters behind the landscape last only about as long as the flow window that
+  defines them, so the map is a reading aid for recent flows, not a stable structure.
+
+So the bottleneck is the flow data, not the solver: the next step is data that observe pairing more directly.
+
 Weekly is the primary test: any edge from flow pressure should show within about a week, and beyond that flows mix with unrelated news. Monthly is kept as a comparison. This is milestone 3. Its spec is `docs/superpowers/specs/2026-10-02-marketrank-m3-design.md`.
 
 Stocks are ranked by their MarketRank score π·N (1 = an average active stock) and, optionally, by hotness.
@@ -449,7 +461,7 @@ flowchart TD
   K --> L["Lattice cells"]
   L --> M["IDW at subdivision 1"]
   M --> N["CVT smoother"]
-  N --> O["deck.gl: Gouraud mesh, P90 colour, arcs, rings"]
+  N --> O["deck.gl: Gouraud mesh, P90 colour, holding dots, section cuts"]
   F --> P["Heartbeat table: exact π·N, Δlog π·N"]
 ```
 
@@ -472,34 +484,46 @@ after 5 bars without a close.
 
 *Why.* Prices and volumes are public; who bought from whom is not. Pairing net sellers with net buyers in
 proportion to size and co-movement gives an estimate of where money went, and pruning keeps memory linear in
-N. P is the chain that π is solved on, and the same P (its raw values) feeds the community detection and the
-arcs below.
+N. P is the chain that π is solved on. The communities below use a separate, short-memory accumulation of the
+same bar flows (half-life 20 bars).
 
 ### 2. Louvain communities
 
-*What.* The community graph is the symmetrised raw flux W = R + Rᵀ, where R holds P's off-diagonal kept
-edges among active stocks (raw dollars, not probabilities). Louvain runs in two phases: local moves, then
-aggregation, repeated until nothing moves. It is made deterministic by visiting nodes in index order,
-summing neighbours in column order, accepting a move only for a modularity gain above 1e-12, breaking ties
-to the lowest community id, and numbering communities by their smallest member. Communities with fewer
-than 8 stocks (`min_size`) merge into the neighbour they share the most flux with. Those with no neighbour
-go into one pooled **loose** community, which is placed last. At most 256 communities are kept.
+*What.* The community graph is the symmetrised raw flux W = R + Rᵀ of the **recent** flows: R holds the
+off-diagonal kept edges among active stocks of a separate accumulation of the bar flows with half-life
+`halflife_cluster` = 20 bars (about a month; raw dollars, not probabilities). π keeps the cumulative flows.
+Louvain runs in two phases: local moves, then aggregation, repeated until nothing moves. It is made
+deterministic by visiting nodes in index order, summing neighbours in column order, accepting a move only for
+a modularity gain above 1e-12, breaking ties to the lowest community id, and numbering communities by their
+smallest member. Communities with fewer than 8 stocks (`min_size`) merge into the neighbour they share the
+most flux with. Those with no neighbour go into one pooled **loose** community, which is placed last. At most
+256 communities are kept.
 
-Re-clustering happens every 5 bars (`recluster_bars`). Each re-cluster warm-starts phase 1 from the current
-labels: stocks that share a label start together and new stocks start alone. The very first clustering is
-re-run from its own result until it reaches a fixed point (at most 4 rounds). New communities are matched to
-old labels greedily by overlap. A pair counts when its Jaccard overlap is ≥ 0.3 or ≥ 60% of the new
-community lies inside the old one. Matched communities keep their label and their relative layout order, and
-unmatched ones get fresh labels. Between re-clusters a newly active stock joins the community of its
-strongest labelled neighbour (else loose), and an inactive stock leaves. In serve mode the first 5 bars
-(`warmup_bars`) only feed the model, with no landscape and no clustering.
+The clustering is recomputed **from scratch on every bar** (`recluster_bars` 1, `cluster_warm_start` off): no
+seeding from the previous partition, so any stability comes from the data. Only identity is carried over, for
+colours and layout: new communities are matched to old labels greedily by overlap (Jaccard ≥ 0.3, or ≥ 60%
+of the new community inside the old one); matched communities keep their label and relative layout order,
+unmatched ones get fresh labels. In serve mode the first 5 bars (`warmup_bars`) only feed the model.
 
-*Parameters.* Resolution 1.0, `min_size` 8, max 256 communities, re-cluster every 5 bars, Jaccard 0.3,
-containment 0.6, warm-up 5 bars.
+*Parameters.* Resolution 1.0, `min_size` 8, max 256 communities, re-cluster every bar, flow half-life 20 bars,
+Jaccard 0.3, containment 0.6, warm-up 5 bars.
 
-*Why.* Territories should group stocks that trade money among themselves, so the flux arcs stay short and a
-community reads as one landform. The warm start and label matching keep the map from reshuffling every time
-it re-clusters.
+*Why, and how persistent they are.* Territories should group stocks that trade money among themselves *now*.
+`--cluster-persistence` measured how long from-scratch communities last (2016–2026, NMI between bar t and
+t+k as a share of the same-bar ceiling):
+
+| flow half-life | k = 1 | 5 | 10 | 20 | 60 |
+|---|---:|---:|---:|---:|---:|
+| 3 bars | 63% | 13% | 3% | 1% | 1% |
+| 10 bars | 83% | 47% | 25% | 8% | 2% |
+| **20 bars (used)** | 89% | 63% | 44% | 23% | 3% |
+| 60 bars | 95% | 80% | 67% | 50% | 18% |
+
+They last about as long as the window that defines them, and they are not sectors (NMI with SEC sectors
+0.03–0.04). The cumulative graph looked stable only because 95% of its weight 60 bars ahead is already there
+today. An earlier version warm-started every 5 bars on that cumulative graph, which made the map look far more
+persistent than the flows are. Louvain costs 11–30 ms per bar, so per-bar re-clustering is cheap (the server
+needs about 80 s to build a year of both ETF layouts).
 
 ### 3. Spectral order of the community graph
 
@@ -613,10 +637,16 @@ are left out). The height is clip·tanh(z·scale / clip), with scale = 0.25·max
 height-scale slider and clip = 0.4·max(cols, rows), so outliers become plateaus rather than needles.
 
 The overlays:
-- **Arcs.** The server sends the 2000 strongest kept edges of P by raw flux. The page draws the first n of
-  them (slider, default min(2 × stocks, 150)), 0.5 to 2 px wide by flux, orange to gold.
-- **Portfolio rings.** Green rings of radius max(0.6, 0.012·max(cols, rows)) + 1.5 × weight, drawn without a
-  depth test so that they stay visible.
+- **Views.** The landscape has its own viewport (the cards sit beside it, never over it): 3D orbit,
+  orthographic Top / Front / Side, and **Sections** (default): the top view with a crosshair and two profile
+  charts, the surface value along the x- and y-cut with the stocks on each cut. Click or drag on the map to
+  move the cuts; arrow keys step them (Shift: 5 cells).
+- **Portfolio dots.** Green screen-facing dots (8 + 12 × weight px) at each holding's pinned surface vertex,
+  depth-tested like the terrain, so they move with the surface; ticker labels on top.
+- **Selection and paths.** Clicking top-10 rows or portfolio tickers toggles them into a coloured selection
+  (up to 8; the rank-1 stock is selected on load). Their paths, `GET /api/path`, share one chart over the whole
+  cached history: level log(π / size share) per bar, a per-stock strip of its flux community, and a cursor at
+  the displayed bar. Dragging the chart scrubs the bar. The map rings selected stocks in their legend colours.
 - **Shock Δh view.** `POST /api/shock` re-steps the last bar with an extra return on the named stock. Δh is
   drawn through the same IDW and smoother, with its colour scale set by the P90 of |Δh| over the stocks that
   were not shocked.
