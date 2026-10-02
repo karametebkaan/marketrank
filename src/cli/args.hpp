@@ -61,6 +61,9 @@ struct CliArgs {
   std::size_t cp_stride = 5;      // anchor bars every N bars
   std::filesystem::path cp_out;   // empty = <data>/analysis
   std::vector<std::string> warnings;    // non-fatal problems found while parsing (main prints them)
+  // --- M3c 13F comparison (replay only) ---
+  bool compare_13f = false;               // --compare-13f: observed 13F flows vs estimated flows, calibration grid
+  std::vector<std::string> quarters_13f;  // --13f-quarters Q1,Q2,... (YYYYQn); empty = every quarter found
 };
 
 // Time range of bars to load and analyse: everything for synthetic (fixed historical dates),

@@ -22,6 +22,7 @@
 #include "cli/args.hpp"
 #include "cli/rank_report.hpp"
 #include "core/time.hpp"
+#include "flows13f/compare.hpp"  // M3c --compare-13f
 #include "market/alpaca_client.hpp"
 #include "market/asset_universe.hpp"
 #include "market/market_sync.hpp"
@@ -271,6 +272,46 @@ int run_shock(const mr::CliArgs& args, const mr::Panel& panel, const mr::Univers
   return 0;
 }
 
+// --- M3c 13F comparison: observed 13F flows vs estimated quarter flows + calibration grid (replay only) ---
+// Git SHA of the source tree at run time (the tree the binary was built from, as it is now): "<sha>", "<sha>-dirty"
+// with uncommitted changes, "<sha> (dirty: unknown)" if git status fails, "unknown" without git.
+std::string source_git_sha() {
+#ifdef MR_SOURCE_DIR
+  auto run = [](const std::string& cmd) -> std::optional<std::string> {
+    FILE* p = popen(cmd.c_str(), "r");
+    if (!p) return std::nullopt;
+    std::string out;
+    char buf[256];
+    while (std::fgets(buf, sizeof buf, p)) out += buf;
+    if (pclose(p) != 0) return std::nullopt;
+    while (!out.empty() && (out.back() == '\n' || out.back() == '\r')) out.pop_back();
+    return out;
+  };
+  const std::string dir = MR_SOURCE_DIR;
+  const auto sha = run("git -C '" + dir + "' rev-parse HEAD 2>/dev/null");
+  if (!sha || sha->empty()) return "unknown";
+  const auto status = run("git -C '" + dir + "' status --porcelain --untracked-files=no 2>/dev/null");
+  if (!status) return *sha + " (dirty: unknown)";
+  return status->empty() ? *sha : *sha + "-dirty";
+#else
+  return "unknown";
+#endif
+}
+
+int run_compare_13f(const mr::CliArgs& args, const mr::Panel& panel) {
+  mr::Compare13fOptions opt;
+  opt.lookback_days = args.lookback_days;
+  opt.timeframe = std::string(mr::to_string(args.tf));
+  opt.git_sha = source_git_sha();
+  opt.data = args.data;
+  opt.quarters = args.quarters_13f;
+  opt.base = args.params;
+  opt.preset = args.preset;
+  const auto report = mr::run_compare_13f(panel, opt, std::cerr);
+  std::cout << mr::compare_report_md(report);
+  return 0;
+}
+
 int run_rank(const mr::CliArgs& args, const mr::Panel& panel, const mr::Universe& universe,
              const std::optional<mr::PortfolioSpec>& portfolio) {
   const auto t0 = std::chrono::steady_clock::now();
@@ -499,6 +540,7 @@ int main(int argc, char** argv) {
       }
       return 0;
     }
+    if (args.compare_13f) return run_compare_13f(args, panel);  // M3c
     if (args.export_slice > 0) return run_export_slice(args, panel, universe);
     if (args.eval) return run_eval(args, panel, universe);
     if (!args.shocks.empty()) return run_shock(args, panel, universe, portfolio);

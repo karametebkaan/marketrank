@@ -62,6 +62,23 @@ BlendParams to_blend(const std::string& flag, const std::string& v) {
   return b;
 }
 
+// --- M3c 13F comparison ---
+bool is_quarter_string(const std::string& q) {
+  return q.size() == 6 && std::all_of(q.begin(), q.begin() + 4, [](char c) { return c >= '0' && c <= '9'; }) &&
+         q[4] == 'Q' && q[5] >= '1' && q[5] <= '4';
+}
+
+std::vector<std::string> to_quarters(const std::string& flag, const std::string& v) {
+  std::vector<std::string> out;
+  std::stringstream ss(v);
+  std::string q;
+  while (std::getline(ss, q, ','))
+    if (!is_quarter_string(q)) throw std::invalid_argument(flag + " expects YYYYQn[,YYYYQn...], got '" + v + "'");
+    else out.push_back(q);
+  if (out.empty() || v.back() == ',') throw std::invalid_argument(flag + " expects YYYYQn[,YYYYQn...], got '" + v + "'");
+  return out;
+}
+
 }  // namespace
 
 CliArgs parse_cli(const std::vector<std::string>& args) {
@@ -78,6 +95,10 @@ CliArgs parse_cli(const std::vector<std::string>& args) {
   if (money) a.params = CoreParams::money_flow(), a.preset = "money-flow";
   if (market) a.params = CoreParams::market_rank(), a.preset = "marketrank";
   bool wf_flag = false;  // any --wf-* flag given
+  // --- M3c 13F comparison: a run mode of its own (checked before the flag loop so it also covers --walkforward) ---
+  if (has("--compare-13f"))
+    for (const char* other : {"--eval", "--shock", "--export-slice", "--walkforward", "--cluster-persistence", "--serve"})
+      if (has(other)) throw std::invalid_argument(std::string("--compare-13f cannot be combined with ") + other);
   for (std::size_t i = 0; i < args.size(); ++i) {
     const std::string& flag = args[i];
     if (flag.rfind("--wf-", 0) == 0) wf_flag = true;
@@ -154,6 +175,9 @@ CliArgs parse_cli(const std::vector<std::string>& args) {
     else if (flag == "--cp-stride") a.cp_stride = to_size(flag, value());
     else if (flag == "--cp-out") a.cp_out = value();
     else if (flag == "--cp-fast-hl") a.params.halflife_fast = to_double(flag, value());
+    // --- M3c 13F comparison ---
+    else if (flag == "--compare-13f") a.compare_13f = true;
+    else if (flag == "--13f-quarters") a.quarters_13f = to_quarters(flag, value());
     else if (flag == "--help" || flag == "-h") a.help = true;
     else throw std::invalid_argument("unknown flag " + flag);
   }
@@ -176,6 +200,10 @@ CliArgs parse_cli(const std::vector<std::string>& args) {
   if (!(a.wf_cost_bps >= 0 && std::isfinite(a.wf_cost_bps))) throw std::invalid_argument("--wf-cost-bps must be >= 0");
   if (!(a.wf_tilt >= 0 && a.wf_tilt <= 1)) throw std::invalid_argument("--wf-tilt must be in [0, 1]");
   if (a.wf_k == 0) throw std::invalid_argument("--wf-k must be >= 1");
+  // --- M3c 13F comparison ---
+  if (a.compare_13f && a.mode != "replay") throw std::invalid_argument("--compare-13f needs --mode replay");
+  if (a.compare_13f && a.tf != Timeframe::Day) throw std::invalid_argument("--compare-13f needs --timeframe 1d");
+  if (!a.quarters_13f.empty() && !a.compare_13f) throw std::invalid_argument("--13f-quarters needs --compare-13f");
   if (a.lookback_days < 0)
     a.lookback_days = a.tf == Timeframe::Hour ? 60 : a.tf == Timeframe::Day ? 365 : 5 * 365;
   a.params.validate();
@@ -224,6 +252,9 @@ std::string cli_usage() {
          "                 [--sync-sectors]   (fetch SEC EDGAR SIC sectors for the universe snapshot into\n"
          "                                   data/sectors/sec_sic.csv; needs SEC_USER_AGENT in .env, no Alpaca keys;\n"
          "                                   uses the newest snapshot (--universe-size is ignored); run it on its own, then rank/eval)\n"
+         "                 [--compare-13f [--13f-quarters Q1,Q2,...]]   (replay: observed 13F flows in DATA/13f vs\n"
+         "                                   the estimated quarter flows, MarketRank agreement and the lambda x\n"
+         "                                   pressure calibration grid -> DATA/13f/report.md and report.json)\n"
          "                 [--refetch-full]   (alpaca: one-time refetch of every ticker's full stored history,\n"
          "                                   replacing old-basis bars; failed tickers stay untouched)\n"
          "                 [--walkforward]   (replay: causal walk-forward evaluation of the signals and the gated\n"

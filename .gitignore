@@ -13,3 +13,4 @@ paper/*.synctex.gz
 paper/*.spl
 paper/*.pdf
 data/walkforward/
+__pycache__/
