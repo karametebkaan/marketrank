@@ -144,18 +144,25 @@ Built per frame from the active nodes (about 6,000 at N = 10,000 under the $1M f
    - **Flux communities.** The graph is the off-diagonal kept edges of the slow P among active nodes, weighted by `raw` (edges with raw ≤ 0 or non-finite ignored), symmetrized W = R + Rᵀ. Deterministic two-phase Louvain (nodes visited in ascending index, ties to the lowest community id, at most 50 passes per level, aggregated until no change) finds communities of stocks that trade money among themselves. Communities smaller than 8 merge into their most strongly connected neighbour; those with no neighbour pool into one "loose" community that is laid out last. At most 256 communities are kept by merging the smallest.
    - **Order.** The community graph (summed weights) is ordered by recursive spectral bisection: the Fiedler vector of the normalized Laplacian (500 power iterations on 2I − L_sym with the trivial vector deflated), sorted, split where the cumulative stock count is nearest half; disconnected sets fall back to their components. Communities that trade with each other therefore sit next to each other.
    - **Half orientation.** After recursing, each half is reversed if needed so that its end nearer the other half is the one more strongly connected to it. The sign rule alone orients every recursive call independently, so on a chain A–B–C–D it gives BADC (each pair is flipped arbitrarily) instead of ABCD or DCBA.
-   - **Stability.** The clustering is recomputed on the first frame, every 5 frames and whenever parameters change. In between, membership and order are kept; a newly active stock joins its strongest active neighbour's community (else loose) and an inactive stock leaves. On a re-cluster, new communities are matched to the old ones greedily by overlap (Jaccard ≥ 0.3) so ids and relative order persist.
+   - **Stability of the communities.** The clustering is recomputed on the first landscape frame, every 5 frames (`recluster_bars`) and whenever model or placement parameters change. In between, membership and order are kept; a newly active stock joins its strongest active neighbour's community (else loose) and an inactive stock leaves. Three mechanisms keep a community's identity across re-clusters:
+     - *Warm start.* Phase 1 of each re-cluster's Louvain starts from the previous partition (each stock in its current community; newly active and loose stocks as singletons) instead of from singletons. The first clustering, which has no predecessor, is refined by warm-starting from its own result until it is a fixed point (at most 4 rounds), so the first re-cluster does not reorganize a fragmented cold-start partition. Louvain stays deterministic.
+     - *Matching.* New communities are matched to old labels greedily by overlap (desc; ties to the lower new, then old id); a pair matches when its Jaccard overlap is ≥ 0.3 or the overlap is ≥ 60% of the new community. Unmatched communities get fresh labels.
+     - *Order.* Matched labels keep their previous relative layout order; unmatched ones take their spectral position.
+     - Measured on the real replay data (10,000 tickers, ~6,000 active, 49 re-clusters): 74% of stocks keep their label at a re-cluster (median 76%, worst 47%), against about half before the warm start. On a drifting synthetic flux graph with real-like weak structure (Q ≈ 0.2) about 95% keep their label.
+   - **Warm-up.** Serve mode skips the first `warmup_bars` = 5 bars: they only feed the model's memory, with no landscape and no clustering. The landscape window starts at max(first scrubber bar, 5), so the first frame is not dominated by loose stocks without flux yet.
+   - **Resolution.** Louvain runs at resolution 1.0 (`LandscapeParams.resolution`). On the real data, re-clusters at 1.0 give a median of 4 communities (4–5) with modularity 0.13 (0.09–0.25); at 1.5 a median of 15 (8–18) with resolution-1.5 modularity 0.07 (0.03–0.17). The default stays 1.0.
    - **Sectors.** In sector mode a node's group is its `Security::sector` (ids in ascending string order); a sector with no active stocks has no territory.
    - **Sizes.** With A active stocks and C lattice cells, territory g gets c_g = a_g plus its largest-remainder share of the C − A spare cells (ties to the lower id). Territories are consecutive ranges of the curve in ascending group order.
-   - **Inside a territory,** cells are ordered by squared distance to the territory centre (ties by cell index). Stocks are ranked by smoothed hotness s = (1−β)·signed-log h + β·previous s (β = 0.5; non-finite h ranks as 0). A territory is a mountain when its median s is at or above the median over all active stocks, and a crater otherwise: a mountain places the highest s nearest the centre, a crater the lowest. The farthest c_g − a_g cells stay empty and IDW fills them, which forms seams between territories.
-   - Every vertex still shows its stock's exact value. Cost is O(C log C) for placement and O(E log n) for Louvain (about 150 ms at 10,000 nodes of degree 30, only on re-clusters).
+   - **Inside a territory,** the cells form a spiral: they are ordered by ring ⌊√d²⌋ around the territory centre, then by angle atan2(dy, dx) ascending from −π, then by cell index, so consecutive slots are neighbours (ordering by d² alone puts consecutive ranks on opposite sides of a ring). Stocks are ranked by smoothed hotness s = (1−β)·signed-log h + β·previous s (β = 0.5; non-finite h ranks as 0) and take the slots in rank order. A territory is a mountain when its median s is at or above the median over all active stocks, and a crater otherwise: a mountain places the highest s nearest the centre, a crater the lowest. The outer c_g − a_g slots stay empty and IDW fills them, which forms seams between territories.
+   - **Cell hysteresis.** A stock keeps its previous cell when it was active last frame, is in the same community (flux label, the loose pool counting as one) or sector, the lattice size is unchanged, that cell still lies inside its territory, and the cell's slot in the territory's current spiral is within `rank_tolerance` = max(2, 0.15 × territory cells) slots of the stock's new slot. Conflicts resolve in three passes, each in rank order: kept cells, then the ideal slot if free, then the nearest free slot of the territory (ties to the lower slot). Territory ranges are not required to be identical: about 50 stocks join or leave per bar on the real data, which shifts every range by a few cells. Measured on the real data: between re-clusters 85% of stocks keep their cell (96% when the lattice size is unchanged; median jump 0 cells, p90 0), against a 13-cell median jump and 4% kept before; at re-clusters 39% keep their cell (median jump 15 cells), against 0.1% before. Mountains and craters stay coherent (median Spearman |ρ| of hotness against distance from the centre 0.98).
+   - The node value `hdisp` is exact (the stock's display height). The displayed surface is the IDW raster Gaussian-smoothed with σ = 1 cell by default (`smooth`, 0–4; separable, edge windows renormalized by their in-window weight), and the Δh raster of a shock is smoothed the same way. Cost is O(C log C) for placement and O(E log n) for Louvain: about 160 ms on a synthetic 10,000-node graph of degree ~30, and a median of 28 ms (37 ms at resolution 1.5) for a re-cluster on the real data (~6,000 active stocks); only re-cluster frames pay it.
 2. **Lattice.**
    - The lattice is cols = ⌈√N_active⌉ by rows = ⌈N_active/cols⌉. A node's cell is row·cols + col.
-   - Placement is recomputed each frame. Stability comes from the smoothed ranking, not from cell hysteresis. (The recursive-bisection snap and hysteresis helpers remain in `lattice.*` but are unused.)
+   - Placement is recomputed each frame. Stability comes from the spiral slot order, the cell hysteresis and the smoothed ranking inside each territory (§6.1), and from the warm-started, matched communities across re-clusters. (The earlier recursive-bisection snap and Chebyshev hysteresis helpers have been removed.)
 3. **IDW landscape.**
-   - The raster has (cols·s) × (rows·s) pixels, with s = 4 by default. Each pixel is `z = Σ wᵢhᵢ / Σ wᵢ`, wᵢ = 1/dᵢ^q (q = 2), over occupied lattice cells within radius R = 3 cells.
+   - The raster has (cols·s) × (rows·s) pixels, with s = 1 by default (`subdivision`, 1–8; at s = 1 the raster vertices are the lattice points). Each pixel is `z = Σ wᵢhᵢ / Σ wᵢ`, wᵢ = 1/dᵢ^q (q = 2), over occupied lattice cells within radius R = 3 cells.
    - If no cell is within R, the nearest occupied cell is used. A pixel exactly on a node takes that node's value.
-   - Computed in parallel per pixel row.
+   - Computed in parallel per pixel row, then display-smoothed (§6.1). Changing only display parameters (`smooth`, `height`, `idw_*`, `subdivision`) redraws the cached frames from their nodes (cell, h) without re-running the model.
 4. **Height.** The default height is `signed-log`: `sign(h)·log1p(|h|)`, because money-flow hotness spans orders of magnitude. `linear` is also available, and suits bounded `netflow` hotness. The colour scale is diverging (valleys blue, hills red), symmetric around 0.
 5. **Arcs.** The global top 2,000 off-diagonal raw-flux edges between active nodes.
 
@@ -241,18 +248,24 @@ Cumulative return; excess return vs. baseline and vs. VOO; annualized volatility
 
 ### 9.1 Source layout
 ```
-CMakeLists.txt            C++20; FetchContent: cpp-httplib (OpenSSL), nlohmann/json, doctest
+CMakeLists.txt            C++20; FetchContent: cpp-httplib (OpenSSL), nlohmann/json, doctest, DuckDB (prebuilt)
 src/
-  market/   universe, alpaca_client, bar_store, session_calendar, synthetic_market
-  graph/    flux_builder, pruner (CSR), markov_solver, forecaster
-  geom/     force_layout, lattice_assigner (Hungarian + hysteresis), idw_grid
-  optimize/ admm_portfolio, proposal
-  ledger/   strategy_registry, shadow_book, ledger_store (jsonl), metrics
-  server/   http_server (REST + SSE + static), pipeline (frame scheduler)
+  cli/      args (CLI parsing, describe)
+  core/     csv, time, types
+  market/   universe, asset_universe, alpaca_client, market_sync, bar_store, panel, sec_sectors,
+            session_calendar, synthetic_market
+  storage/  lake (DuckDB catalog + Hive-partitioned Parquet), csv_migration
+  graph/    csr, pressure, return_window, sparse_flux, transition, markov_solver, hotness, forecaster
+  pipeline/ core_pipeline, evaluation, shock
+  geom/     community (Louvain, spectral order, label matching, tracker), territory (gilbert curve,
+            territory layout, cell hysteresis), lattice (size), idw (raster + display smoothing), landscape
+  server/   frame_store (background frames, restyle, shocks), http_server (REST + SSE + static), top_list
   main.cpp
-web/        index.html, app.js, style.css (deck.gl UMD from CDN, no build step)
+  (planned, milestone 3+: optimize/ portfolio optimizer, ledger/ shadow books and strategy versions)
+web/        index.html, app.js, style.css (deck.gl UMD from CDN with SRI, no build step)
 tests/      doctest unit + integration
-data/       universe/, cache/ (ignored), ledger/, portfolio.json
+scripts/    ui_smoke.sh (headless-Chrome smoke test), fetch_sp500.py
+data/       universe/, lake/ (ignored), portfolio.json
 ```
 
 ### 9.2 Frame pipeline (one Δt)
@@ -264,23 +277,26 @@ Changing a parameter re-runs only the affected stage and those after it. Replay 
 `fluxscape --serve [--port 8765] [--web web] [--mode replay|alpaca|synthetic] [model flags]`. The default preset is **money-flow** unless `--legacy`, `--money-flow` or explicit model flags change it.
 - A background thread computes core frames and landscape frames for the data window and keeps up to 300 landscapes in memory for the scrubber.
 - Before the last bar it keeps a copy of the pipeline, so shocks at the latest bar cost about two frames.
-- A parameter change cancels the computation and restarts it.
+- The first `warmup_bars` = 5 bars feed the model only (§6.1).
+- A model or placement parameter change cancels the computation and restarts it; a display-only change redraws the cached frames (the generation still advances).
+- The bar store, and with it the lake's DuckDB lock, is closed once the panel is built, so replay CLI runs work alongside a running server; the panel is moved into the frame store, not copied.
+- Every request must carry a Host header naming the server (`127.0.0.1`, `localhost` or `[::1]`, or the configured `--host`, with the port), otherwise 403 (DNS-rebinding guard); POSTs also need `Content-Type: application/json` and, when an `Origin` is sent, one of those origins. A non-loopback `--host` prints a warning.
 
 ### 9.3 API
 | Endpoint | Purpose |
 |---|---|
-| `GET /api/frame` (or `?t=`) | JSON (milestone 2). `nodes` are arrays `[i, ticker, sector, cell, fx, fy, h, hdisp, pi, score, group]`: `group` is the persistent flux-community label (stable across re-clusters; the sector id in sector mode; −1 for the loose pool). Also `arcs`, `portfolio`, `lattice`, `raster` meta, `compute_ms`, and `communities: {count, modularity, loose, cluster_ms}` (count excludes the loose pool; loose is its stock count) |
+| `GET /api/frame` (or `?t=`) | JSON (milestone 2). `nodes` are arrays `[i, ticker, sector, cell, fx, fy, h, hdisp, pi, score, group]`: `group` is the persistent flux-community label (stable across re-clusters; the sector id in sector mode; −1 for the loose pool). Also `arcs`, `portfolio`, `lattice`, `raster` meta, `compute_ms`, and `communities: {count, modularity, loose, cluster_ms, reclustered}` (count excludes the loose pool; loose is its stock count; reclustered tells whether this frame re-clustered). `?t=` must be a whole integer, otherwise 400 |
 | `GET /api/top?n=&bars=&t=` | the hottest n stocks by exact model h with their last `bars` h values (the UI heartbeat table) |
-| `GET /api/frame/latest/grid` | Binary Float32 raster + header (w, h, min, max) |
-| `GET /api/events` | SSE: `frame`, `proposal`, `status`, `error` |
-| `GET/POST /api/params` | all parameters; POST of strategy parameters creates a new version. Landscape parameters (milestone 2): `height`, `idw_power`, `idw_radius`, `subdivision`, `smooth` (Gaussian σ in cells, 0–4) and `territory` (`flux` or `sector`, otherwise 400) |
+| `GET /api/frame/grid` (or `?t=`) | the frame's raster as raw little-endian Float32, w × h row-major, no header; its metadata (`w`, `h`, `zmin`, `zmax`) is the `raster` object of `/api/frame` |
+| `GET /api/events` | SSE: `status` in milestone 2 (`frame`, `proposal`, `error` planned); at most 8 streams, a 9th gets 503 |
+| `GET/POST /api/params` | all parameters; POST of strategy parameters creates a new version. Milestone 2: with `"preset"` (`money-flow`, `legacy`, `defaults`) the model parameters start from that preset, without it from the current ones (so CLI flags such as `--lambda` survive), and only the given fields change. Landscape parameters: `height`, `idw_power`, `idw_radius` (0–16), `subdivision`, `smooth` (Gaussian σ in cells, 0–4) and `territory` (`flux` or `sector`, otherwise 400) |
 | `GET/PUT /api/portfolio` | initial portfolio definition |
 | `GET /api/books`, `GET /api/books/{id}/nav` | books, metrics, NAV curves |
 | `GET /api/proposals?book=` | proposal history with fills |
 | `GET /api/strategies` | version tree |
 | `POST /api/replay` | play / pause / seek / speed |
-| `GET /api/status`, `GET /api/times` | computation progress and parameters (including `smooth` and `territory`); frame times (milestone 2) |
-| `POST /api/shock`, `GET /api/shock/grid` | counterfactual shocks at the latest bar (§5.3): deltas plus a Δh raster (milestone 2) |
+| `GET /api/status`, `GET /api/times` | computation progress and parameters: `preset` (`money-flow`, `legacy` or `custom`), `h_ref`, `height`, `smooth`, `idw_power`, `idw_radius`, `subdivision`, `territory`, which the UI uses to initialize its controls; frame times (milestone 2) |
+| `POST /api/shock`, `GET /api/shock/grid?id=` | counterfactual shocks at the latest bar (§5.3): deltas plus a `shock_id`; receivers and losers exclude the shocked stocks. The grid route serves that shock's Δh raster (raw Float32 as above) from an LRU of the last 8 shocks; an unknown or expired id is 404, a missing one 400, and a parameter change clears them (milestone 2) |
 
 ### 9.4 UI
 **Left panel (collapsible sections):**
@@ -306,7 +322,7 @@ Changing a parameter re-runs only the affected stage and those after it. Replay 
 Unit (doctest):
 - Flux: per-source conservation; every row of P sums to 1; accumulator self-loop; λ = 0 equivalence with the pure model.
 - Solver: analytic stationary distribution of 3- and 4-state chains; warm start reaches the same π; damping guarantees convergence on a reducible chain.
-- Hungarian: equals brute force for n ≤ 7; hysteresis blocks sub-threshold swaps.
+- Placement: territories are contiguous with unique cells; slots follow the spiral; under 2% hotness drift with active-set churn the median move is ≤ 3 cells and ≥ 60% of stocks keep their cell while mountains and craters keep |Spearman| ≥ 0.8; planted A–B–C communities are contiguous and laid out in trading order; ≥ 80% of stocks keep their community label across warm-started re-clusters of a drifting graph.
 - IDW: exact at nodes; output within [min, max]; radius fallback.
 - ADMM: KKT/feasibility (sum = 1, bounds, turnover); matches the brute-force grid on 3-asset cases; zero-signal input yields no trade (cost penalty).
 - Ledger: fill at next-bar open, never same-bar; slippage applied; NAV identity (cash + Σ shares·price); catch-up replay is deterministic (same ledger twice).
