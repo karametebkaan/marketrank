@@ -758,7 +758,7 @@ function drawPath(r) {
   let changes = 0;
   for (let k = 1; k < days; k++) if (P[k].group !== P[k - 1].group) changes++;
   const at = ci >= 0 ? P[ci] : last;
-  $('pathNote').textContent = `${at.time.slice(0, 10)}: level ${at.level === null ? 'n/a' : fmtSigned(at.level, 3)} · π·N ${fmt(at.mr, 3)} · 5-bar Δlog π·N ${fmtSigned(at.momentum, 4)} · community changed ${changes}× in ${days} bars`;
+  $('pathNote').textContent = `${at.time.slice(0, 10)}: level ${at.level === null ? 'n/a' : fmtSigned(at.level, 3)} · π·N ${fmt(at.mr, 3)} · 5-bar Δlog π·N ${fmtSigned(at.momentum, 4)} · community changed ${changes}× in ${days} bars · drag the chart to move through time`;
 }
 
 function wire() {
