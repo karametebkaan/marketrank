@@ -47,10 +47,20 @@ TEST_CASE("migrate_csv_cache skips files with a wrong header and leaves no temp 
   test::write_file(dir / "csv" / "1d" / "EMPTY.csv", "");
   {
     BarStore s(dir / "lake");
-    CHECK_NOTHROW(migrate_csv_cache(dir / "csv", s));
+    CHECK(migrate_csv_cache(dir / "csv", s) == 0);
   }
+  if (std::filesystem::exists(dir / "lake"))
+    for (const auto& e : std::filesystem::recursive_directory_iterator(dir / "lake"))
+      CHECK(e.path().extension() != ".tmp");
   BarStore s(dir / "lake");
   s.load_all({"BAD", "EMPTY"}, Timeframe::Day);
   CHECK(s.bars("BAD", Timeframe::Day).empty());
   CHECK(s.bars("EMPTY", Timeframe::Day).empty());
+}
+
+TEST_CASE("migrate_csv_cache imports nothing from a file with only malformed rows") {
+  auto dir = test::temp_dir("migrate_allbad");
+  test::write_file(dir / "csv" / "1d" / "ZZZ.csv", "t,o,h,l,c,v,vw\nnot,a,row,at,all,x,y\n1,2,3\n");
+  BarStore s(dir / "lake");
+  CHECK(migrate_csv_cache(dir / "csv", s) == 0);
 }

@@ -83,3 +83,89 @@ TEST_CASE("panel aligns tickers on the union of times with NaN gaps") {
   CHECK(std::isnan(p.volume[p.idx(2, 0)]));
   CHECK(p.vwap[p.idx(2, 1)] == 21);
 }
+
+TEST_CASE("unsaved series are not persisted") {
+  auto dir = test::temp_dir("bars_unsaved");
+  {
+    BarStore s(dir);
+    s.merge("A", Timeframe::Day, {{100, 1, 1, 1, 1, 1, 1}});
+    s.merge("B", Timeframe::Day, {{100, 2, 2, 2, 2, 2, 2}});
+    s.save("A", Timeframe::Day);
+    s.flush();
+  }
+  BarStore s2(dir);
+  s2.load_all({"A", "B"}, Timeframe::Day);
+  CHECK(s2.bars("A", Timeframe::Day).size() == 1);
+  CHECK(s2.bars("B", Timeframe::Day).empty());
+}
+
+TEST_CASE("repeated merges of one bar persist the last value") {
+  auto dir = test::temp_dir("bars_lastwins");
+  {
+    BarStore s(dir);
+    s.merge("A", Timeframe::Day, {{100, 1, 1, 1, 10, 1, 1}});
+    s.merge("A", Timeframe::Day, {{100, 1, 1, 1, 12, 1, 1}});
+    s.save("A", Timeframe::Day);
+    s.flush();
+  }
+  BarStore s2(dir);
+  s2.load_all({"A"}, Timeframe::Day);
+  REQUIRE(s2.bars("A", Timeframe::Day).size() == 1);
+  CHECK(s2.bars("A", Timeframe::Day)[0].c == 12);
+}
+
+TEST_CASE("destructor flushes saved bars") {
+  auto dir = test::temp_dir("bars_dtor");
+  {
+    BarStore s(dir);
+    s.merge("A", Timeframe::Day, {{100, 1, 1, 1, 1, 1, 1}});
+    s.save("A", Timeframe::Day);
+  }
+  BarStore s2(dir);
+  s2.load_all({"A"}, Timeframe::Day);
+  CHECK(s2.bars("A", Timeframe::Day).size() == 1);
+}
+
+TEST_CASE("coverage persists without any bars") {
+  auto dir = test::temp_dir("bars_cov_only");
+  {
+    BarStore s(dir);
+    s.set_covered_from("A", Timeframe::Day, 77);
+    s.flush();
+  }
+  BarStore s2(dir);
+  s2.load_all({"A"}, Timeframe::Day);
+  CHECK(s2.covered_from("A", Timeframe::Day).value() == 77);
+  CHECK(s2.bars("A", Timeframe::Day).empty());
+}
+
+TEST_CASE("load_range queues nothing") {
+  auto dir = test::temp_dir("bars_noqueue");
+  {
+    BarStore s(dir);
+    s.merge("A", Timeframe::Day, {{100, 1, 1, 1, 1, 1, 1}});
+    s.save("A", Timeframe::Day);
+  }
+  BarStore s2(dir);
+  s2.load_range({"A"}, Timeframe::Day, 0, 1000);
+  const auto before = s2.lake().file_count(Timeframe::Day);
+  s2.flush();
+  CHECK(s2.lake().file_count(Timeframe::Day) == before);
+  CHECK(s2.bars("A", Timeframe::Day).size() == 1);
+}
+
+TEST_CASE("a corrupt lake file does not abort a load") {
+  auto dir = test::temp_dir("bars_corrupt");
+  {
+    BarStore s(dir);
+    s.merge("A", Timeframe::Day, {{1759239000, 1, 1, 1, 1, 1, 1}});
+    s.save("A", Timeframe::Day);
+  }
+  std::filesystem::path part;
+  for (const auto& e : std::filesystem::recursive_directory_iterator(dir))
+    if (e.path().extension() == ".parquet") part = e.path().parent_path();
+  REQUIRE_FALSE(part.empty());
+  test::write_file(part / "part-x.parquet", "this is not parquet");
+  BarStore s2(dir);
+  CHECK_NOTHROW(s2.load_range({"A"}, Timeframe::Day, 0, 2000000000));
+}
