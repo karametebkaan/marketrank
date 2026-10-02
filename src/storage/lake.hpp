@@ -16,6 +16,9 @@ struct LakeRow {
   Bar bar;
 };
 
+// POSIX open + fsync + close of a file or directory; throws std::runtime_error on failure.
+void fsync_path(const std::filesystem::path& p);
+
 struct RetentionPolicy {
   std::map<Timeframe, std::optional<int>> keep_days;  // nullopt = keep forever
   static RetentionPolicy defaults();                  // 1h: 730, 1d/1w: forever

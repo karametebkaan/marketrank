@@ -126,3 +126,11 @@ TEST_CASE("duplicate rows inside one batch resolve to the last, also after compa
   REQUIRE(got["AAPL"].size() == 1);
   CHECK(got["AAPL"][0].c == 12);
 }
+
+TEST_CASE("fsync_path syncs an existing file and directory and throws on a missing path") {
+  auto dir = test::temp_dir("lake_fsync");
+  const auto f = test::write_file(dir / "a.bin", "data");
+  CHECK_NOTHROW(fsync_path(f));
+  CHECK_NOTHROW(fsync_path(dir));
+  CHECK_THROWS_AS(fsync_path(dir / "missing.bin"), std::runtime_error);
+}

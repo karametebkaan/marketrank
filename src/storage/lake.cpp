@@ -1,11 +1,16 @@
 #include "storage/lake.hpp"
 
+#include <fcntl.h>
 #include <omp.h>
+#include <unistd.h>
 
 #include <algorithm>
+#include <cerrno>
+#include <cstring>
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <random>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 
@@ -64,6 +69,17 @@ long parse_kv(const std::string& name, const std::string& key) {
 }
 
 }  // namespace
+
+void fsync_path(const fs::path& p) {
+  const int fd = ::open(p.c_str(), O_RDONLY | O_CLOEXEC);
+  if (fd < 0) throw std::runtime_error("lake: cannot open " + p.string() + " for fsync: " + std::strerror(errno));
+  if (::fsync(fd) != 0) {
+    const int err = errno;
+    ::close(fd);
+    throw std::runtime_error("lake: fsync failed for " + p.string() + ": " + std::strerror(err));
+  }
+  ::close(fd);
+}
 
 RetentionPolicy RetentionPolicy::defaults() {
   RetentionPolicy p;
@@ -135,12 +151,21 @@ struct Lake::Impl {
       q("COPY (SELECT ticker, t, o, h, l, c, v, vw, seq, tf, year, month FROM pending) TO " +
         sql_str(staging.string()) +
         " (FORMAT parquet, PARTITION_BY (tf, year, month), FILENAME_PATTERN 'part-{uuid}')");
+      std::vector<fs::path> moved;
       for (const auto& f : parquet_files(staging)) {
         const fs::path dest = root / "bars" / fs::relative(f, staging);
         fs::create_directories(dest.parent_path());
         fs::rename(f, dest);
+        moved.push_back(dest);
       }
       fs::remove_all(staging);
+      // Make the bars durable before the coverage that depends on them is committed (contract 3).
+      std::set<fs::path> dirs;
+      for (const auto& d : moved) {
+        fsync_path(d);
+        dirs.insert(d.parent_path());
+      }
+      for (const auto& d : dirs) fsync_path(d);
     }
     q("BEGIN TRANSACTION");
     try {
@@ -300,7 +325,10 @@ std::size_t Lake::compact(Timeframe tf, std::size_t max_files) {
       I.q("COPY (SELECT ticker, t, o, h, l, c, v, vw, seq FROM read_parquet(" + list +
           ", hive_partitioning = false) QUALIFY row_number() OVER (PARTITION BY ticker, t ORDER BY seq DESC) = 1 "
           "ORDER BY ticker, t) TO " + sql_str(tmp.string()) + " (FORMAT parquet)");
-      fs::rename(tmp, mdir.path() / ("part-compact-" + random_id() + ".parquet"));
+      const fs::path merged = mdir.path() / ("part-compact-" + random_id() + ".parquet");
+      fs::rename(tmp, merged);
+      fsync_path(merged);
+      fsync_path(mdir.path());
       for (const auto& f : files) fs::remove(f);
       ++compacted;
     }
