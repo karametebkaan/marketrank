@@ -32,6 +32,8 @@ constexpr double kSplitSnap = 1.08;   // |log ratio| < log(1.08): no split (divi
 constexpr double kSplitConfirm = 1.1;  // the median holder share ratio must be within 10% of the price-factor ratio
 constexpr double kSplitExact = 1.01;    // ... or this share of holders sits within 1% of it (non-traders show r exactly)
 constexpr double kSplitHolderShare = 0.30;
+constexpr std::size_t kSplitMinHolders = 4;  // the fraction rule needs >= 4 holders present in both quarters ...
+constexpr std::size_t kSplitMinExact = 2;    // ... and >= 2 of them within 1% of r
 constexpr std::size_t kTopK = 5000;   // observed top-K edges (and the legacy union-top-K)
 constexpr double kAlpha = 0.85;       // p = 0.15, as the market_rank() preset
 
@@ -522,13 +524,15 @@ QuarterPricing quarter_pricing(const Panel& panel, const QuarterHoldings& prev, 
       const double r = fp / fc, med = share_ratio[i];
       if (std::abs(std::log(r)) >= std::log(kSplitSnap)) {
         // (a) the median holder ratio is within 10% of r and closer to r than to 1 (unchanged holdings are not a
-        // confirmation), or (b) at least 30% of the holders present in both quarters sit within 1% of r.
+        // confirmation), or (b) at least 4 holders are present in both quarters and at least 30% of them (and at
+        // least 2) sit within 1% of r.
         const bool by_median = std::isfinite(med) && med > 0 &&
                                std::abs(std::log(med / r)) < std::min(std::log(kSplitConfirm), std::abs(std::log(r)) / 2);
         std::size_t exact = 0;
         for (double x : sr[i]) exact += x > 0 && std::abs(std::log(x / r)) < std::log(kSplitExact);
         const bool by_holders =
-            !sr[i].empty() && static_cast<double>(exact) >= kSplitHolderShare * static_cast<double>(sr[i].size());
+            sr[i].size() >= kSplitMinHolders && exact >= kSplitMinExact &&
+            static_cast<double>(exact) >= kSplitHolderShare * static_cast<double>(sr[i].size());
         const bool confirmed = by_median || by_holders;
         if (confirmed) q.ratio[i] = r, ++q.splits;
         else q.unconfirmed.push_back({i, r, med, cur_value[i]});
@@ -1005,10 +1009,11 @@ std::string compare_report_md(const nlohmann::json& r) {
        "- **Prices and splits**: lake bars are adjustment=all. Per ticker and quarter end, f = median(13F value/shares) /\n"
        "  last adjusted close of that quarter; P_q = mean adjusted close over q's bars * f_q (q's raw basis);\n"
        "  ratio = f_{q-1} / f_q, snapped to 1 within 8% (dividend drift); a split also needs the median holder share\n"
-       "  ratio shares_q / shares_{q-1} within 10% of it (and closer to it than to 1), or at least 30% of the holders\n"
-       "  present in both quarters within 1% of it; otherwise it is listed as an unconfirmed candidate.\n"
-       "- **Estimated T^_q**: the pipeline (warm from the panel's first bar; a quarter needs at least the warm-up bars\n"
-       "  before it) is stepped through q's last bar; the exact BarFlux of every bar in q (UTC calendar quarter) is\n"
+       "  ratio shares_q / shares_{q-1} within 10% of it (and closer to it than to 1), or, with at least 4 holders\n"
+       "  present in both quarters, at least 30% of them (and at least 2) within 1% of it; otherwise it is listed as an\n"
+       "  unconfirmed candidate.\n"
+       "- **Estimated T^_q**: the pipeline (warm from the panel's first bar; a quarter needs at least the warm-up count of\n"
+       "  prior returns before it) is stepped through q's last bar; the exact BarFlux of every bar in q (UTC calendar quarter) is\n"
        "  summed in a separate FluxAccumulator (half-life 1e9, no row cap).\n"
        "- **Same node set**: the estimated flows are restricted to the observed node set before comparing.\n"
        "- **Edge metrics** (primary): obs-topK = Spearman over the observed top-5000 edges with the estimate looked up\n"

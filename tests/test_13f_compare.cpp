@@ -562,6 +562,33 @@ TEST_CASE("13f compare: split confirmed by the fraction of holders at exactly r"
   CHECK(q.unconfirmed.empty());
 }
 
+TEST_CASE("13f compare: the holder-fraction split rule needs at least 4 holders and 2 exact matches") {
+  // Each ticker has a 2:1 price-factor ratio; holders' share ratios are listed below. The median never confirms
+  // (it misses r by more than 10%), so only the fraction rule can.
+  //   TWO: 2 holders, 1 exact (50%)          -> too few holders: unconfirmed
+  //   THR: 3 holders, 1 exact (33%)          -> too few holders: unconfirmed
+  //   FOR: 4 holders, 2 exact (50%), median 2.25 -> confirmed
+  const std::vector<TimePoint> times = {utc_seconds(2025, 9, 30, 16), utc_seconds(2025, 12, 31, 16)};
+  const std::vector<std::string> tk = {"TWO", "THR", "FOR"};
+  const Panel p = make_panel(times, tk, {50, 50, 50, 50, 50, 50});
+  const std::vector<std::vector<double>> ratios = {{2.0, 2.6}, {2.0, 2.5, 2.6}, {2.0, 2.0, 2.5, 2.6}};
+  QuarterHoldings prev, cur;
+  prev.quarter = "2025Q3";
+  cur.quarter = "2025Q4";
+  for (std::size_t i = 0; i < tk.size(); ++i)
+    for (std::size_t m = 0; m < ratios[i].size(); ++m) {
+      const std::uint64_t cik = m + 1;
+      prev.rows.push_back({cik, tk[i], 100, 100 * 100.0});  // raw 100
+      cur.rows.push_back({cik, tk[i], 100 * ratios[i][m], 100 * ratios[i][m] * 50.0});
+    }
+  const QuarterPricing q = quarter_pricing(p, prev, cur);
+  CHECK(q.ratio[0] == 1.0);
+  CHECK(q.ratio[1] == 1.0);
+  CHECK(q.ratio[2] == doctest::Approx(2.0));
+  CHECK(q.splits == 1);
+  REQUIRE(q.unconfirmed.size() == 2);
+}
+
 TEST_CASE("13f compare: sparse full-pair Spearman and row cosine match a dense brute force") {
   // Random sparse matrices with zeros, duplicate pairs, self-pairs and tied weights (adapted from the reviewer's
   // cross-check): the sparse rank formula must equal Spearman over the explicit n(n-1) vectors.
