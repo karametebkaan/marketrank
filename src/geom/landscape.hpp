@@ -39,6 +39,7 @@ struct LandscapeArc {
 
 struct LandscapeFrame {
   TimePoint t = 0;
+  std::size_t n = 0;  // universe size the frame was built for
   LatticeSize size;
   std::vector<LandscapeNode> nodes;  // active nodes, ascending i
   std::vector<LandscapeArc> arcs;

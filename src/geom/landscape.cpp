@@ -24,6 +24,7 @@ double display_height(double h, HeightMode m) {
 }
 
 std::vector<LandscapeArc> top_arcs(const Csr& P, const std::vector<bool>& active, std::size_t max_arcs) {
+  if (active.size() != P.n) throw std::invalid_argument("top_arcs: active size != P.n");
   std::vector<LandscapeArc> arcs;
   for (std::size_t i = 0; i < P.n; ++i) {
     if (!active[i]) continue;
@@ -46,6 +47,7 @@ std::vector<LandscapeArc> top_arcs(const Csr& P, const std::vector<bool>& active
 }
 
 Raster delta_raster(const LandscapeFrame& base, const std::vector<double>& delta, const LandscapeParams& p) {
+  if (delta.size() != base.n) throw std::invalid_argument("delta_raster: delta size != base n");
   std::vector<std::int32_t> cell(delta.size(), -1);
   std::vector<double> v(delta.size(), std::numeric_limits<double>::quiet_NaN());
   for (const auto& nd : base.nodes) {
@@ -61,6 +63,9 @@ LandscapeBuilder::LandscapeBuilder(std::size_t n, LandscapeParams params)
 LandscapeFrame LandscapeBuilder::build(const Frame& f) {
   const auto t0 = std::chrono::steady_clock::now();
   if (f.active.size() != n_) throw std::invalid_argument("LandscapeBuilder: frame size mismatch");
+  if (f.h.size() != n_ || f.pi.size() != n_ || f.P.n != n_ ||
+      (!f.forecasts.empty() && f.forecasts.front().score.size() != n_))
+    throw std::invalid_argument("LandscapeBuilder: frame vector sizes mismatch");
   xy_ = embed_.positions(f.P, f.active);
   std::size_t n_active = 0;
   double minx = 1e300, maxx = -1e300, miny = 1e300, maxy = -1e300;
@@ -80,6 +85,7 @@ LandscapeFrame LandscapeBuilder::build(const Frame& f) {
 
   LandscapeFrame lf;
   lf.t = f.t;
+  lf.n = n_;
   lf.size = size;
   std::vector<double> values(n_, std::numeric_limits<double>::quiet_NaN());
   const double rx = maxx > minx ? maxx - minx : 1.0, ry = maxy > miny ? maxy - miny : 1.0;
