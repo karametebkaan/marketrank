@@ -2,6 +2,7 @@
 #include <omp.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <limits>
 #include <vector>
@@ -57,4 +58,40 @@ TEST_CASE("IDW ignores non-finite values and is deterministic across threads") {
   omp_set_num_threads(saved);
   CHECK(a.z == b.z);
   for (float z : a.z) CHECK(std::isfinite(z));
+}
+
+TEST_CASE("IDW sparse lattice uses an O(cells) nearest-node fallback") {
+  LatticeSize s{78, 77};
+  std::vector<std::int32_t> cell = {0};
+  std::vector<double> v = {3.5};
+  const auto t0 = std::chrono::steady_clock::now();
+  Raster r = idw_raster(cell, v, s, IdwParams{});
+  const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+  CHECK(ms < 300);
+  REQUIRE(r.z.size() == 78 * 4 * 77 * 4);
+  for (float z : r.z) CHECK(z == doctest::Approx(3.5));
+}
+
+TEST_CASE("IDW weight underflow falls back to the nearest in-window node") {
+  LatticeSize s{4, 1};
+  std::vector<std::int32_t> cell = {0, 2};
+  std::vector<double> v = {1.0, 9.0};
+  IdwParams p;
+  p.power = 2000;
+  p.radius_cells = 3;
+  Raster r = idw_raster(cell, v, s, p);
+  // pixel centre u = 1.125 (px 4): nearest node is cell 0 at 0.5 (d 0.625) vs cell 2 at 2.5 (d 1.375)
+  CHECK(r.z[4] == doctest::Approx(1.0));
+  // pixel centre u = 1.875 (px 7): nearest is cell 2
+  CHECK(r.z[7] == doctest::Approx(9.0));
+}
+
+TEST_CASE("IDW weighted value between two nodes") {
+  LatticeSize s{3, 1};
+  std::vector<std::int32_t> cell = {0, 2};
+  std::vector<double> v = {0.0, 2.0};
+  IdwParams p;
+  p.subdivision = 1;
+  Raster r = idw_raster(cell, v, s, p);
+  CHECK(r.z[1] == doctest::Approx(1.0));
 }

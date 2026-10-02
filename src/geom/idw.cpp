@@ -24,6 +24,29 @@ Raster idw_raster(const std::vector<std::int32_t>& cell, const std::vector<doubl
     }
   if (!any) return r;
   const long R = std::max(0, p.radius_cells);
+  // Nearest occupied cell for every lattice cell: multi-source 8-connected BFS, seeded in ascending cell order.
+  std::vector<std::int32_t> nearest(occ.size(), -1);
+  {
+    std::vector<std::int32_t> queue;
+    queue.reserve(occ.size());
+    for (std::size_t i = 0; i < occ.size(); ++i)
+      if (!std::isnan(occ[i])) {
+        nearest[i] = static_cast<std::int32_t>(i);
+        queue.push_back(static_cast<std::int32_t>(i));
+      }
+    for (std::size_t head = 0; head < queue.size(); ++head) {
+      const long c = queue[head], cx = c % cols, cy = c / cols;
+      for (long dy = -1; dy <= 1; ++dy)
+        for (long dx = -1; dx <= 1; ++dx) {
+          const long nx = cx + dx, ny = cy + dy;
+          if (nx < 0 || nx >= cols || ny < 0 || ny >= rows) continue;
+          const std::size_t ni = static_cast<std::size_t>(ny * cols + nx);
+          if (nearest[ni] >= 0) continue;
+          nearest[ni] = nearest[static_cast<std::size_t>(c)];
+          queue.push_back(static_cast<std::int32_t>(ni));
+        }
+    }
+  }
 #pragma omp parallel for schedule(static)
   for (long py = 0; py < static_cast<long>(r.h); ++py) {
     for (long px = 0; px < static_cast<long>(r.w); ++px) {
@@ -31,6 +54,8 @@ Raster idw_raster(const std::vector<std::int32_t>& cell, const std::vector<doubl
       const double v = (static_cast<double>(py) + 0.5) / static_cast<double>(s);
       const long c0 = static_cast<long>(u), r0 = static_cast<long>(v);
       double num = 0, den = 0, exact = std::numeric_limits<double>::quiet_NaN();
+      double near_d = std::numeric_limits<double>::infinity(), near_val = 0;
+      bool have_win = false;
       for (long rr = std::max(0L, r0 - R); rr <= std::min(rows - 1, r0 + R) && std::isnan(exact); ++rr)
         for (long cc = std::max(0L, c0 - R); cc <= std::min(cols - 1, c0 + R); ++cc) {
           const double val = occ[static_cast<std::size_t>(rr * cols + cc)];
@@ -40,6 +65,11 @@ Raster idw_raster(const std::vector<std::int32_t>& cell, const std::vector<doubl
             exact = val;
             break;
           }
+          have_win = true;
+          if (d < near_d) {
+            near_d = d;
+            near_val = val;
+          }
           const double w = 1.0 / std::pow(d, p.power);
           num += w * val;
           den += w;
@@ -47,25 +77,13 @@ Raster idw_raster(const std::vector<std::int32_t>& cell, const std::vector<doubl
       double z;
       if (!std::isnan(exact)) {
         z = exact;
-      } else if (den > 0) {
+      } else if (have_win && std::isfinite(num) && std::isfinite(den) && den > 0) {
         z = num / den;
-      } else {  // nearest occupied cell, ring by ring beyond R
-        double best_d = std::numeric_limits<double>::infinity();
-        z = 0;
-        for (long ring = R + 1; ring <= std::max(cols, rows) && !std::isfinite(best_d); ++ring)
-          for (long dr = -ring; dr <= ring; ++dr)
-            for (long dc = -ring; dc <= ring; ++dc) {
-              if (std::max(std::labs(dc), std::labs(dr)) != ring) continue;
-              const long cc = c0 + dc, rr = r0 + dr;
-              if (cc < 0 || cc >= cols || rr < 0 || rr >= rows) continue;
-              const double val = occ[static_cast<std::size_t>(rr * cols + cc)];
-              if (std::isnan(val)) continue;
-              const double d = std::hypot(u - (static_cast<double>(cc) + 0.5), v - (static_cast<double>(rr) + 0.5));
-              if (d < best_d) {
-                best_d = d;
-                z = val;
-              }
-            }
+      } else if (have_win) {  // weights underflowed/overflowed: nearest in-window node
+        z = near_val;
+      } else {
+        const long cc = std::min(cols - 1, c0), rr = std::min(rows - 1, r0);
+        z = occ[static_cast<std::size_t>(nearest[static_cast<std::size_t>(rr * cols + cc)])];
       }
       r.z[static_cast<std::size_t>(py) * r.w + static_cast<std::size_t>(px)] = static_cast<float>(z);
     }
