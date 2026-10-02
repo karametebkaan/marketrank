@@ -45,7 +45,7 @@ bool passes_universe_rules(const AssetInfo& a, const UniverseRules& rules) {
                                                    "NYSEARCA", "AMEX", "BATS"};
   if (!kExchanges.count(a.exchange)) return false;
   static const std::regex kExcluded(
-      R"((warrant|\bunits?\b|\brights?\b|\betf\b|\betn\b|ishares|spdr|proshares|direxion|\bfund\b|\bindex\b))",
+      R"((warrant|\bunits?\b|\brights?\b))",
       std::regex::icase);
   return !std::regex_search(a.name, kExcluded);
 }

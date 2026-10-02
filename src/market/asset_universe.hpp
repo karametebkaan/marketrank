@@ -23,7 +23,7 @@ struct UniverseRules {
   std::set<std::string> exclude;         // exclude.csv
 };
 
-// Spec 3: tradable; exclude list; always_include; exchange; warrant/unit/right/ETF-like names.
+// Spec 3: tradable; exclude list; always_include; exchange; warrant/unit/right names only.
 bool passes_universe_rules(const AssetInfo& a, const UniverseRules& rules);
 
 struct RankedAsset {

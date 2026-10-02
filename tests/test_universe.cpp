@@ -54,6 +54,19 @@ TEST_CASE("load_portfolio validates weights") {
   CHECK_THROWS_AS(load_portfolio(bad), std::runtime_error);
 }
 
+TEST_CASE("price_tickers deduplicates funds that are also nodes") {
+  auto dir = test::temp_dir("price_tickers");
+  auto sp = test::write_file(dir / "sp500.csv",
+                             "ticker,name,sector\nVOO,Vanguard S&P 500 ETF,Information Technology\n"
+                             "AAPL,Apple Inc.,Information Technology\n");
+  auto fu = test::write_file(dir / "funds.csv", "ticker,tracks\nVOO,sp500\n");
+  Universe u = Universe::load(sp, fu);
+  auto tickers = u.price_tickers();
+  // Should have VOO (node) and AAPL (node), not VOO twice
+  CHECK(tickers.size() == 2);
+  CHECK(u.is_fund("VOO"));
+}
+
 TEST_CASE("bundled data files are consistent") {
   Universe u = Universe::load(FLUX_SOURCE_DIR "/data/universe/sp500.csv",
                               FLUX_SOURCE_DIR "/data/universe/funds.csv");

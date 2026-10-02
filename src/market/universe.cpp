@@ -88,7 +88,9 @@ std::vector<std::string> Universe::node_tickers() const {
 
 std::vector<std::string> Universe::price_tickers() const {
   auto out = node_tickers();
-  for (const auto& f : funds_) out.push_back(f.ticker);
+  for (const auto& f : funds_) {
+    if (!index_.count(f.ticker)) out.push_back(f.ticker);
+  }
   return out;
 }
 

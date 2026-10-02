@@ -27,7 +27,7 @@ TEST_CASE("parse_assets reads symbols, names, exchanges and tradable flags") {
   CHECK_THROWS_AS(parse_assets("not json"), std::runtime_error);
 }
 
-TEST_CASE("universe rules filter exchanges, warrants, units, rights and ETF-like names") {
+TEST_CASE("universe rules filter exchanges, warrants, units and rights; ETFs pass") {
   UniverseRules rules;
   auto ok = [&](std::string sym, std::string name, std::string exch, bool tradable = true) {
     return passes_universe_rules({sym, name, exch, tradable}, rules);
@@ -38,8 +38,9 @@ TEST_CASE("universe rules filter exchanges, warrants, units, rights and ETF-like
   CHECK_FALSE(ok("ACMW", "Acme Corp Warrant", "NASDAQ"));
   CHECK_FALSE(ok("ACMU", "Acme Acquisition Corp Units", "NASDAQ"));
   CHECK_FALSE(ok("ACMR", "Acme Acquisition Corp Rights", "NASDAQ"));
-  CHECK_FALSE(ok("SPY", "SPDR S&P 500 ETF Trust", "ARCA"));
-  CHECK_FALSE(ok("TQQQ", "ProShares UltraPro QQQ", "NASDAQ"));
+  CHECK(ok("SPY", "SPDR S&P 500 ETF Trust", "ARCA"));
+  CHECK(ok("TQQQ", "ProShares UltraPro QQQ", "NASDAQ"));
+  CHECK(ok("VOO", "Vanguard S&P 500 ETF", "ARCA"));
   CHECK_FALSE(ok("ABCD", "Abcd Holdings", "OTC"));
   CHECK_FALSE(ok("AAPL", "Apple Inc.", "NASDAQ", false));
   rules.always_include = {"SPY"};

@@ -34,11 +34,11 @@ Two universe sources, selected by `--universe sp500|snapshot` (default: the late
 - **snapshot (liquidity-ranked top N, default N = 10000):** built in alpaca mode with `--universe-size N`:
   1. Fetch all assets from Alpaca's trading API `GET /v2/assets?status=active&asset_class=us_equity`.
   2. Keep assets that are `tradable` and listed on NYSE, NASDAQ, ARCA, NYSEARCA, AMEX or BATS.
-  3. Drop warrants, units and rights by name (case-insensitive `warrant`, word `unit(s)`, word `right(s)`), and ETF/ETN-like products by name (`ETF`, `ETN`, `iShares`, `SPDR`, `ProShares`, `Direxion`, word `Fund`, word `Index`). S&P 500 constituents always pass, and `data/universe/exclude.csv` / `include.csv` (one ticker per line) override the rules.
+  3. Drop warrants, units and rights by name (case-insensitive `warrant`, word `unit(s)`, word `right(s)`). ETFs are kept as ordinary nodes (user decision 2026-10-01). S&P 500 constituents always pass, and `data/universe/exclude.csv` / `include.csv` (one ticker per line) override the rules.
   4. Rank by the median daily dollar volume (v·vwap) over the last 20 trading days and keep the top N.
   5. Write `data/universe/universe_<YYYY-MM-DD>.csv` (`ticker,name,sector,exchange,median_dollar_volume`); a snapshot younger than 7 days is reused. Sector comes from sp500.csv where known, otherwise `Unclassified`.
 - **Portfolio extras:** any held single stock not in the universe (e.g. **NVO**) is added as an extra node with sector `"Extra"`.
-- **Index funds (look-through):** `data/universe/funds.csv` declares fund tickers and what they track (`VOO,sp500`). A fund is **not** a graph node; its hotness is the weight-averaged hotness of its constituents, weighted by trailing 20-bar median dollar volume (Alpaca does not provide market cap). Fund prices are still fetched for valuation and P&L.
+- **Index funds (look-through):** `data/universe/funds.csv` declares fund tickers and what they track (`VOO,sp500`). A fund that is also in the ranked universe is an ordinary node too; look-through is used only where the fund isn't a node. Where a fund is not a node, its hotness is the weight-averaged hotness of its constituents, weighted by trailing 20-bar median dollar volume (Alpaca does not provide market cap). Fund prices are still fetched for valuation and P&L.
 
 N ranges from ~505 (sp500) to ~10,000 (snapshot). Every per-bar data structure is O(N·k) or O(N·W); none is O(N²).
 
