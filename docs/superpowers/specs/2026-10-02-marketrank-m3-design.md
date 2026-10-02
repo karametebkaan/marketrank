@@ -1,6 +1,6 @@
 # MarketRank M3: backfill, walk-forward test, then optimizer or better flows
 
-**Status:** approved by the user on 2026-10-02, with the §7 defaults accepted as proposed.
+**Status:** approved by the user on 2026-10-02, with the §7 defaults accepted as proposed, except that **rebalancing is weekly** (user decision, same day: any edge is expected within about a week; monthly is a secondary comparison).
 **Builds on:** `2026-10-01-marketrank-design.md` (model, engine, Fluxscape).
 
 ## 0. The one question M3 answers

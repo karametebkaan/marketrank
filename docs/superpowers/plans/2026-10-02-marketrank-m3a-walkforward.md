@@ -30,11 +30,11 @@
 - Advisory only: no orders, no live trading.
 
 **Defaults from spec §7 (accepted 2026-10-02)**
-- Monthly rebalancing on the last trading day of the month.
+- **Weekly** rebalancing on the last trading day of each ISO week (user decision 2026-10-02: the edge, if any, is expected within about a week). Monthly is a secondary comparison.
 - Tilt budget 20% over the top K = 10 names.
 - Per-name tilt cap 10%; eligible names have trailing median dollar volume ≥ $50M; turnover cap 0.5 per rebalance.
 - Costs 10 bps per side, with sensitivity runs at 0 / 10 / 25.
-- Blend: trailing window 36 months, embargo 1 month, gate on t > 2 over the last 24 out-of-sample months, with at least 12 months required.
+- Blend, in rebalance periods (weeks): trailing window 156, embargo 1, gate on t > 2 over the last 104 out-of-sample periods, with at least 52 required.
 - 12-month warm-up.
 
 **Base portfolio** (held fixed as the core): AAPL 60%, VOO 15%, NVDA 7%, LLY 6%, NVO 5%, NKE 3.5%, F 3.5%. ETFs are allowed.
@@ -346,7 +346,8 @@ EquityCurve simulate(const Panel&, const BacktestParams&, const std::vector<Deci
 - Produces:
 ```cpp
 namespace mr {
-struct BlendParams { std::size_t train_months = 36, embargo = 1, gate_months = 24, gate_min = 12; double gate_t = 2.0; };
+// Counts are rebalance periods (weekly by default: 156 = 3 years).
+struct BlendParams { std::size_t train_months = 156, embargo = 1, gate_months = 104, gate_min = 52; double gate_t = 2.0; };
 // Per rebalance month m: z[s] = cross-sectional z-scores (size N, NaN = not eligible), label = forward return to the
 // next rebalance execution (size N), both from the walk-forward pass.
 struct MonthRecord { std::array<std::vector<double>, kSignals> z; std::vector<double> label; };
@@ -453,9 +454,9 @@ GateResult decision_gate(const Perf& strat_vs_buyhold, double base_max_dd, doubl
 namespace mr {
 struct WalkForwardParams {
   CoreParams core = CoreParams::market_rank();
-  Rebalance rebalance = Rebalance::Monthly;
+  Rebalance rebalance = Rebalance::Weekly;  // user decision: weekly is primary
   std::size_t warmup_bars = 252, elig_window = 20, top_n = 0; double min_dollar_volume = 50e6;
-  std::vector<int> ic_horizons{1, 5, 20};
+  std::vector<int> ic_horizons{1, 2, 5, 20};  // 20 = decay diagnostic only
   BacktestParams bt; BlendParams blend;
 };
 struct IcRow { Signal s; int h; MeanT all; std::vector<std::pair<int, double>> by_year; };  // year -> mean IC
