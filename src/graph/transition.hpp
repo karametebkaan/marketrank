@@ -18,6 +18,7 @@ struct TransitionParams {
   std::size_t k_out = 20;            // (C) per-row top edges
   std::size_t k_in = 10;             // (C) per-column top edges
   double retention = 1.0;            // (E)
+  bool operator==(const TransitionParams&) const = default;
 };
 
 // Spec 5 (B, C, E). Row-stochastic; rows ascending by column; raw = un-lifted F (self: retention*in).

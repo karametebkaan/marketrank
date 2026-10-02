@@ -9,6 +9,7 @@
 #include <nlohmann/json.hpp>
 #include <thread>
 
+#include "cli/args.hpp"
 #include "market/panel.hpp"
 #include "market/synthetic_market.hpp"
 #include "server/http_server.hpp"
@@ -25,7 +26,7 @@ struct Fixture {
   std::unique_ptr<FluxServer> server;
   std::thread th;
   int port = 0;
-  explicit Fixture(bool start = true) {
+  explicit Fixture(bool start = true, CoreParams core = CoreParams::money_flow()) {
     SyntheticConfig cfg;
     cfg.bars = 80;
     cfg.rotation_start = 40;
@@ -33,8 +34,7 @@ struct Fixture {
     auto secs = generate_synthetic(cfg, bars);
     std::vector<std::string> tickers;
     for (auto& s : secs) tickers.push_back(s.ticker);
-    store = std::make_unique<FrameStore>(build_panel(bars, tickers, cfg.tf), secs, CoreParams::money_flow(),
-                                         LandscapeParams{}, 10);
+    store = std::make_unique<FrameStore>(build_panel(bars, tickers, cfg.tf), secs, core, LandscapeParams{}, 10);
     if (start) store->start();
     for (int k = 0; start && k < 600 && !store->status().ready; ++k) std::this_thread::sleep_for(50ms);
     test::write_file(web / "index.html", "hello");
@@ -293,4 +293,31 @@ TEST_CASE("server: /api/top ranks exact h, with prev_rank and aligned series") {
   CHECK(early["rows"][0]["prev_rank"].is_null());  // no earlier cached bar
   CHECK(early["rows"][0]["series"].size() == 2);
   CHECK(early["rows"][0]["series"][0].is_null());
+}
+
+TEST_CASE("server: posting params without a preset keeps the CLI model flags; status reports the preset") {
+  const CoreParams cli = parse_cli({"--serve", "--lambda", "0.5"}).params;
+  REQUIRE(cli.flux.lambda == 0.5);
+  Fixture f(true, cli);
+  httplib::Client c("127.0.0.1", f.port);
+  auto status = [&] { return json::parse(c.Get("/api/status")->body); };
+  CHECK(status()["preset"] == "custom");
+  CHECK(c.Post("/api/params", R"({"smooth":2})", "application/json")->status == 202);
+  CHECK(f.store->core_params().flux.lambda == 0.5);
+  CHECK(f.store->landscape_params().smooth == 2.0);
+  CHECK(c.Post("/api/params", R"({"h_ref":"netflow"})", "application/json")->status == 202);
+  CHECK(f.store->core_params().flux.lambda == 0.5);
+  CHECK(f.store->core_params().h_ref == HotRef::NetFlow);
+  const auto st = status();
+  CHECK(st["h_ref"] == "netflow");
+  CHECK(st["smooth"].get<double>() == 2.0);
+  CHECK(st["idw_power"].is_number());
+  CHECK(st["idw_radius"].is_number_integer());
+  CHECK(st["subdivision"].is_number_integer());
+  // an explicit preset replaces the model parameters
+  CHECK(c.Post("/api/params", R"({"preset":"legacy"})", "application/json")->status == 202);
+  CHECK(status()["preset"] == "legacy");
+  CHECK(c.Post("/api/params", R"({"preset":"money-flow"})", "application/json")->status == 202);
+  CHECK(status()["preset"] == "money-flow");
+  CHECK(f.store->core_params().flux.lambda == CoreParams::money_flow().flux.lambda);
 }

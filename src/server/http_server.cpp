@@ -67,15 +67,26 @@ std::optional<TimePoint> query_t(const httplib::Request& req) {
   return std::stoll(req.get_param_value("t"));
 }
 
+// "money-flow" or "legacy" when the model parameters equal that preset, otherwise "custom".
+std::string preset_name(const CoreParams& p) {
+  if (p == CoreParams::money_flow()) return "money-flow";
+  if (p == CoreParams::legacy()) return "legacy";
+  return "custom";
+}
+
 json status_json(const FrameStore& s, const std::string& label) {
   const auto st = s.status();
+  const CoreParams core = s.core_params();
+  const LandscapeParams lp = s.landscape_params();
   return {{"computed", st.computed}, {"total", st.total},     {"running", st.running},
           {"ready", st.ready},       {"error", st.error},     {"generation", st.generation},
-          {"params", describe(s.core_params())},
-          {"height", std::string(to_string(s.landscape_params().height))},
+          {"params", describe(core)}, {"preset", preset_name(core)},
+          {"h_ref", std::string(to_string(core.h_ref))},
+          {"height", std::string(to_string(lp.height))},
           {"label", label},          {"nodes", s.nodes().size()},
-          {"smooth", s.landscape_params().smooth},
-          {"territory", std::string(to_string(s.landscape_params().territory))}};
+          {"smooth", lp.smooth},     {"idw_power", lp.idw.power},
+          {"idw_radius", lp.idw.radius_cells}, {"subdivision", lp.idw.subdivision},
+          {"territory", std::string(to_string(lp.territory))}};
 }
 
 }  // namespace
@@ -236,12 +247,16 @@ void FluxServer::routes() {
     try {
       const json b = json::parse(req.body);
       if (!b.is_object()) throw std::invalid_argument("body must be a JSON object");
-      CoreParams p;
-      const std::string preset = b.contains("preset") ? get_str(b, "preset") : std::string("money-flow");
-      if (preset == "money-flow") p = CoreParams::money_flow();
-      else if (preset == "legacy") p = CoreParams::legacy();
-      else if (preset == "defaults") p = CoreParams{};
-      else throw std::invalid_argument("unknown preset: " + preset);
+      // With a preset the model parameters start from it; without one they start from the current ones (which may
+      // carry CLI flags such as --lambda), and only the given fields change.
+      CoreParams p = store_.core_params();
+      if (b.contains("preset")) {
+        const std::string preset = get_str(b, "preset");
+        if (preset == "money-flow") p = CoreParams::money_flow();
+        else if (preset == "legacy") p = CoreParams::legacy();
+        else if (preset == "defaults") p = CoreParams{};
+        else throw std::invalid_argument("unknown preset: " + preset);
+      }
       constexpr long long kMaxK = 1000000;
       if (b.contains("h_ref")) p.h_ref = parse_hot_ref(get_str(b, "h_ref"));
       if (b.contains("pressure")) p.pressure = parse_pressure_mode(get_str(b, "pressure"));

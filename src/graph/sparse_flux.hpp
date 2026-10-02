@@ -21,6 +21,7 @@ struct SparseFluxParams {
   double lambda = 1.0;                // affinity a_ij = 1 + lambda * rho_ij, lambda in [0, 1]
   std::size_t sink_candidates = 256;  // C: candidate sinks with the largest pressure
   std::size_t sinks_per_source = 64;  // M: edges kept per source
+  bool operator==(const SparseFluxParams&) const = default;
 };
 
 // Spec 5. unit: n x w unit vectors (ReturnWindow::unit_vectors) or empty for no affinity.

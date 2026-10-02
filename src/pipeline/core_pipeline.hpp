@@ -38,6 +38,7 @@ struct CoreParams {
   static CoreParams money_flow();  // dollar flux, no lift, two-sided pruning, retention, size ref
   static CoreParams legacy();  // milestone-1 behaviour (spec 5)
   void validate() const;       // throws std::invalid_argument
+  bool operator==(const CoreParams&) const = default;
 };
 
 struct Frame {

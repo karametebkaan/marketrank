@@ -347,12 +347,20 @@ async function applyShock() {
   render();
 }
 
+// Parameter controls follow the server's current parameters: on the first status and after each Apply.
+// The preset and hotness selects are sent only when the user changed them, so CLI model flags survive.
+function initControls(st) {
+  S.controlsInit = true; S.presetDirty = false; S.hrefDirty = false;
+  $('preset').value = st.preset === 'custom' ? 'custom' : st.preset;
+  $('href').value = st.h_ref;
+  $('height').value = st.height; $('territory').value = st.territory;
+  $('idwPower').value = st.idw_power; $('idwRadius').value = st.idw_radius; $('subdiv').value = st.subdivision;
+  $('smooth').value = st.smooth; $('smoothLabel').textContent = $('smooth').value;
+}
+
 async function onStatus(st) {
   S.status = st;
-  if (!S.smoothInit && typeof st.smooth === 'number') {
-    S.smoothInit = true; $('smooth').value = st.smooth; $('smoothLabel').textContent = $('smooth').value;
-  }
-  if (!S.terrInit && typeof st.territory === 'string') { S.terrInit = true; $('territory').value = st.territory; }
+  if (!S.controlsInit && typeof st.preset === 'string') initControls(st);
   showStatus();
   if (!st.ready) return;
   // Reload on a new generation, or (when following the latest bar) when new bars have been computed.
@@ -406,10 +414,17 @@ function wire() {
   ['hscale', 'labels'].forEach((id) => $(id).addEventListener('input', render));
   $('arcs').addEventListener('input', () => { setArcsLabel(); render(); });
   $('smooth').addEventListener('input', () => { $('smoothLabel').textContent = $('smooth').value; });
+  $('preset').addEventListener('change', () => { S.presetDirty = $('preset').value !== 'custom'; });
+  $('href').addEventListener('change', () => { S.hrefDirty = true; });
   $('apply').addEventListener('click', async () => {
-    const body = { preset: $('preset').value, height: $('height').value, idw_power: Number($('idwPower').value), idw_radius: Number($('idwRadius').value), subdivision: Number($('subdiv').value), smooth: Number($('smooth').value), territory: $('territory').value };
-    if ($('href').value) body.h_ref = $('href').value;
-    try { await getJSON('/api/params', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); S.deck && S.deck.finalize(); S.deck = null; } catch (e) { fail(e); }
+    const body = { height: $('height').value, idw_power: Number($('idwPower').value), idw_radius: Number($('idwRadius').value), subdivision: Number($('subdiv').value), smooth: Number($('smooth').value), territory: $('territory').value };
+    if (S.presetDirty) body.preset = $('preset').value;
+    if (S.hrefDirty && $('href').value) body.h_ref = $('href').value;
+    try {
+      await getJSON('/api/params', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      S.controlsInit = false;  // re-read the controls from the next status
+      S.deck && S.deck.finalize(); S.deck = null;
+    } catch (e) { fail(e); }
   });
   $('shockSize').addEventListener('input', () => { $('shockSizeLabel').textContent = `${$('shockSize').value}%`; });
   $('shockApply').addEventListener('click', () => { applyShock().catch((e) => { $('shockOut').textContent = String(e.message || e); }); });
