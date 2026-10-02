@@ -572,7 +572,7 @@ TEST_CASE("server: show_etf round-trips through /api/params and /api/status, def
   for (int k = 0; k < 600 && !f.store->status().ready; ++k) std::this_thread::sleep_for(10ms);
   CHECK(json::parse(c.Get("/api/status")->body)["show_etf"] == true);
   CHECK_FALSE(f.store->landscape_params().exclude_etf);
-  CHECK(f.store->pipeline_steps() > steps);
+  CHECK(f.store->pipeline_steps() == steps);  // swapped from the cached other layout, no re-run
   CHECK(etf_cells().second == 5);
   CHECK(c.Post("/api/params", R"({"show_etf":"yes"})", "application/json")->status == 400);
   CHECK(c.Post("/api/params", R"({"show_etf":false})", "application/json")->status == 202);

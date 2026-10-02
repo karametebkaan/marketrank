@@ -74,6 +74,7 @@ std::uint64_t FrameStore::launch_locked(std::optional<CoreParams> core, std::opt
   }
   complete_ = false;
   frames_.clear();
+  alt_frames_.clear();
   pre_last_.reset();
   last_core_.reset();
   status_ = Status{};
@@ -106,6 +107,17 @@ std::uint64_t FrameStore::set_params(CoreParams core, LandscapeParams land) {
   bool restyle_only = false;
   {
     std::lock_guard<std::mutex> lk(m_);
+    LandscapeParams flipped = land_;
+    flipped.exclude_etf = !flipped.exclude_etf;
+    if (complete_ && status_.ready && core == core_ && land == flipped) {
+      // Only the ETF layout changes: the other layout of every bar is already cached.
+      frames_.swap(alt_frames_);
+      land_ = land;
+      omp_threads_ = threads;
+      status_.generation = ++gen_;
+      bump();
+      return status_.generation;
+    }
     restyle_only = complete_ && core == core_ && same_placement(land, land_);
   }
   return launch_locked(std::move(core), land, threads, restyle_only);
@@ -114,12 +126,13 @@ std::uint64_t FrameStore::set_params(CoreParams core, LandscapeParams land) {
 void FrameStore::run_restyle(std::uint64_t gen, LandscapeParams land, int threads) {
   try {
     omp_set_num_threads(threads);
-    std::vector<std::shared_ptr<const LandscapeFrame>> todo;
+    std::vector<std::shared_ptr<const LandscapeFrame>> todo, alt_todo;
     {
       std::lock_guard<std::mutex> lk(m_);
       if (gen_.load() != gen) return;
       status_.threads = omp_get_max_threads();
       for (const auto& [t, f] : frames_) todo.push_back(f);
+      for (const auto& [t, f] : alt_frames_) alt_todo.push_back(f);
     }
     for (const auto& f : todo) {
       if (gen_.load() != gen) return;
@@ -129,6 +142,16 @@ void FrameStore::run_restyle(std::uint64_t gen, LandscapeParams land, int thread
       frames_[nf->t] = nf;
       ++status_.computed;
       bump();
+    }
+    // The other ETF layout follows the same display parameters (after the served frames, so they are ready first).
+    LandscapeParams alt_land = land;
+    alt_land.exclude_etf = !land.exclude_etf;
+    for (const auto& f : alt_todo) {
+      if (gen_.load() != gen) return;
+      auto nf = std::make_shared<const LandscapeFrame>(restyle(*f, alt_land));
+      std::lock_guard<std::mutex> lk(m_);
+      if (gen_.load() != gen) return;
+      alt_frames_[nf->t] = nf;
     }
     std::lock_guard<std::mutex> lk(m_);
     if (gen_.load() != gen) return;
@@ -154,11 +177,15 @@ void FrameStore::run(std::uint64_t gen, CoreParams core, LandscapeParams land, i
     const std::size_t T = panel_.T();
     if (T < 3) throw std::runtime_error("need at least three bars to serve landscapes");
     CorePipeline pipe(panel_.N(), core);
+    // Two layouts per bar, without and with the ETF/Fund nodes, so a show_etf flip needs no recompute.
+    LandscapeParams alt_land = land;
+    alt_land.exclude_etf = !land.exclude_etf;
     LandscapeBuilder builder(panel_.N(), land, sector_groups(nodes_));
-    if (land.exclude_etf) {
+    LandscapeBuilder alt_builder(panel_.N(), alt_land, sector_groups(nodes_));
+    {
       std::vector<char> ex(panel_.N(), 0);
       for (std::size_t i = 0; i < nodes_.size() && i < ex.size(); ++i) ex[i] = nodes_[i].sector == kSectorEtfFund;
-      builder.set_excluded(std::move(ex));
+      (land.exclude_etf ? builder : alt_builder).set_excluded(std::move(ex));
     }
     // Landscapes for the last max_frames bars, after the warm-up bars (which only feed the model's memory, so the
     // first frame is not dominated by stocks without flux yet); at least the last bar.
@@ -173,11 +200,15 @@ void FrameStore::run(std::uint64_t gen, CoreParams core, LandscapeParams land, i
       }
       auto f = std::make_shared<Frame>(pipe.step(panel_, t));
       ++steps_;
-      std::shared_ptr<const LandscapeFrame> lf;
-      if (t >= first_landscape) lf = std::make_shared<LandscapeFrame>(builder.build(*f));
+      std::shared_ptr<const LandscapeFrame> lf, alt;
+      if (t >= first_landscape) {
+        lf = std::make_shared<LandscapeFrame>(builder.build(*f));
+        alt = std::make_shared<LandscapeFrame>(alt_builder.build(*f));
+      }
       std::lock_guard<std::mutex> lk(m_);
       if (gen_.load() != gen) return;
       if (lf) frames_[lf->t] = lf;
+      if (alt) alt_frames_[alt->t] = alt;
       if (t == T - 1) last_core_ = f;
       status_.computed = t;
       bump();

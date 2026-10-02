@@ -11,6 +11,7 @@ struct IdwParams {
   int subdivision = 4;
   double power = 2.0;
   int radius_cells = 3;
+  bool operator==(const IdwParams&) const = default;
 };
 
 struct Raster {
@@ -34,6 +35,7 @@ struct CvtParams {
   int iterations = 12;     // 0 = identity
   double lambda = 0.6;     // relaxation step, (0, 1]
   double eps_frac = 0.1;   // density floor as a fraction of the P90 of |z|, (0, 10]
+  bool operator==(const CvtParams&) const = default;
 };
 
 // In place. Vertices are the raster pixels; the cell neighbourhood is the 3x3 block with area weights 1 (centre),

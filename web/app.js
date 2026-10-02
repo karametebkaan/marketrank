@@ -4,7 +4,7 @@ const Q = new URLSearchParams(location.search);
 const S = {
   status: null, times: [], frame: null, raster: null, shock: null, shockRaster: null, shockVmax: 1,
   baseVmax: 1, deck: null, playing: false, loadedKey: '', loadedGen: null, selftest: Q.has('selftest'),
-  recompGen: null, frameSeq: 0, shockSeq: 0, topSeq: 0, topPrev: new Map(), highlight: null, idx: null, idxKey: '', colCache: null, arcsInit: false, selftestDone: false,
+  recompGen: null, frameSeq: 0, shockSeq: 0, topSeq: 0, topPrev: new Map(), highlight: null, idx: null, idxKey: '', colCache: null, selftestDone: false,
 };
 const $ = (id) => document.getElementById(id);
 const MID = [247, 247, 247], POS = [178, 24, 43], NEG = [33, 102, 172];
@@ -118,9 +118,6 @@ function render() {
   const pos = (n, lift = 0.3) => [n.x, n.y, n.zt + lift];
   // Label candidates: the 30 highest and lowest by the displayed height value (decluttered later).
   const ranked = nodes.filter((n) => n.hd !== null).sort((a, b) => b.hd - a.hd);
-  const nArcs = shock ? 0 : Number($('arcs').value);
-  const arcs = f.arcs.slice(0, nArcs).map((a) => ({ s: byI.get(a[0]), t: byI.get(a[1]), w: a[2] })).filter((a) => a.s && a.t);
-  const wmax = arcs.reduce((m, a) => Math.max(m, a.w), 1e-12);
   const holdings = (f.portfolio || []).filter((p) => p.i !== null && byI.has(p.i)).map((p) => ({ ...byI.get(p.i), weight: p.weight }));
   const layers = [
     new deck.SimpleMeshLayer({
@@ -131,33 +128,29 @@ function render() {
       id: 'nodes', data: nodes, getPosition: (n) => pos(n), getRadius: 0.16, radiusUnits: 'common',
       getFillColor: (n) => signColor(shock ? n.v : n.hd, 220), pickable: true,
     }),
-    new deck.ArcLayer({
-      id: 'arcs', data: arcs, getSourcePosition: (a) => pos(a.s), getTargetPosition: (a) => pos(a.t),
-      getWidth: (a) => 0.5 + 1.5 * a.w / wmax, widthUnits: 'pixels', getSourceColor: [255, 140, 0, 80], getTargetColor: [255, 215, 0, 80],
-    }),
   ];
-  // Portfolio: the server pins the holdings, so the smoothed surface passes exactly through each one and the ring
-  // and ticker sit on the surface at the holding's exact height. Drawn last without depth testing, so they stay
-  // visible at any lattice size.
+  // Portfolio: the server pins the holdings, so the smoothed surface passes exactly through each one. Each holding
+  // is a larger dot at its own surface vertex (screen-facing, depth-tested like the terrain), so it moves with the
+  // surface and is hidden behind hills like any point on it. Only the ticker labels are drawn on top.
   const onTop = { depthCompare: 'always', depthWriteEnabled: false };
-  const ring0 = Math.max(0.6, 0.012 * span(L));
   const hold = holdings.map((n) => ({ ...n, holding: true }));
   layers.push(
     new deck.ScatterplotLayer({
-      id: 'portfolio', data: hold, getPosition: (n) => pos(n, 0.1), getRadius: (n) => ring0 + 1.5 * n.weight, radiusUnits: 'common',
-      stroked: true, filled: false, getLineColor: [0, 230, 90, 255], getLineWidth: 3, lineWidthUnits: 'pixels', pickable: true, parameters: onTop,
+      id: 'portfolio', data: hold, getPosition: (n) => pos(n, 0.5), getRadius: (n) => 8 + 12 * n.weight, radiusUnits: 'pixels',
+      billboard: true, stroked: true, filled: true, getFillColor: [0, 200, 80, 255], getLineColor: [255, 255, 255, 255],
+      getLineWidth: 2, lineWidthUnits: 'pixels', pickable: true,
     }),
   );
   const hi = S.highlight === null ? undefined : byI.get(S.highlight);
   if (hi) {
     layers.push(new deck.ScatterplotLayer({
-      id: 'highlight', data: [hi], getPosition: (n) => pos(n, 0.5), getRadius: 1.2 * ring0 + 0.4, radiusUnits: 'common',
-      stroked: true, filled: false, getLineColor: [255, 210, 0, 255], getLineWidth: 4, lineWidthUnits: 'pixels', parameters: onTop,
+      id: 'highlight', data: [hi], getPosition: (n) => pos(n, 0.6), getRadius: 11, radiusUnits: 'pixels', billboard: true,
+      stroked: true, filled: false, getLineColor: [255, 210, 0, 255], getLineWidth: 3, lineWidthUnits: 'pixels',
     }));
   }
   S.baseLayers = layers;
   S.labelCands = {
-    hold: hold.map((n) => ({ ticker: n.ticker, p: [n.x, n.y, n.zt] })),
+    hold: hold.map((n) => ({ ticker: n.ticker, p: pos(n, 0.5) })),
     others: $('labels').checked
       ? ranked.slice(0, 30).concat(ranked.slice(-30).reverse()).map((n) => ({ ticker: n.ticker, p: pos(n, 0.9) })) : [],
     onTop,
@@ -274,7 +267,6 @@ function showLegend() {
 function fmt(v, d) { return v === null || v === undefined || !Number.isFinite(v) ? 'n/a' : v.toFixed(d); }
 function fmtSigned(v, d) { const t = fmt(v, d); return t !== 'n/a' && v >= 0 ? `+${t}` : t; }
 
-function setArcsLabel() { $('arcsLabel').textContent = $('arcs').value; }
 
 // Server strings only ever reach the DOM through .value / textContent.
 function fillTickers(nodes) {
@@ -401,7 +393,6 @@ async function loadFrame(t) {
     initDeck(f.lattice);
     fillTickers(f.nodes);
   }
-  if (!S.arcsInit) { S.arcsInit = true; $('arcs').value = Math.min(2 * f.nodes.length, 150); setArcsLabel(); }
   fillHoldings(f);
   loadTop(f.t).catch((e) => { $('topRows').textContent = String(e.message || e); if (S.selftest) fail(e); });
   updateShockEnabled();
@@ -492,7 +483,7 @@ async function onStatus(st) {
     setTimeout(() => {
       if (!$('topRows').querySelector('.toprow')) fail(new Error('top table did not render'));
       // The product UI is fixed: no model or landscape knobs may come back.
-      else if (document.querySelector('#panel select, #apply, #top button')) fail(new Error('a removed control is present'));
+      else if (document.querySelector('#panel select, #apply, #top button, #arcs')) fail(new Error('a removed control is present'));
       else if (S.frame.nodes.some((n) => n[2] === 'ETF/Fund' && (n[3] >= 0) !== S.status.show_etf)) fail(new Error('ETF placement does not match show_etf'));
       else document.title = `marketrank-ok:${S.frame.nodes.length}`;
     }, 1500);
@@ -529,7 +520,6 @@ function wire() {
     setTimeout(playTick, 0);
   });
   ['hscale', 'labels'].forEach((id) => $(id).addEventListener('input', render));
-  $('arcs').addEventListener('input', () => { setArcsLabel(); render(); });
   $('shockSize').addEventListener('input', () => { $('shockSizeLabel').textContent = `${$('shockSize').value}%`; });
   $('shockApply').addEventListener('click', () => { applyShock().catch((e) => { $('shockOut').textContent = String(e.message || e); }); });
   $('showEtf').addEventListener('change', () => { setShowEtf($('showEtf').checked).catch(fail); });
@@ -546,7 +536,6 @@ function fail(e) {
   try {
     if (typeof deck === 'undefined') throw new Error('deck.gl failed to load');
     wire();
-    setArcsLabel();
     if (S.selftest && Q.has('show_etf')) { // ?selftest=1&show_etf=0|1: set the checkbox state before the first load
       const want = Q.get('show_etf') === '1';
       if ((await getJSON('/api/status')).show_etf !== want) await setShowEtf(want);

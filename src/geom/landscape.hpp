@@ -69,6 +69,7 @@ struct LandscapeParams {
   // Leave the ETF/Fund sector (kSectorEtfFund) out of the landscape surface: such nodes stay in the frame (exact pi,
   // tables, flows) with cell -1 but are not placed, not on the lattice and not in the IDW / smoothing. Placement.
   bool exclude_etf = true;
+  bool operator==(const LandscapeParams&) const = default;
 };
 
 struct LandscapeNode {

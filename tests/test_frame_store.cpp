@@ -333,7 +333,7 @@ TEST_CASE("a display-only parameter change re-renders the cached frames without 
   CHECK(fs.pipeline_steps() == 3 * steps);
 }
 
-TEST_CASE("exclude_etf: ETF/Fund nodes get no cell, the top table and pi are unchanged, toggling re-lays out") {
+TEST_CASE("exclude_etf: ETF/Fund nodes get no cell, the top table and pi are unchanged, toggling swaps layouts at once") {
   Market m = market();
   const std::size_t n = m.secs.size();
   for (std::size_t i = n - 6; i < n; ++i) m.secs[i].sector = kSectorEtfFund;
@@ -357,14 +357,36 @@ TEST_CASE("exclude_etf: ETF/Fund nodes get no cell, the top table and pi are unc
   const auto g0 = fs.status().generation;
   const auto g1 = fs.set_params(CoreParams::money_flow(), off);
   CHECK(g1 > g0);
-  wait_ready(fs);
-  CHECK(fs.pipeline_steps() > steps);  // a re-layout, not a restyle
+  CHECK(fs.status().ready);               // the other layout was built in the same pass: no wait
+  CHECK(fs.status().generation == g1);
+  CHECK(fs.pipeline_steps() == steps);    // no pipeline re-run
   auto shown = fs.landscape(std::nullopt);
   REQUIRE(shown->nodes.size() == hidden->nodes.size());
   for (std::size_t k = 0; k < shown->nodes.size(); ++k) {
     CHECK(shown->nodes[k].cell >= 0);
     CHECK(shown->nodes[k].pi == hidden->nodes[k].pi);
   }
+  // The swapped-in layout is the one a store started with ETFs shown builds.
+  FrameStore fresh(m.panel, m.secs, CoreParams::money_flow(), off, 10);
+  fresh.start();
+  wait_ready(fresh);
+  REQUIRE(fresh.times() == fs.times());
+  for (const auto t : fs.times()) {
+    const auto a = fs.landscape(t), b = fresh.landscape(t);
+    REQUIRE(a->nodes.size() == b->nodes.size());
+    for (std::size_t k = 0; k < a->nodes.size(); ++k) CHECK(a->nodes[k].cell == b->nodes[k].cell);
+    REQUIRE(a->raster.z.size() == b->raster.z.size());
+    std::size_t diff = 0;
+    for (std::size_t k = 0; k < a->raster.z.size(); ++k) {
+      const float x = a->raster.z[k], y = b->raster.z[k];
+      diff += (x == y || (std::isnan(x) && std::isnan(y))) ? 0 : 1;
+    }
+    CHECK(diff == 0);
+  }
+  // And back: the original frames return unchanged.
+  fs.set_params(CoreParams::money_flow(), on);
+  CHECK(fs.status().ready);
+  CHECK(fs.landscape(std::nullopt) == hidden);
   const auto top_shown = top_hot(fs.recent(std::nullopt, 5), 10, 5, TopBy::Pi);
   REQUIRE(top_shown.size() == top_hidden.size());
   for (std::size_t k = 0; k < top_shown.size(); ++k) {

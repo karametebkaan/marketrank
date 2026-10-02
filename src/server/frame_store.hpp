@@ -43,7 +43,9 @@ class FrameStore {
   void start();
   // Returns the generation the new parameters run under. When only display parameters change (same CoreParams and
   // same_placement) and every frame has been computed, the cached frames are redrawn (restyle) in the worker
-  // instead of re-running the pipeline; the generation still advances.
+  // instead of re-running the pipeline; the generation still advances. Both ETF layouts (exclude_etf true and false)
+  // are built in the same pass, so flipping only exclude_etf on a complete store swaps them in at once (ready
+  // immediately, under a new generation).
   std::uint64_t set_params(CoreParams core, LandscapeParams land);
   Status status() const;
   std::vector<TimePoint> times() const;
@@ -85,6 +87,7 @@ class FrameStore {
   int omp_threads_ = 1;  // caller's omp_get_max_threads() at start()/set_params(); applied to worker and shock()
   Status status_;
   std::map<TimePoint, std::shared_ptr<const LandscapeFrame>> frames_;
+  std::map<TimePoint, std::shared_ptr<const LandscapeFrame>> alt_frames_;  // same bars, exclude_etf flipped
   std::optional<CorePipeline> pre_last_;
   std::shared_ptr<const Frame> last_core_;
 };
