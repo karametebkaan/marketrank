@@ -1,68 +1,174 @@
+#include <omp.h>
+
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
-#include <cstdlib>
 #include <filesystem>
 #include <iostream>
-#include <numeric>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
+#include "cli/args.hpp"
 #include "core/time.hpp"
 #include "market/alpaca_client.hpp"
+#include "market/asset_universe.hpp"
 #include "market/market_sync.hpp"
 #include "market/panel.hpp"
 #include "market/synthetic_market.hpp"
 #include "market/universe.hpp"
 #include "pipeline/core_pipeline.hpp"
+#include "pipeline/evaluation.hpp"
 
 namespace {
+namespace fs = std::filesystem;
 
-struct Args {
-  std::string mode = "synthetic";
-  fx::Timeframe tf = fx::Timeframe::Day;
-  int lookback_days = -1;
-  std::size_t top = 15;
-  std::filesystem::path data = "data";
-};
+fx::TimePoint now_utc() {
+  return std::chrono::duration_cast<std::chrono::seconds>(
+             std::chrono::system_clock::now().time_since_epoch())
+      .count();
+}
 
-Args parse_args(int argc, char** argv) {
-  Args a;
-  for (int i = 1; i < argc; ++i) {
-    const std::string flag = argv[i];
-    auto value = [&]() -> std::string {
-      if (i + 1 >= argc) throw std::invalid_argument("missing value for " + flag);
-      return argv[++i];
-    };
-    if (flag == "--mode") a.mode = value();
-    else if (flag == "--timeframe") a.tf = fx::parse_timeframe(value());
-    else if (flag == "--lookback-days") a.lookback_days = std::stoi(value());
-    else if (flag == "--top") a.top = static_cast<std::size_t>(std::stoul(value()));
-    else if (flag == "--data") a.data = value();
-    else if (flag == "--help" || flag == "-h") {
-      std::cout << "usage: fluxscape [--mode synthetic|replay|alpaca] [--timeframe 1h|1d|1w]\n"
-                   "                 [--lookback-days N] [--top N] [--data DIR]\n";
-      std::exit(0);
-    } else throw std::invalid_argument("unknown flag " + flag);
+std::string today_string() { return fx::format_rfc3339(now_utc()).substr(0, 10); }
+
+std::int64_t days_since(const std::string& ymd) {
+  const int y = std::stoi(ymd.substr(0, 4));
+  const auto m = static_cast<unsigned>(std::stoi(ymd.substr(5, 2)));
+  const auto d = static_cast<unsigned>(std::stoi(ymd.substr(8, 2)));
+  return fx::floor_div(now_utc(), 86400) - fx::days_from_civil(y, m, d);
+}
+
+fx::Universe sp500_universe(const fs::path& data) {
+  return fx::Universe::load(data / "universe" / "sp500.csv", data / "universe" / "funds.csv");
+}
+
+fs::path ensure_snapshot(const fx::CliArgs& args, const fx::AlpacaConfig& cfg,
+                         fx::AlpacaClient& data_client, fx::BarStore& store,
+                         const fx::PortfolioSpec& portfolio) {
+  const fs::path dir = args.data / "universe";
+  if (auto latest = fx::latest_snapshot(dir); latest && !args.refresh_universe) {
+    if (auto date = fx::snapshot_date(*latest); date && days_since(*date) < 7) return *latest;
   }
-  if (a.mode != "synthetic" && a.mode != "replay" && a.mode != "alpaca")
-    throw std::invalid_argument("--mode must be synthetic, replay or alpaca");
-  if (a.lookback_days < 0)
-    a.lookback_days = a.tf == fx::Timeframe::Hour ? 60 : a.tf == fx::Timeframe::Day ? 365 : 5 * 365;
-  return a;
+  fx::AlpacaConfig trading_cfg = cfg;
+  trading_cfg.host = cfg.trading_host;
+  fx::AlpacaClient trading(trading_cfg);
+  std::cerr << "fetching asset list from " << cfg.trading_host << "...\n";
+  const auto assets =
+      fx::parse_assets(trading.get("/v2/assets?status=active&asset_class=us_equity"));
+  const fx::Universe sp = sp500_universe(args.data);
+  fx::UniverseRules rules;
+  for (const auto& t : sp.node_tickers()) rules.always_include.insert(t);
+  for (const auto& h : portfolio.holdings)
+    if (!sp.is_fund(h.ticker)) rules.always_include.insert(h.ticker);
+  for (const auto& t : fx::read_ticker_list(dir / "include.csv")) rules.always_include.insert(t);
+  rules.exclude = fx::read_ticker_list(dir / "exclude.csv");
+  std::vector<fx::AssetInfo> candidates;
+  for (const auto& a : assets)
+    if (fx::passes_universe_rules(a, rules)) candidates.push_back(a);
+  std::vector<std::string> symbols;
+  for (const auto& a : candidates) symbols.push_back(a.symbol);
+  store.load_all(symbols, fx::Timeframe::Day);
+  const fx::TimePoint end = now_utc() - 16 * 60;
+  std::cerr << assets.size() << " assets, " << candidates.size()
+            << " candidates; fetching 40 days of daily bars to rank liquidity...\n";
+  const auto stale = fx::sync_bars(data_client, store, symbols, fx::Timeframe::Day,
+                                   end - 40 * 86400, end);
+  if (!stale.empty()) std::cerr << stale.size() << " stale tickers during ranking\n";
+  const auto ranked = fx::rank_by_liquidity(candidates, store, 20, args.universe_size);
+  const fs::path path = dir / ("universe_" + today_string() + ".csv");
+  fx::write_universe_snapshot(path, ranked, sp);
+  std::cerr << "wrote " << ranked.size() << "-ticker universe snapshot " << path.string() << "\n";
+  return path;
 }
 
 void print_row(std::size_t rank, const fx::Security& s, double h, double pi, double score) {
-  std::printf("%4zu  %-7s %-24.24s %+9.4f  %.6f  %+9.4f\n", rank, s.ticker.c_str(),
+  std::printf("%5zu  %-7s %-24.24s %+10.4f  %.7f  %+9.4f\n", rank, s.ticker.c_str(),
               s.sector.c_str(), h, pi, score);
+}
+
+int run_eval(const fx::CliArgs& args, const fx::Panel& panel, const fx::Universe& universe) {
+  std::printf("evaluation: last %zu of %zu bars, nodes=%zu, timeframe=%s, threads=%d\n\n",
+              args.eval_bars, panel.T(), panel.N(), std::string(fx::to_string(args.tf)).c_str(),
+              omp_get_max_threads());
+  std::printf("%-18s %6s %6s %6s %9s %6s %9s %6s %9s\n", "config", "floor", "gini", "coher",
+              "IC(score)", "t", "IC(h)", "t", "ms/frame");
+  for (const auto& c : fx::evaluation_grid()) {
+    const fx::EvalMetrics m = fx::evaluate(panel, universe.nodes(), c.params, args.eval_bars);
+    std::printf("%-18s %6.3f %6.3f %6.3f %+9.4f %+6.2f %+9.4f %+6.2f %9.1f\n", c.name.c_str(),
+                m.floor_share, m.gini, m.sector_coherence, m.ic_mean, m.ic_t, m.ic_h_mean,
+                m.ic_h_t, m.mean_frame_ms);
+    std::fflush(stdout);
+  }
+  return 0;
+}
+
+int run_rank(const fx::CliArgs& args, const fx::Panel& panel, const fx::Universe& universe,
+             const std::optional<fx::PortfolioSpec>& portfolio) {
+  const auto t0 = std::chrono::steady_clock::now();
+  const fx::Frame f = fx::run_panel_last(panel, args.params);
+  const double total_ms =
+      std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+  std::printf("mode=%s timeframe=%s nodes=%zu bars=%zu last=%s threads=%d\n", args.mode.c_str(),
+              std::string(fx::to_string(args.tf)).c_str(), panel.N(), panel.T(),
+              fx::format_rfc3339(f.t).c_str(), omp_get_max_threads());
+  std::printf("params: %s\n", fx::describe(args.params).c_str());
+  std::printf("solver: %s in %d iterations (residual %.2e); last frame %.1f ms, run %.0f ms\n",
+              f.solve.converged ? "converged" : "NOT converged", f.solve.iterations,
+              f.solve.residual, f.compute_ms, total_ms);
+  std::printf("edges: %zu slow, %zu fast; %.1f%% of active nodes at the teleport floor\n\n",
+              f.P.col.size(), f.P_fast.col.size(), 100.0 * fx::floor_share(f, args.params.alpha));
+
+  const auto& nodes = universe.nodes();
+  std::vector<std::size_t> hills;
+  for (std::size_t i = 0; i < panel.N(); ++i)
+    if (f.active[i]) hills.push_back(i);
+  const std::size_t inactive = panel.N() - hills.size();
+  auto by_ticker = [&](std::size_t a, std::size_t b) { return nodes[a].ticker < nodes[b].ticker; };
+  std::sort(hills.begin(), hills.end(), [&](auto a, auto b) {
+    return f.h[a] > f.h[b] || (f.h[a] == f.h[b] && by_ticker(a, b));
+  });
+  std::vector<std::size_t> valleys(hills.rbegin(), hills.rend());
+  std::stable_sort(valleys.begin(), valleys.end(), [&](auto a, auto b) { return f.h[a] < f.h[b]; });
+  const auto& score = f.forecasts.front().score;
+  const std::size_t top = std::min(args.top, hills.size());
+  if (inactive > 0) std::printf("%zu inactive (no data)\n\n", inactive);
+  std::printf("HILLS (money accumulating)            hotness         pi     score+%d\n",
+              f.forecasts.front().k);
+  for (std::size_t r = 0; r < top; ++r)
+    print_row(r + 1, nodes[hills[r]], f.h[hills[r]], f.pi[hills[r]], score[hills[r]]);
+  std::printf("\nVALLEYS (money draining)\n");
+  for (std::size_t r = 0; r < top; ++r) {
+    const std::size_t i = valleys[r];
+    print_row(valleys.size() - r, nodes[i], f.h[i], f.pi[i], score[i]);
+  }
+  if (portfolio) {
+    std::printf("\nPORTFOLIO HOLDINGS\n");
+    for (const auto& hld : portfolio->holdings) {
+      if (auto i = universe.index_of(hld.ticker); i && !f.active[*i]) {
+        std::printf("  %-6s %5.1f%%  (no data)\n", hld.ticker.c_str(), hld.weight * 100);
+      } else if (i) {
+        std::printf("  %-6s %5.1f%%  hotness %+9.4f  score+%d %+9.4f\n", hld.ticker.c_str(),
+                    hld.weight * 100, f.h[*i], f.forecasts.front().k, score[*i]);
+      } else {
+        std::printf("  %-6s %5.1f%%  (fund: look-through hotness arrives in milestone 3)\n",
+                    hld.ticker.c_str(), hld.weight * 100);
+      }
+    }
+  }
+  return 0;
 }
 
 }  // namespace
 
 int main(int argc, char** argv) {
   try {
-    const Args args = parse_args(argc, argv);
+    const fx::CliArgs args = fx::parse_cli(std::vector<std::string>(argv + 1, argv + argc));
+    if (args.help) {
+      std::cout << fx::cli_usage();
+      return 0;
+    }
+    if (args.threads > 0) omp_set_num_threads(args.threads);
     fx::BarStore store(args.data / "cache");
     fx::Universe universe;
     std::optional<fx::PortfolioSpec> portfolio;
@@ -72,85 +178,41 @@ int main(int argc, char** argv) {
       cfg.tf = args.tf;
       universe = fx::Universe::from_securities(fx::generate_synthetic(cfg, store));
     } else {
-      universe = fx::Universe::load(args.data / "universe" / "sp500.csv",
-                                    args.data / "universe" / "funds.csv");
       portfolio = fx::load_portfolio(args.data / "portfolio.json");
-      universe.add_extras(*portfolio);
-      store.load_all(universe.price_tickers(), args.tf);
+      const fs::path dir = args.data / "universe";
+      std::optional<fx::AlpacaConfig> cfg;
+      std::optional<fx::AlpacaClient> client;
       if (args.mode == "alpaca") {
         fx::load_dotenv(".env");
-        auto cfg = fx::alpaca_config_from_env();
+        cfg = fx::alpaca_config_from_env();
         if (!cfg) throw std::runtime_error("APCA_API_KEY_ID / APCA_API_SECRET_KEY not set (.env)");
-        fx::AlpacaClient client(*cfg);
-        const auto now = std::chrono::duration_cast<std::chrono::seconds>(
-                             std::chrono::system_clock::now().time_since_epoch())
-                             .count();
-        const fx::TimePoint end = now - 16 * 60;
+        client.emplace(*cfg);
+      }
+      std::optional<fs::path> snapshot;
+      if (args.universe != fx::UniverseSource::Sp500) {
+        snapshot = args.mode == "alpaca" ? ensure_snapshot(args, *cfg, *client, store, *portfolio)
+                                         : fx::latest_snapshot(dir);
+        if (!snapshot && args.universe == fx::UniverseSource::Snapshot)
+          throw std::runtime_error("no universe snapshot; run --mode alpaca first");
+      }
+      universe = snapshot ? fx::load_snapshot(*snapshot, dir / "funds.csv")
+                          : sp500_universe(args.data);
+      universe.add_extras(*portfolio);
+      store.load_all(universe.price_tickers(), args.tf);
+      if (client) {
+        const fx::TimePoint end = now_utc() - 16 * 60;
         const fx::TimePoint start = end - static_cast<fx::TimePoint>(args.lookback_days) * 86400;
         std::cerr << "syncing " << universe.price_tickers().size() << " tickers ("
                   << fx::to_string(args.tf) << ") from " << fx::format_rfc3339(start) << "...\n";
-        const auto stale = fx::sync_bars(client, store, universe.price_tickers(), args.tf, start, end);
+        const auto stale =
+            fx::sync_bars(*client, store, universe.price_tickers(), args.tf, start, end);
         if (!stale.empty()) std::cerr << stale.size() << " stale tickers\n";
       }
     }
 
     const fx::Panel panel = fx::build_panel(store, universe.node_tickers(), args.tf);
-    if (panel.T() < 2) {
-      throw std::runtime_error("not enough cached bars; run with --mode alpaca first");
-    }
-    const fx::CoreParams params;
-    const auto t0 = std::chrono::steady_clock::now();
-    const fx::Frame f = fx::run_panel_last(panel, params);
-    const double total_ms =
-        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-
-    std::printf("mode=%s timeframe=%s nodes=%zu bars=%zu last=%s\n", args.mode.c_str(),
-                std::string(fx::to_string(args.tf)).c_str(), panel.N(), panel.T(),
-                fx::format_rfc3339(f.t).c_str());
-    std::printf("solver: %s in %d iterations (residual %.2e); last frame %.1f ms, run %.0f ms\n\n",
-                f.solve.converged ? "converged" : "NOT converged", f.solve.iterations,
-                f.solve.residual, f.compute_ms, total_ms);
-
-    const auto& nodes = universe.nodes();
-    std::vector<std::size_t> hills;
-    for (std::size_t i = 0; i < panel.N(); ++i)
-      if (f.active[i]) hills.push_back(i);
-    const std::size_t inactive = panel.N() - hills.size();
-    auto by_ticker = [&](std::size_t a, std::size_t b) { return nodes[a].ticker < nodes[b].ticker; };
-    std::sort(hills.begin(), hills.end(), [&](auto a, auto b) {
-      return f.h[a] > f.h[b] || (f.h[a] == f.h[b] && by_ticker(a, b));
-    });
-    std::vector<std::size_t> valleys(hills);
-    std::sort(valleys.begin(), valleys.end(), [&](auto a, auto b) {
-      return f.h[a] < f.h[b] || (f.h[a] == f.h[b] && by_ticker(a, b));
-    });
-    const auto& score = f.forecasts.front().score;
-    const std::size_t top = std::min(args.top, hills.size());
-    if (inactive > 0) std::printf("%zu inactive (no data)\n\n", inactive);
-    std::printf("HILLS (money accumulating)          hotness        pi     score+%d\n",
-                f.forecasts.front().k);
-    for (std::size_t r = 0; r < top; ++r)
-      print_row(r + 1, nodes[hills[r]], f.h[hills[r]], f.pi[hills[r]], score[hills[r]]);
-    std::printf("\nVALLEYS (money draining)\n");
-    for (std::size_t r = 0; r < top; ++r) {
-      const std::size_t i = valleys[r];
-      print_row(valleys.size() - r, nodes[i], f.h[i], f.pi[i], score[i]);
-    }
-    if (portfolio) {
-      std::printf("\nPORTFOLIO HOLDINGS\n");
-      for (const auto& hld : portfolio->holdings) {
-        if (auto i = universe.index_of(hld.ticker); i && !f.active[*i]) {
-          std::printf("  %-6s %5.1f%%  (no data)\n", hld.ticker.c_str(), hld.weight * 100);
-        } else if (i) {
-          std::printf("  %-6s %5.1f%%  hotness %+8.4f  score+%d %+8.4f\n", hld.ticker.c_str(),
-                      hld.weight * 100, f.h[*i], f.forecasts.front().k, score[*i]);
-        } else {
-          std::printf("  %-6s %5.1f%%  (fund: look-through hotness arrives in milestone 3)\n",
-                      hld.ticker.c_str(), hld.weight * 100);
-        }
-      }
-    }
-    return 0;
+    if (panel.T() < 2) throw std::runtime_error("not enough cached bars; run with --mode alpaca first");
+    return args.eval ? run_eval(args, panel, universe) : run_rank(args, panel, universe, portfolio);
   } catch (const std::exception& e) {
     std::cerr << "fluxscape: " << e.what() << "\n";
     return 1;
