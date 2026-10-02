@@ -176,6 +176,16 @@ function fillHoldings(f) {
   });
 }
 
+// The server computes shocks only at its latest bar, so shocks are offered only while that bar is displayed.
+function isLatestFrame() {
+  return !!S.frame && S.times.length > 0 && S.frame.t === S.times[S.times.length - 1];
+}
+function updateShockEnabled() {
+  const ok = isLatestFrame();
+  $('shockApply').disabled = !ok;
+  $('shockHint').hidden = ok;
+}
+
 function clearShock() {
   S.shock = null; S.shockRaster = null; S.shockSeq++;
   $('shockOut').textContent = '';
@@ -199,6 +209,7 @@ async function loadFrame(t) {
   if (!S.arcsInit) { S.arcsInit = true; $('arcs').value = Math.min(400, 2 * f.nodes.length); setArcsLabel(); }
   $('tlabel').textContent = `${f.time}  ·  ${f.nodes.length} active stocks  ·  ${f.params}`;
   fillHoldings(f);
+  updateShockEnabled();
   render();
   return true;
 }
@@ -208,6 +219,7 @@ async function refreshTimes() {
   const s = $('scrub');
   s.max = Math.max(0, S.times.length - 1);
   if ($('follow').checked) s.value = s.max;
+  updateShockEnabled();
 }
 
 function showStatus() {
@@ -218,7 +230,7 @@ function showStatus() {
 }
 
 async function applyShock() {
-  if (!S.frame) throw new Error('no frame loaded');
+  if (!isLatestFrame()) throw new Error('shock applies to the latest bar');
   const seq = ++S.shockSeq;
   const tickers = [$('shockTicker').value.trim().toUpperCase()];
   const body = { shocks: tickers.map((ticker) => ({ ticker, size: Number($('shockSize').value) })) };
@@ -282,7 +294,8 @@ async function playTick() {
 }
 
 function wire() {
-  $('scrub').addEventListener('input', () => { $('follow').checked = false; clearShock(); loadFrame(S.times[Number($('scrub').value)]).catch(fail); });
+  // Scrubbing exits shock mode (as Reset does): the shock belongs to the latest bar only.
+  $('scrub').addEventListener('input', () => { $('follow').checked = false; clearShock(); render(); $('shockApply').disabled = true; loadFrame(S.times[Number($('scrub').value)]).catch(fail); });
   $('play').addEventListener('click', () => {
     if (S.playing) { stopPlay(); return; }
     S.playing = true; $('play').textContent = 'Pause'; $('follow').checked = false;

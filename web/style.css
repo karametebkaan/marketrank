@@ -11,6 +11,7 @@ html, body { height: 100%; margin: 0; font: 13px/1.4 system-ui, -apple-system, S
 #panel button { margin: 6px 6px 0 0; padding: 4px 10px; }
 #status { color: var(--muted); font-size: 12px; min-height: 2.8em; }
 #canvas { position: relative; }
+.hint { color: var(--muted); font-size: 12px; margin-top: 4px; }
 .list { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
 .pos { color: #b2182b; } .neg { color: #2166ac; }
 @media (max-width: 700px) { #app { grid-template-columns: 1fr; grid-template-rows: auto 60vh; } #panel { border-right: 0; border-bottom: 1px solid var(--line); } }
