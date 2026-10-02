@@ -75,6 +75,10 @@ CliArgs parse_cli(const std::vector<std::string>& args) {
   if (legacy) a.params = CoreParams::legacy(), a.preset = "legacy";
   if (money) a.params = CoreParams::money_flow(), a.preset = "money-flow";
   if (market) a.params = CoreParams::market_rank(), a.preset = "marketrank";
+  // --- M3c 13F comparison: a run mode of its own (checked before the flag loop so it also covers --walkforward) ---
+  if (has("--compare-13f"))
+    for (const char* other : {"--eval", "--shock", "--export-slice", "--walkforward"})
+      if (has(other)) throw std::invalid_argument(std::string("--compare-13f cannot be combined with ") + other);
   for (std::size_t i = 0; i < args.size(); ++i) {
     const std::string& flag = args[i];
     auto value = [&]() -> std::string {

@@ -270,8 +270,33 @@ int run_shock(const mr::CliArgs& args, const mr::Panel& panel, const mr::Univers
 }
 
 // --- M3c 13F comparison: observed 13F flows vs estimated quarter flows + calibration grid (replay only) ---
+// Git SHA of the source tree the binary was built from (+ "-dirty" with uncommitted changes); "unknown" without git.
+std::string source_git_sha() {
+#ifdef MR_SOURCE_DIR
+  auto run = [](const std::string& cmd) {
+    std::string out;
+    if (FILE* p = popen(cmd.c_str(), "r")) {
+      char buf[256];
+      while (std::fgets(buf, sizeof buf, p)) out += buf;
+      if (pclose(p) != 0) return std::string();
+    }
+    while (!out.empty() && (out.back() == '\n' || out.back() == '\r')) out.pop_back();
+    return out;
+  };
+  const std::string dir = MR_SOURCE_DIR;
+  const std::string sha = run("git -C '" + dir + "' rev-parse HEAD 2>/dev/null");
+  if (sha.empty()) return "unknown";
+  return run("git -C '" + dir + "' status --porcelain --untracked-files=no 2>/dev/null").empty() ? sha : sha + "-dirty";
+#else
+  return "unknown";
+#endif
+}
+
 int run_compare_13f(const mr::CliArgs& args, const mr::Panel& panel) {
   mr::Compare13fOptions opt;
+  opt.lookback_days = args.lookback_days;
+  opt.timeframe = std::string(mr::to_string(args.tf));
+  opt.git_sha = source_git_sha();
   opt.data = args.data;
   opt.quarters = args.quarters_13f;
   opt.base = args.params;

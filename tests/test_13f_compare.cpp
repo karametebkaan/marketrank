@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <limits>
 #include <map>
+#include <set>
 #include <random>
 #include <sstream>
 #include <string>
@@ -63,42 +64,162 @@ TEST_CASE("13f compare (a): identical inputs agree perfectly") {
   std::mt19937_64 rng(7);
   const std::size_t n = 60;  // 3540 edges: enough for the top-2000 overlap and the top-50 pi overlap
   const auto e = complete_random(n, rng);
-  const Agreement a = compare_flows(e, e, n);
-  CHECK(a.edge_spearman == doctest::Approx(1.0));
-  CHECK(a.in_spearman == doctest::Approx(1.0));
-  CHECK(a.out_spearman == doctest::Approx(1.0));
-  CHECK(a.pi_spearman == doctest::Approx(1.0));
-  CHECK(a.top500_overlap == 1.0);
-  CHECK(a.top2000_overlap == 1.0);
-  CHECK(a.top50_pi_overlap == 1.0);
-  // the shuffled baseline is far from the identity
-  CHECK(a.shuf_edge_spearman < 0.5);
-  CHECK(a.shuf_pi_spearman < 0.5);
+  const Agreement a = compare_flows(e, e, n, 10);
+  CHECK(a.est.obs_topk_spearman == doctest::Approx(1.0));
+  CHECK(a.est.full_spearman == doctest::Approx(1.0));
+  CHECK(a.est.row_cosine == doctest::Approx(1.0));
+  CHECK(a.est.union_spearman == doctest::Approx(1.0));
+  CHECK(a.est.in_spearman == doctest::Approx(1.0));
+  CHECK(a.est.out_spearman == doctest::Approx(1.0));
+  CHECK(a.est.pi_spearman == doctest::Approx(1.0));
+  CHECK(a.est.pi_spearman_flow == doctest::Approx(1.0));
+  CHECK(a.est.top500_overlap == 1.0);
+  CHECK(a.est.top2000_overlap == 1.0);
+  CHECK(a.est.top50_pi_overlap == 1.0);
+  CHECK(a.perm.draws == 10);
+  CHECK(a.perm.mean.full_spearman < 0.5);  // the permuted labels are far from the identity
+  CHECK(a.perm.mean.pi_spearman < 0.5);
+  CHECK(a.perm.sd.full_spearman > 0);
+  CHECK(a.top500_expected == doctest::Approx(500.0 / (60.0 * 59.0)));
+  CHECK_FALSE(a.has_placebo);
 }
 
 TEST_CASE("13f compare (b): independent random inputs give Spearman near 0") {
-  // Complete graphs with n(n-1) <= 5000 edges: the top-5000 union is every pair, so independent weights
-  // give no agreement. Node and pi Spearman over 70 nodes have sd ~0.12 per draw, so the bound is
-  // checked on the mean over 20 draws (sd ~0.027); the well-powered edge Spearman is checked per draw.
+  // Complete graphs: independent weights give no agreement. Node and pi Spearman over 70 nodes have sd ~0.12
+  // per draw, so the bound is checked on the mean over 20 draws (sd ~0.027); the well-powered edge Spearmans
+  // are checked per draw.
   std::mt19937_64 rng(2026);
   const std::size_t n = 70, draws = 20;
-  double edge = 0, in = 0, out = 0, pi = 0, se = 0, sp = 0;
+  double in = 0, out = 0, pi = 0, pin = 0;
   for (std::size_t d = 0; d < draws; ++d) {
     const auto o = complete_random(n, rng);
     const auto e = complete_random(n, rng);
-    const Agreement a = compare_flows(o, e, n);
-    CHECK(std::abs(a.edge_spearman) < 0.1);
-    CHECK(std::abs(a.shuf_edge_spearman) < 0.1);
-    edge += a.edge_spearman, in += a.in_spearman, out += a.out_spearman, pi += a.pi_spearman;
-    se += a.shuf_edge_spearman, sp += a.shuf_pi_spearman;
+    const Agreement a = compare_flows(o, e, n, 5);
+    CHECK(std::abs(a.est.full_spearman) < 0.1);
+    CHECK(std::abs(a.est.obs_topk_spearman) < 0.1);
+    in += a.est.in_spearman, out += a.est.out_spearman, pi += a.est.pi_spearman, pin += a.perm.mean.pi_spearman;
   }
   const double k = static_cast<double>(draws);
-  CHECK(std::abs(edge / k) < 0.1);
   CHECK(std::abs(in / k) < 0.1);
   CHECK(std::abs(out / k) < 0.1);
   CHECK(std::abs(pi / k) < 0.1);
-  CHECK(std::abs(se / k) < 0.1);
-  CHECK(std::abs(sp / k) < 0.1);
+  CHECK(std::abs(pin / k) < 0.1);
+}
+
+TEST_CASE("13f compare: large sparse independent case has a permutation null near 0") {
+  // n = 2000 nodes (the observed node-set size), 20,000 random edges each, one draw, 100 permutations.
+  std::mt19937_64 rng(99);
+  const std::uint32_t n = 2000;
+  std::uniform_int_distribution<std::uint32_t> node(0, n - 1);
+  std::lognormal_distribution<double> w(0.0, 1.5);
+  auto sparse = [&] {
+    std::vector<FlowEdge> e;
+    while (e.size() < 20000) {
+      const auto i = node(rng), j = node(rng);
+      if (i != j) e.push_back({i, j, w(rng)});
+    }
+    return e;
+  };
+  const auto o = sparse(), e = sparse();
+  const Agreement a = compare_flows(o, e, n);
+  CHECK(a.perm.draws == 100);
+  MESSAGE("perm null mean/sd: obs_topk ", a.perm.mean.obs_topk_spearman, "/", a.perm.sd.obs_topk_spearman, " full ",
+          a.perm.mean.full_spearman, "/", a.perm.sd.full_spearman, " cosine ", a.perm.mean.row_cosine, "/",
+          a.perm.sd.row_cosine, " union ", a.perm.mean.union_spearman, " top500 ", a.perm.mean.top500_overlap,
+          " (expected ", a.top500_expected, ")");
+  MESSAGE("estimate: obs_topk ", a.est.obs_topk_spearman, " full ", a.est.full_spearman, " cosine ", a.est.row_cosine);
+  for (const double x : {a.perm.mean.obs_topk_spearman, a.perm.mean.full_spearman, a.perm.mean.row_cosine,
+                         a.est.obs_topk_spearman, a.est.full_spearman, a.est.row_cosine})
+    CHECK(std::abs(x) < 0.05);
+  CHECK(a.perm.sd.full_spearman > 0);
+  CHECK(a.top500_expected == doctest::Approx(500.0 / (2000.0 * 1999.0)));
+}
+
+TEST_CASE("13f compare: a size-only estimator does not beat the gravity null") {
+  // Observed: managers hold size-weighted portfolios and trade at random (proportional pairing, rank-1 per
+  // manager). Estimated: bars of size-scaled random pressure with the top 30 sinks, independent of the managers.
+  // The estimate knows only node sizes, so it must not beat the gravity model of its own margins.
+  std::mt19937_64 rng(11);
+  const std::uint32_t n = 300;
+  std::normal_distribution<double> z(0.0, 1.0);
+  std::vector<double> size(n);
+  for (auto& x : size) x = std::exp(1.5 * z(rng));
+  std::discrete_distribution<std::uint32_t> pick(size.begin(), size.end());
+  std::vector<double> O(n * n, 0.0), E(n * n, 0.0);
+  for (int m = 0; m < 300; ++m) {
+    std::vector<double> out(n, 0.0), in(n, 0.0);
+    for (int k = 0; k < 40; ++k) {
+      const auto i = pick(rng);
+      const double d = z(rng) * size[i];
+      (d < 0 ? out[i] : in[i]) += std::abs(d);
+    }
+    double so = 0, si = 0;
+    for (std::uint32_t i = 0; i < n; ++i) so += out[i], si += in[i];
+    if (so <= 0 || si <= 0) continue;
+    const double scale = std::min(si, so) / (si * so);
+    for (std::uint32_t i = 0; i < n; ++i)
+      for (std::uint32_t j = 0; j < n; ++j)
+        if (i != j) O[i * n + j] += out[i] * in[j] * scale;
+  }
+  for (int t = 0; t < 60; ++t) {
+    std::vector<double> p(n);
+    for (std::uint32_t i = 0; i < n; ++i) p[i] = z(rng) * size[i];
+    std::vector<std::uint32_t> snk;
+    for (std::uint32_t i = 0; i < n; ++i)
+      if (p[i] > 0) snk.push_back(i);
+    std::sort(snk.begin(), snk.end(), [&](auto a, auto b) { return p[a] > p[b]; });
+    snk.resize(std::min<std::size_t>(30, snk.size()));
+    double ps = 0;
+    for (auto j : snk) ps += p[j];
+    for (std::uint32_t i = 0; i < n; ++i)
+      if (p[i] < 0)
+        for (auto j : snk) E[i * n + j] += -p[i] * p[j] / ps;
+  }
+  auto edges = [&](const std::vector<double>& M) {
+    std::vector<FlowEdge> e;
+    for (std::uint32_t i = 0; i < n; ++i)
+      for (std::uint32_t j = 0; j < n; ++j)
+        if (i != j && M[i * n + j] > 0) e.push_back({i, j, M[i * n + j]});
+    return e;
+  };
+  const Agreement a = compare_flows(edges(O), edges(E), n, 20);
+  MESSAGE("size-only: obs_topk ", a.est.obs_topk_spearman, " vs gravity ", a.gravity.obs_topk_spearman, "; full ",
+          a.est.full_spearman, " vs ", a.gravity.full_spearman, "; cosine ", a.est.row_cosine, " vs ",
+          a.gravity.row_cosine, "; perm full ", a.perm.mean.full_spearman);
+  CHECK(a.est.obs_topk_spearman - a.gravity.obs_topk_spearman <= 0.02);
+  CHECK(a.est.full_spearman - a.gravity.full_spearman <= 0.02);
+  CHECK(a.est.row_cosine - a.gravity.row_cosine <= 0.02);
+  // ... while it does beat the label-permutation null (the reason that null is not enough)
+  CHECK(a.est.obs_topk_spearman > a.perm.mean.obs_topk_spearman + 0.1);
+}
+
+TEST_CASE("13f compare: gravity null and placebo machinery") {
+  // gravity of a matrix = out * in^T / total off the diagonal
+  const std::vector<FlowEdge> e = {{0, 1, 6}, {0, 2, 2}, {1, 2, 4}};
+  const auto g = gravity_null(e, 3);
+  std::map<std::pair<std::uint32_t, std::uint32_t>, double> G;
+  for (const auto& x : g) G[{x.from, x.to}] = x.dollars;
+  // out = (8, 4, 0), in = (0, 6, 6), total 12
+  CHECK(G.size() == 3);
+  CHECK(G[{0, 1}] == doctest::Approx(4.0));
+  CHECK(G[{0, 2}] == doctest::Approx(4.0));
+  CHECK(G[{1, 2}] == doctest::Approx(2.0));
+  // placebo equal to the estimate: zero lift; different placebo: metrics of that pair
+  std::mt19937_64 rng(3);
+  const auto o = complete_random(20, rng), est = complete_random(20, rng), other = complete_random(20, rng);
+  const Agreement same = compare_flows(o, est, 20, 3, &est);
+  REQUIRE(same.has_placebo);
+  CHECK(same.placebo.full_spearman == doctest::Approx(same.est.full_spearman));
+  CHECK(same.placebo.pi_spearman == doctest::Approx(same.est.pi_spearman));
+  const Agreement diff = compare_flows(o, est, 20, 3, &other);
+  CHECK(diff.placebo.full_spearman == doctest::Approx(compare_flows(o, other, 20, 1).est.full_spearman));
+  // placebo quarter: q-4, else q+1, else q-1
+  auto avail = [](std::set<std::string> s) { return [s](const std::string& q) { return s.count(q) > 0; }; };
+  CHECK(placebo_quarter("2025Q4", avail({"2024Q4", "2026Q1", "2025Q3"})) == "2024Q4");
+  CHECK(placebo_quarter("2025Q4", avail({"2026Q1", "2025Q3"})) == "2026Q1");
+  CHECK(placebo_quarter("2025Q4", avail({"2025Q3"})) == "2025Q3");
+  CHECK(placebo_quarter("2025Q4", avail({})).empty());
+  CHECK(next_quarter("2025Q4") == "2026Q1");
 }
 
 TEST_CASE("13f compare: the engine spearman uses average ranks and is NaN when undefined") {
@@ -110,13 +231,13 @@ TEST_CASE("13f compare: the engine spearman uses average ranks and is NaN when u
   CHECK(std::isnan(spearman(std::vector<double>{1}, std::vector<double>{1})));
 }
 
-TEST_CASE("13f compare: top-k overlap is |A and B| / k, duplicates are summed") {
+TEST_CASE("13f compare: top-k overlap is |A and B| / min(k, |A|, |B|), duplicates are summed") {
   // observed: 0->1 heavy, 1->2; estimated: same edges listed in two pieces
   const std::vector<FlowEdge> o = {{0, 1, 10}, {1, 2, 5}, {2, 0, 1}};
-  const std::vector<FlowEdge> e = {{0, 1, 4}, {1, 2, 3}, {0, 1, 6}, {2, 0, 0.5}};
-  const Agreement a = compare_flows(o, e, 3);
-  CHECK(a.top500_overlap == doctest::Approx(3.0 / 500));
-  CHECK(a.edge_spearman == doctest::Approx(1.0));
+  const std::vector<FlowEdge> e = {{0, 1, 4}, {1, 2, 3}, {0, 1, 6}, {2, 0, 0.5}, {2, 1, 0.1}};
+  const Agreement a = compare_flows(o, e, 3, 1);
+  CHECK(a.est.top500_overlap == doctest::Approx(1.0));  // 3 common of min(500, 3, 4)
+  CHECK(a.est.obs_topk_spearman == doctest::Approx(1.0));
 }
 
 TEST_CASE("13f compare (c): pi_of reproduces the A/B/C example") {
@@ -262,17 +383,25 @@ TEST_CASE("13f compare (e): CLI flags") {
   CHECK_THROWS_AS(parse_cli({"--mode", "replay", "--13f-quarters", "2025Q1"}), std::invalid_argument);
   CHECK_THROWS_AS(parse_cli({"--mode", "replay", "--compare-13f", "--13f-quarters"}), std::invalid_argument);
   CHECK(cli_usage().find("--compare-13f") != std::string::npos);
+  for (const auto& extra : std::vector<std::vector<std::string>>{
+           {"--eval"}, {"--shock", "AAA:5"}, {"--export-slice"}, {"--walkforward"}}) {
+    std::vector<std::string> args = {"--mode", "replay", "--compare-13f"};
+    args.insert(args.end(), extra.begin(), extra.end());
+    CHECK_THROWS_WITH_AS(parse_cli(args), doctest::Contains("--compare-13f"), std::invalid_argument);
+  }
 }
 
 TEST_CASE("13f compare: run_compare_13f end to end on synthetic holdings") {
-  // Daily bars 2025-05-01 .. 2026-01-15 for 4 tickers with random-walk closes.
+  // Daily bars 2025-06-01 .. 2026-04-15 for 4 tickers with random-walk closes. Warm-up needs 60 bars
+  // (corr_window): 2025Q3 starts at bar 30 (skipped), 2025Q4 at bar 122. 2025Q4's placebo is 2026Q1 (q-4 is
+  // outside the panel; q+1 is complete).
   const std::vector<std::string> tickers = {"AAA", "BBB", "CCC", "DDD"};
   std::vector<TimePoint> times;
   std::vector<double> close;
   std::mt19937_64 rng(5);
   std::normal_distribution<double> z(0.0, 0.02);
   std::vector<double> px = {50, 80, 20, 120};
-  for (TimePoint t = utc_seconds(2025, 5, 1, 20); t < utc_seconds(2026, 1, 15); t += 86400) {
+  for (TimePoint t = utc_seconds(2025, 6, 1, 20); t < utc_seconds(2026, 4, 15); t += 86400) {
     times.push_back(t);
     for (auto& x : px) close.push_back(x *= std::exp(z(rng)));
   }
@@ -280,33 +409,91 @@ TEST_CASE("13f compare: run_compare_13f end to end on synthetic holdings") {
   const auto data = test::temp_dir("compare13f_e2e");
   test::write_file(data / "13f" / "cusip_map.csv", "cusip,ticker\nC1,AAA\nC2,BBB\nC3,CCC\nC4,DDD\n");
   const std::string hdr = "cik,cusip,issuer,shares,value_usd\n";
+  test::write_file(data / "13f" / "holdings_2025Q2.csv", hdr + "1,C1,a,100,5000\n2,C3,c,500,10000\n");
   test::write_file(data / "13f" / "holdings_2025Q3.csv",
                    hdr + "1,C1,a,100,5000\n1,C2,b,100,8000\n2,C3,c,500,10000\n2,C4,d,10,1200\n");
   test::write_file(data / "13f" / "holdings_2025Q4.csv",
                    hdr + "1,C1,a,50,2500\n1,C2,b,140,11200\n2,C3,c,300,6000\n2,C4,d,40,4800\n");
-  test::write_file(data / "13f" / "holdings_2024Q1.csv", hdr + "1,C1,a,1,50\n");
   Compare13fOptions opt;
   opt.data = data;
+  opt.lookback_days = 400;
+  opt.timeframe = "1d";
+  opt.git_sha = "abc123";
+  opt.perms = 5;
   std::ostringstream log;
   const auto r = run_compare_13f(panel, opt, log);
   CHECK(r["found_quarters"].size() == 3);
-  // 2024Q1 has no previous quarter; 2025Q3's previous (2025Q2) has no file
-  CHECK(r["skipped"].size() == 2);
+  REQUIRE(r["skipped"].size() == 2);  // 2025Q2: no previous quarter; 2025Q3: warm-up
+  CHECK(r["skipped"][1]["quarter"] == "2025Q3");
+  CHECK(r["skipped"][1]["reason"].get<std::string>().find("warm-up") != std::string::npos);
   REQUIRE(r["quarters"].size() == 1);
-  CHECK(r["quarters"][0]["quarter"] == "2025Q4");
-  CHECK(r["quarters"][0]["managers"] == 2);
+  const auto& q = r["quarters"][0];
+  CHECK(q["quarter"] == "2025Q4");
+  CHECK(q["managers"] == 2);
+  CHECK(q["warmup_bars"] == 122);
+  CHECK(q["placebo_quarter"] == "2026Q1");
+  CHECK(q.contains("pi_obs_vs_adv"));
+  CHECK(q.contains("pi_obs_vs_13f_value"));
+  CHECK(q["split_candidates_unconfirmed"].is_array());
+  CHECK(r["warmup_bars_required"] == 60);
+  CHECK(r["base_params"]["corr_window"] == 60);
+  CHECK(r["base_params"]["pressure"] == "dollar");
+  CHECK(r["lookback_days"] == 400);
+  CHECK(r["timeframe"] == "1d");
+  CHECK(r["git_sha"] == "abc123");
+  CHECK(r["observed_params"]["top_n"] == 2000);
+  CHECK(r["perms"] == 5);
   CHECK(r["configs"].size() == 6);  // the marketrank preset is a grid point (lambda 1, dollar)
   std::size_t bases = 0;
-  for (const auto& c : r["configs"]) bases += c["base"].get<bool>();
+  for (const auto& c : r["configs"]) {
+    bases += c["base"].get<bool>();
+    const auto& row = c["quarters"][0];
+    for (const char* k : {"estimate", "gravity", "placebo", "perm_mean", "perm_sd", "lift_placebo", "lift_gravity",
+                          "lift_perm"})
+      CHECK(row.contains(k));
+    CHECK(c["summary"]["lift_placebo"]["pi_spearman"].contains("sd"));
+  }
   CHECK(bases == 1);
+  CHECK(r["best"].contains("pi_spearman"));
   CHECK(std::filesystem::exists(data / "13f" / "report.md"));
   CHECK(std::filesystem::exists(data / "13f" / "report.json"));
-  CHECK(log.str().find("2024Q1") != std::string::npos);
+  const std::string md = compare_report_md(r);
+  CHECK(md.find("rank-1") != std::string::npos);  // honest limit M8
+  CHECK(md.find("placebo") != std::string::npos);
+  CHECK(log.str().find("2025Q2") != std::string::npos);
   // a requested quarter limits the run
   opt.quarters = {"2025Q3"};
   const auto r2 = run_compare_13f(panel, opt, log);
   CHECK(r2["quarters"].empty());
   CHECK(r2["skipped"].size() == 1);
+}
+
+TEST_CASE("13f compare: reverse split, small split and unconfirmed split candidates") {
+  const std::vector<TimePoint> times = {utc_seconds(2025, 9, 30, 16), utc_seconds(2025, 12, 31, 16)};
+  // REV: 1:10 reverse split (raw 5 -> 50, shares / 10); SML: 11:10 split (ratio 1.1, above the 1.08 snap);
+  // BUY: a real 2:1 split, but every holder also bought 50% more post-split shares (share ratio 3): unconfirmed.
+  const Panel p = make_panel(times, {"REV", "SML", "BUY"}, {50, 10, 40, 50, 10, 40});
+  QuarterHoldings prev, cur;
+  prev.quarter = "2025Q3";
+  cur.quarter = "2025Q4";
+  prev.rows = {{1, "REV", 1000, 5000}, {2, "REV", 2000, 10000}, {1, "SML", 100, 1100}, {1, "BUY", 10, 800},
+               {2, "BUY", 20, 1600}};
+  cur.rows = {{1, "REV", 100, 5000}, {2, "REV", 200, 10000}, {1, "SML", 110, 1100}, {1, "BUY", 30, 1200},
+              {2, "BUY", 60, 2400}};
+  const QuarterPricing q = quarter_pricing(p, prev, cur);
+  CHECK(q.ratio[0] == doctest::Approx(0.1));
+  CHECK(q.ratio[1] == doctest::Approx(1.1));
+  CHECK(q.ratio[2] == 1.0);
+  CHECK(q.splits == 2);
+  REQUIRE(q.unconfirmed.size() == 1);
+  CHECK(q.unconfirmed[0].node == 2);
+  CHECK(q.unconfirmed[0].price_ratio == doctest::Approx(2.0));
+  CHECK(q.unconfirmed[0].share_ratio == doctest::Approx(3.0));
+  CHECK(q.unconfirmed[0].value_usd == doctest::Approx(3600.0));  // q's 13F value
+  auto ratio = [&](const std::string& t) { return q.ratio[t == "REV" ? 0 : t == "SML" ? 1 : 2]; };
+  const ObservedFlows f = observed_flows(prev, cur, p.tickers, q.prices, ratio);
+  // REV and SML: no trade after adjustment
+  CHECK(f.unpaired_out == 0.0);
 }
 
 TEST_CASE("13f compare: a price-factor jump without matching share counts is not a split") {
@@ -322,4 +509,22 @@ TEST_CASE("13f compare: a price-factor jump without matching share counts is not
   const QuarterPricing q = quarter_pricing(p, prev, cur);
   CHECK(q.ratio[0] == 1.0);
   CHECK(q.splits == 0);
+  REQUIRE(q.unconfirmed.size() == 1);  // listed for inspection
+  CHECK(q.unconfirmed[0].value_usd == doctest::Approx(2150.0));
+}
+
+TEST_CASE("13f compare: a small price-factor shift with unchanged holder shares is not a split") {
+  // r = 1.09 (above the 1.08 snap) but holders kept their share counts (share ratio 1.0): within 10% of r, yet
+  // closer to 1 than to r, so no split; listed as a candidate.
+  const std::vector<TimePoint> times = {utc_seconds(2025, 9, 30, 16), utc_seconds(2025, 12, 31, 16)};
+  const Panel p = make_panel(times, {"DRF"}, {100, 100});
+  QuarterHoldings prev, cur;
+  prev.quarter = "2025Q3";
+  cur.quarter = "2025Q4";
+  prev.rows = {{1, "DRF", 10, 1090}, {2, "DRF", 20, 2180}};
+  cur.rows = {{1, "DRF", 10, 1000}, {2, "DRF", 20, 2000}};
+  const QuarterPricing q = quarter_pricing(p, prev, cur);
+  CHECK(q.ratio[0] == 1.0);
+  CHECK(q.splits == 0);
+  CHECK(q.unconfirmed.size() == 1);
 }

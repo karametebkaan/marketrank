@@ -44,6 +44,7 @@ target_link_libraries(marketrank_core PUBLIC nlohmann_json::nlohmann_json httpli
 
 add_executable(marketrank src/main.cpp)
 target_link_libraries(marketrank PRIVATE marketrank_core)
+target_compile_definitions(marketrank PRIVATE MR_SOURCE_DIR="${CMAKE_SOURCE_DIR}")  # --compare-13f records the git SHA
 
 file(GLOB MR_TEST_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/tests/*.cpp)
 add_executable(marketrank_tests ${MR_TEST_SOURCES})
