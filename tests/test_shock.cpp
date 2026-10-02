@@ -147,3 +147,18 @@ TEST_CASE("duplicate shocks add their sizes") {
     CHECK(same_bits(d1.dpi[i], d2.dpi[i]));
   }
 }
+
+TEST_CASE("a vol-scaled shock on a node without return history throws") {
+  CoreParams p = params();
+  p.vol_scale = true;
+  const Panel young = heavy_panel(12, 5);  // only 3 previous returns at the last bar
+  try {
+    run_with_shock(young, p, {{0, -10.0}});
+    FAIL("expected invalid_argument");
+  } catch (const std::invalid_argument& e) {
+    CHECK(std::string(e.what()).find("has no return history yet") != std::string::npos);
+  }
+  const Panel grown = heavy_panel();
+  const auto [base, shocked] = run_with_shock(grown, p, {{0, -10.0}});
+  CHECK(shock_response(base, shocked).l1_dpi > 0);
+}

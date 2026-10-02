@@ -182,8 +182,11 @@ Frame CorePipeline::step(const Panel& panel, std::size_t t, const std::vector<Sh
       double vol_term = 1.0;  // Relative: the ratio at normal volume
       if (params_.pressure == PressureMode::Dollar) vol_term = mdv_s[i];
       else if (params_.pressure == PressureMode::Sqrt) vol_term = std::sqrt(mdv_s[i]);
-      // With vol scaling the extra return is scaled like any other return.
+      // With vol scaling the extra return is divided by sigma like any other return; a node with
+      // fewer than 5 previous returns has no sigma (scale 0), so a shock there would do nothing.
       const double scale = params_.vol_scale ? pressure_.return_scale()[i] : 1.0;
+      if (!(scale > 0))
+        throw std::invalid_argument("CorePipeline::step: shocked node has no return history yet (vol_scale)");
       pressure[i] += (extra[i] / 100.0) * scale * vol_term;
     }
   }
