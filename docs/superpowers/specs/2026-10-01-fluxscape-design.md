@@ -61,9 +61,23 @@ N ranges from ~505 (sp500) to ~10,000 (snapshot). Every per-bar data structure i
 
 US Eastern time handling uses an explicit DST rule (2nd Sunday of March → 1st Sunday of November), not a tz database. NYSE holidays come from `data/universe/holidays.csv`.
 
-### 4.3 Bar store & cache
-- In-memory per-ticker bar series, plus on-disk cache `data/cache/<timeframe>/<ticker>.csv`. Fetches only request the missing tail.
-- Restarts and parameter tweaks never re-download history.
+### 4.3 Bar store: DuckDB + Hive-partitioned Parquet lake
+- **Engine:** embedded DuckDB (prebuilt `libduckdb` v1.5.6, called from C++ as plain SQL through `duckdb::Connection::Query` and `duckdb::Appender`). No extensions; Parquet support is built in.
+- **Layout** (`data/lake/`):
+  - `bars/tf=<1h|1d|1w>/year=<Y>/month=<M>/part-<uuid>.parquet`, with columns `ticker, t, o, h, l, c, v, vw, seq` (lossless DOUBLE values).
+  - `catalog.duckdb` with small native tables: `meta` (seq counter), `coverage(ticker, tf, covered_from)`, and `pending` / `pending_cov` (write-ahead buffers).
+  - `_staging/` for in-flight writes.
+  - Partition values come from the UTC bar time. The layout is the data layout Iceberg uses, so a later catalog registration needs no rewrite. Full Iceberg was evaluated and deferred: in DuckDB 1.5.6, writes need a REST catalog server, and snapshot expiry needs a separate tool.
+- **Writes:** each flush is one batch with a new `seq`. Rows go to `pending` through the Appender, then `COPY ... TO _staging/<id> (FORMAT parquet, PARTITION_BY (tf, year, month))`, then the files are renamed into `bars/` (atomic on the same filesystem). After that, `pending` is cleared and coverage is applied, so coverage never runs ahead of the data. On open, leftover staging is deleted and leftover `pending` rows are republished.
+- **Upserts:** a re-fetched bar is written again with a higher seq. Every read keeps the newest version: `QUALIFY row_number() OVER (PARTITION BY ticker, t ORDER BY seq DESC) = 1`.
+- **Reads:** a windowed `read_parquet(..., hive_partitioning=true)` filtered on year, t and the requested tickers, with partition pruning. The working set and the panel are bounded by the lookback window.
+- **Single writer:** DuckDB's lock on `catalog.duckdb` stops a second process from opening the lake.
+- **Commit granularity:** `sync_bars` commits after every 100-symbol fetch batch, so an interrupted sync loses at most one batch.
+- **Maintenance** (after every alpaca sync, and via `--maintain`):
+  - **Compaction:** a partition with more than 8 files is rewritten into one deduplicated file.
+  - **Retention:** `data/lake/retention.json` (default `{"1h": 730, "1d": null, "1w": null}` days; `null` keeps forever) deletes whole month partitions that are entirely older than the cutoff. Retention must exceed every lookback and backtest window.
+- **Migration:** `--migrate-cache` imports the milestone-1 CSV cache (`data/cache/<tf>/<ticker>.csv` plus `.from` sidecars) once.
+- **Panel:** `build_panel(store, tickers, tf, start, end)` carries open, high, low, close, volume and vwap (NaN where missing).
 
 ### 4.4 Offline modes
 - **Replay:** run from cached bars only.
@@ -268,6 +282,7 @@ Integration:
 
 ## 12. Implementation milestones
 
+1.6. **Storage:** DuckDB + Hive-partitioned Parquet lake (spec §4.3), per-batch commits, compaction, retention, CSV migration, windowed panel with OHLC; then the first live 10K run and its evaluation.
 1.5. **Model A–E + 10K scale (CLI):** sparse flux, pressure modes, lift, two-sided pruning, retention, hotness references, Alpaca assets universe with liquidity ranking and rate limiting, heavy-tailed synthetic market, evaluation harness, 10,000-node benchmark. Status: replaces the milestone-1 dense flux builder.
 1. **Core model (CLI):** universe, synthetic market, Alpaca client and cache, flux → solver → forecast; CLI prints top hills and valleys.
 2. **Geometry + server + UI:** layout, lattice, IDW, REST/SSE, deck.gl landscape and left-panel controls.
