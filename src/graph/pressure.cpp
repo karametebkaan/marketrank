@@ -24,15 +24,20 @@ std::string_view to_string(PressureMode m) {
 }
 
 PressureModel::PressureModel(std::size_t n, PressureMode mode, std::size_t adv_window,
-                             double max_volume_ratio)
+                             double max_volume_ratio, std::size_t vol_window)
     : n_(n),
       w_(adv_window),
+      vw_(vol_window),
       mode_(mode),
       max_ratio_(max_volume_ratio),
       vol_(n * adv_window, 0.0),
       dollar_(n * adv_window, 0.0),
       count_(n, 0),
-      head_(n, 0) {
+      head_(n, 0),
+      ret_(n * vol_window, 0.0),
+      ret_count_(n, 0),
+      ret_head_(n, 0),
+      scale_(n, 1.0) {
   if (adv_window == 0) throw std::invalid_argument("PressureModel: adv_window must be >= 1");
 }
 
@@ -52,7 +57,25 @@ std::vector<double> PressureModel::step(std::span<const double> returns,
   std::vector<double> p(n_, 0.0);
 #pragma omp parallel for schedule(static)
   for (std::size_t i = 0; i < n_; ++i) {
-    const double r = returns[i], v = volume[i], vw = vwap[i];
+    double r = returns[i];
+    const double r_raw = r;
+    if (vw_ > 0) {
+      const std::size_t cnt = ret_count_[i];
+      if (cnt < 5) {
+        scale_[i] = 0.0;
+      } else {
+        const double* x = &ret_[i * vw_];
+        double mean = 0;
+        for (std::size_t k = 0; k < cnt; ++k) mean += x[k];
+        mean /= static_cast<double>(cnt);
+        double ss = 0;
+        for (std::size_t k = 0; k < cnt; ++k) ss += (x[k] - mean) * (x[k] - mean);
+        const double sigma = std::sqrt(ss / static_cast<double>(cnt - 1));
+        scale_[i] = 1.0 / std::max(sigma, 1e-4);
+      }
+      r *= scale_[i];  // NaN stays NaN; 0 * finite = 0 gives pressure 0
+    }
+    const double v = volume[i], vw = vwap[i];
     const bool have_bar = std::isfinite(v) && std::isfinite(vw) && v >= 0 && vw > 0;
     if (std::isfinite(r) && have_bar) {
       switch (mode_) {
@@ -75,6 +98,11 @@ std::vector<double> PressureModel::step(std::span<const double> returns,
       dollar_[i * w_ + head_[i]] = v * vw;
       head_[i] = (head_[i] + 1) % w_;
       count_[i] = std::min(count_[i] + 1, w_);
+    }
+    if (vw_ > 0 && std::isfinite(r_raw)) {
+      ret_[i * vw_ + ret_head_[i]] = r_raw;
+      ret_head_[i] = (ret_head_[i] + 1) % vw_;
+      ret_count_[i] = std::min(ret_count_[i] + 1, vw_);
     }
   }
   return p;

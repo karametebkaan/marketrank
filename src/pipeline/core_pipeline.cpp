@@ -101,6 +101,7 @@ void CoreParams::validate() const {
   if (!(std::isfinite(max_volume_ratio) && max_volume_ratio >= 0))
     fail("max_volume_ratio must be finite and >= 0");
   if (adv_window < 1) fail("adv_window must be >= 1");
+  if (vol_scale && vol_window < 5) fail("vol_window must be >= 5 when vol_scale is set");
   if (stale_bars < 1) fail("stale_bars must be >= 1");
   if (flux.sinks_per_source < 1 || flux.sink_candidates < flux.sinks_per_source)
     fail("need 1 <= sinks_per_source <= sink_candidates");
@@ -110,7 +111,8 @@ void CoreParams::validate() const {
 CorePipeline::CorePipeline(std::size_t n, CoreParams params)
     : n_(n),
       params_(validated(params)),
-      pressure_(n, params_.pressure, params_.adv_window, params_.max_volume_ratio),
+      pressure_(n, params_.pressure, params_.adv_window, params_.max_volume_ratio,
+                params_.vol_scale ? params_.vol_window : 0),
       window_(n, params_.corr_window),
       slow_(n, params_.halflife_slow, params_.row_cap),
       fast_(n, params_.halflife_fast, params_.row_cap),
@@ -180,7 +182,9 @@ Frame CorePipeline::step(const Panel& panel, std::size_t t, const std::vector<Sh
       double vol_term = 1.0;  // Relative: the ratio at normal volume
       if (params_.pressure == PressureMode::Dollar) vol_term = mdv_s[i];
       else if (params_.pressure == PressureMode::Sqrt) vol_term = std::sqrt(mdv_s[i]);
-      pressure[i] += (extra[i] / 100.0) * vol_term;
+      // With vol scaling the extra return is scaled like any other return.
+      const double scale = params_.vol_scale ? pressure_.return_scale()[i] : 1.0;
+      pressure[i] += (extra[i] / 100.0) * scale * vol_term;
     }
   }
   // Affinity from the window before this bar: bar t's own return must not lower the correlation

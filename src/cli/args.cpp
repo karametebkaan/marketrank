@@ -87,6 +87,8 @@ CliArgs parse_cli(const std::vector<std::string>& args) {
     else if (flag == "--h-ref") a.params.h_ref = parse_hot_ref(value());
     else if (flag == "--min-dollar-volume") a.params.min_dollar_volume = to_double(flag, value());
     else if (flag == "--max-volume-ratio") a.params.max_volume_ratio = to_double(flag, value());
+    else if (flag == "--vol-scale") a.params.vol_scale = true;
+    else if (flag == "--vol-window") a.params.vol_window = to_size(flag, value());
     else if (flag == "--lambda") a.params.flux.lambda = to_double(flag, value());
     else if (flag == "--shock") a.shocks.push_back(to_shock(flag, value()));
     else if (flag == "--help" || flag == "-h") a.help = true;
@@ -115,6 +117,7 @@ std::string cli_usage() {
          "                 [--legacy | --money-flow] [--pressure dollar|sqrt|relative] [--lift off|excess|ratio]\n"
          "                 [--k-out N] [--k-in N] [--retention X] [--h-ref uniform|size|longrun|netflow]\n"
          "                 [--lambda X] [--min-dollar-volume X] [--max-volume-ratio X]\n"
+         "                 [--vol-scale] [--vol-window N]\n"
          "                 [--shock TICKER:SIZE ...]   (extra SIZE% return at normal volume on the last bar)\n"
          "                 [--migrate-cache [DIR]] [--maintain]\n";
 }
@@ -125,7 +128,8 @@ std::string describe(const CoreParams& p) {
     << " k_out=" << p.transition.k_out << " k_in=" << p.transition.k_in
     << " retention=" << p.transition.retention << " h_ref=" << to_string(p.h_ref)
     << " lambda=" << p.flux.lambda << " alpha=" << p.alpha
-    << " min_dv=" << p.min_dollar_volume << " max_vr=" << p.max_volume_ratio;
+    << " min_dv=" << p.min_dollar_volume << " max_vr=" << p.max_volume_ratio
+    << " vol_scale=" << (p.vol_scale ? 1 : 0);
   return s.str();
 }
 

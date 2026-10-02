@@ -49,12 +49,19 @@ TEST_CASE("floor share and sector coherence on a hand-built frame") {
 
 TEST_CASE("evaluation grid covers legacy, each switch and the defaults") {
   auto g = evaluation_grid();
-  REQUIRE(g.size() == 13);
+  REQUIRE(g.size() == 15);
   CHECK(g[10].name == "defaults+netflow");
   CHECK(g[10].params.h_ref == HotRef::NetFlow);
   CHECK(g[11].name == "money-flow");
   CHECK(g[12].name == "money-flow+netflow");
   CHECK(g[12].params.h_ref == HotRef::NetFlow);
+  CHECK(g[13].name == "defaults+volscale");
+  CHECK(g[13].params.vol_scale);
+  CHECK(g[13].params.pressure == PressureMode::Sqrt);
+  CHECK(g[14].name == "money-flow+volscale");
+  CHECK(g[14].params.vol_scale);
+  CHECK(g[14].params.pressure == PressureMode::Dollar);
+  CHECK(!g[7].params.vol_scale);
   CHECK(g.front().name == "legacy");
   CHECK(g[7].name == "defaults");
   CHECK(g[8].name == "defaults relative");

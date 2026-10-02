@@ -70,3 +70,38 @@ TEST_CASE("relative pressure caps V/ADV at max_volume_ratio; 0 means uncapped") 
   CHECK(sq.step(std::vector<double>{0.02}, std::vector<double>{100}, std::vector<double>{10.0})[0] ==
         doctest::Approx(0.02 * std::sqrt(1000.0)));
 }
+
+TEST_CASE("volatility-scaled pressure divides by the std of previous returns") {
+  PressureModel m(1, PressureMode::Sqrt, 20, 0.0, 5);
+  auto bar = [&](double r) {
+    return m.step(std::vector<double>{r}, std::vector<double>{100.0}, std::vector<double>{4.0})[0];
+  };
+  const double prev[5] = {0.01, -0.01, 0.02, -0.02, 0.0};
+  for (int k = 0; k < 5; ++k) CHECK(bar(prev[k]) == 0.0);  // fewer than 5 previous returns
+  double mean = 0, ss = 0;
+  for (double x : prev) mean += x / 5;
+  for (double x : prev) ss += (x - mean) * (x - mean);
+  const double sigma = std::sqrt(ss / 4);
+  CHECK(bar(0.03) == doctest::Approx(0.03 / sigma * std::sqrt(400.0)));
+}
+
+TEST_CASE("the current return does not enter sigma") {
+  auto run = [](double cur) {
+    PressureModel m(1, PressureMode::Sqrt, 20, 0.0, 5);
+    for (double x : {0.01, -0.01, 0.02, -0.02, 0.005})
+      m.step(std::vector<double>{x}, std::vector<double>{100.0}, std::vector<double>{4.0});
+    return m.step(std::vector<double>{cur}, std::vector<double>{100.0},
+                  std::vector<double>{4.0})[0] / cur;
+  };
+  CHECK(run(0.01) == doctest::Approx(run(0.5)));
+}
+
+TEST_CASE("zero volatility uses the sigma floor; missing returns are not recorded") {
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  PressureModel m(1, PressureMode::Sqrt, 20, 0.0, 5);
+  for (int k = 0; k < 5; ++k)
+    m.step(std::vector<double>{0.0}, std::vector<double>{100.0}, std::vector<double>{4.0});
+  m.step(std::vector<double>{nan}, std::vector<double>{100.0}, std::vector<double>{4.0});
+  CHECK(m.step(std::vector<double>{0.001}, std::vector<double>{100.0},
+               std::vector<double>{4.0})[0] == doctest::Approx(0.001 / 1e-4 * 20.0));
+}

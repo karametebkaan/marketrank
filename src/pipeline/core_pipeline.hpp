@@ -31,6 +31,8 @@ struct CoreParams {
   HotRef h_ref = HotRef::Uniform;  // (D)
   double alpha = 0.85;
   double beta = 0.5;
+  bool vol_scale = false;       // divide returns by trailing volatility before forming pressure
+  std::size_t vol_window = 20;  // trailing returns used for that volatility (>= 5)
   std::vector<int> horizons{1, 4, 8};
 
   static CoreParams money_flow();  // dollar flux, no lift, two-sided pruning, retention, size ref

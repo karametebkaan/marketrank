@@ -280,6 +280,16 @@ std::vector<EvalConfig> evaluation_grid() {
     p.h_ref = HotRef::NetFlow;
     g.push_back({"money-flow+netflow", p});
   }
+  {
+    CoreParams p;
+    p.vol_scale = true;
+    g.push_back({"defaults+volscale", p});
+  }
+  {
+    CoreParams p = CoreParams::money_flow();
+    p.vol_scale = true;
+    g.push_back({"money-flow+volscale", p});
+  }
   return g;
 }
 

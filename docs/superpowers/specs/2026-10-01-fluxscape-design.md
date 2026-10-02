@@ -93,6 +93,7 @@ For each bar *t* and stock *i* with return `r_i = C/C⁻ − 1`, volume V and VW
   - `dollar`: `p_i = r_i · V_i · VWAP_i`
   - `sqrt`: `p_i = r_i · √(V_i · VWAP_i)`
   - `relative`: `p_i = r_i · V_i / ADV_i`, where ADV_i is the median volume of the previous 20 bars (not including this one); p = 0 until a stock has history. V/ADV is capped at `max_volume_ratio` (default 5; 0 = uncapped), so a single volume spike cannot dominate. This removes the size bias: a stock's pressure reflects how unusual its participation is, not how big it is.
+  - Optional volatility scaling (`vol_scale`): returns are divided by the stock's trailing 20-bar volatility (previous bars only, floor 1e-4) before pressure is formed, so low-volatility instruments (bond ETFs) are not structurally cold.
   - `p_i < 0` → net selling (source); `p_i > 0` → net buying (sink). Missing data gives p = 0.
 - **Liquidity floor:** a node is active only while its trailing 20-bar median dollar volume is ≥ `min_dollar_volume` (default $1M); computed causally per bar, as part of the active mask.
 - **Affinity:** `a_ij = 1 + λ·ρ_ij`, λ ∈ [0, 1], where ρ is the Pearson correlation of returns over the last W = 60 bars. It is computed as a dot product of unit-length centered return vectors u_i, so no N×N matrix is stored. (Milestone 1 used `1 + λ·max(0, ρ)`; the linear form keeps the normalizer exact in O(N·W).)

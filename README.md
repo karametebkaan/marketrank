@@ -42,7 +42,8 @@ not observed order flow.
 2. **Buying and selling pressure.** For each bar, each stock's pressure is its return times the
    square root of its dollar volume (`r · √(V · VWAP)`, the default). Positive pressure means net
    buying (a sink); negative means net selling (a source). `--pressure relative` instead uses how
-   unusual volume is against its own normal (`r · V / ADV`, with V/ADV capped at 5). Stocks whose
+   unusual volume is against its own normal (`r · V / ADV`, with V/ADV capped at 5); `--vol-scale` additionally divides each return by the stock's trailing
+   20-bar volatility so calm instruments are not structurally cold. Stocks whose
    median dollar volume is under $1M stay out of the graph.
 3. **Money flux, with no fitted model.** Each source's outflow is split across the sinks in
    proportion to their pressure, and tilted toward stocks it moves with (rolling return
