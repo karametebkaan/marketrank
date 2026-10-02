@@ -99,7 +99,7 @@ double landscape_value(double h, double pi, std::size_t n_active, double size_sh
 
 bool same_placement(const LandscapeParams& a, const LandscapeParams& b) {
   return a.value == b.value && a.order_smoothing == b.order_smoothing && a.rank_tolerance == b.rank_tolerance && a.max_arcs == b.max_arcs &&
-         a.territory == b.territory && a.recluster_bars == b.recluster_bars && a.resolution == b.resolution &&
+         a.territory == b.territory && a.recluster_bars == b.recluster_bars && a.cluster_warm_start == b.cluster_warm_start && a.resolution == b.resolution &&
          a.warmup_bars == b.warmup_bars && a.exclude_etf == b.exclude_etf;
 }
 
@@ -161,7 +161,7 @@ Raster delta_raster(const LandscapeFrame& base, const std::vector<double>& delta
 
 LandscapeBuilder::LandscapeBuilder(std::size_t n, LandscapeParams params, std::vector<std::uint32_t> group)
     : n_(n), p_(params), group_(std::move(group)), s_prev_(n, 0.0), has_prev_(n, 0),
-      tracker_(n, params.recluster_bars, 8, params.resolution) {
+      tracker_(n, params.recluster_bars, 8, params.resolution, params.cluster_warm_start) {
   if (!group_.empty() && group_.size() != n) throw std::invalid_argument("LandscapeBuilder: group size mismatch");
   if (!(p_.order_smoothing >= 0.0 && p_.order_smoothing <= 1.0))
     throw std::invalid_argument("LandscapeBuilder: order_smoothing must be in [0, 1]");
@@ -222,7 +222,7 @@ LandscapeFrame LandscapeBuilder::build(const Frame& f) {
     has_prev_[i] = 1;
   }
   const bool flux = p_.territory == TerritoryMode::Flux;
-  const std::vector<std::uint32_t>& grp = flux ? tracker_.update(f.P, act) : group_;
+  const std::vector<std::uint32_t>& grp = flux ? tracker_.update(f.P_cluster.n == n_ ? f.P_cluster : f.P, act) : group_;
   // Group identity: the persistent community label in flux mode (-1 = loose pool), the sector id otherwise.
   std::vector<std::int64_t> key(n_, -1);
   for (std::size_t i = 0; i < n_; ++i)

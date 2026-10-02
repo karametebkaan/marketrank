@@ -148,6 +148,18 @@ function render() {
       stroked: true, filled: false, getLineColor: [255, 210, 0, 255], getLineWidth: 3, lineWidthUnits: 'pixels',
     }));
   }
+  if (S.view === 'sections') {
+    if (!S.sec || S.sec.col >= L.cols || S.sec.row >= L.rows) S.sec = { col: Math.floor(L.cols / 2), row: Math.floor(L.rows / 2) };
+    if (hi) S.sec = { col: hi.i === S.secFor ? S.sec.col : Math.floor(hi.x), row: hi.i === S.secFor ? S.sec.row : Math.floor(hi.y) };
+    S.secFor = hi ? hi.i : null;
+    const prof = sectionProfiles(z, meta, L, S.sec);
+    const lift = (pts) => pts.map((p) => [p.x, p.y, heightOf(p.v, scale, clip) + 0.4]);
+    layers.push(new deck.PathLayer({
+      id: 'crosshair', data: [lift(prof.alongX), lift(prof.alongY)], getPath: (d) => d, getColor: [255, 77, 109, 230],
+      getWidth: 2, widthUnits: 'pixels', parameters: onTop,
+    }));
+    drawSections(prof, nodes, shock, vmax);
+  }
   S.baseLayers = layers;
   S.labelCands = {
     hold: hold.map((n) => ({ ticker: n.ticker, p: pos(n, 0.5) })),
@@ -157,6 +169,75 @@ function render() {
   };
   S.deck.setProps({ layers: [...layers, ...labelLayers()] });
   scheduleLabels();
+}
+
+// Raster profiles through lattice column / row of the crosshair: one sample per raster pixel along x (row fixed) and
+// along y (column fixed), in lattice units, with the raster value v (the landscape height before display scaling).
+function sectionProfiles(z, meta, L, sec) {
+  const py = Math.min(meta.h - 1, Math.floor((sec.row + 0.5) * meta.h / L.rows));
+  const px = Math.min(meta.w - 1, Math.floor((sec.col + 0.5) * meta.w / L.cols));
+  const sx = L.cols / meta.w, sy = L.rows / meta.h;
+  const alongX = [], alongY = [];
+  for (let x = 0; x < meta.w; x++) alongX.push({ x: (x + 0.5) * sx, y: (py + 0.5) * sy, v: z[py * meta.w + x] });
+  for (let y = 0; y < meta.h; y++) alongY.push({ x: (px + 0.5) * sx, y: (y + 0.5) * sy, v: z[y * meta.w + px] });
+  return { alongX, alongY, row: sec.row, col: sec.col };
+}
+// One profile chart: the surface value along the cut (red above 0, blue below) and the stocks lying on the cut.
+function drawProfile(svg, pts, coord, onCut, vmax, title, titleEl) {
+  svg.replaceChildren();
+  const W = 600, H = 170, padL = 34, padR = 8, padT = 8, padB = 20;
+  const vals = pts.map((p) => p.v).filter(Number.isFinite);
+  const m = Math.max(vmax, ...vals.map(Math.abs), 1e-6) * 1.08;
+  const n = pts.length, X = (k) => padL + (n === 1 ? 0 : k / (n - 1)) * (W - padL - padR);
+  const Y = (v) => padT + (m - v) / (2 * m) * (H - padT - padB), zy = Y(0);
+  const d = pts.map((p, k) => `${k ? 'L' : 'M'}${X(k).toFixed(1)},${Y(Number.isFinite(p.v) ? p.v : 0).toFixed(1)}`).join('');
+  const area = `${d}L${X(n - 1).toFixed(1)},${zy.toFixed(1)}L${X(0).toFixed(1)},${zy.toFixed(1)}Z`;
+  const id = svg.id;
+  svg.append(svgEl('defs', {}));
+  svg.lastChild.innerHTML = `<clipPath id="${id}A"><rect x="0" y="0" width="${W}" height="${zy}"/></clipPath><clipPath id="${id}B"><rect x="0" y="${zy}" width="${W}" height="${H - zy}"/></clipPath>`;
+  svg.append(
+    svgEl('line', { x1: padL, y1: zy, x2: W - padR, y2: zy, stroke: '#b8bcc6' }),
+    svgEl('path', { d: area, fill: 'rgba(200, 29, 58, .22)', 'clip-path': `url(#${id}A)` }),
+    svgEl('path', { d: area, fill: 'rgba(36, 99, 196, .22)', 'clip-path': `url(#${id}B)` }),
+    svgEl('path', { d, fill: 'none', stroke: '#141821', 'stroke-width': 1.4 }),
+    svgEl('text', { x: padL - 4, y: Y(m / 1.08) + 3, 'text-anchor': 'end' }, `+${(m / 1.08).toFixed(1)}`),
+    svgEl('text', { x: padL - 4, y: zy + 3, 'text-anchor': 'end' }, '0'),
+    svgEl('text', { x: padL - 4, y: Y(-m / 1.08) + 3, 'text-anchor': 'end' }, `${(-m / 1.08).toFixed(1)}`),
+  );
+  // Stocks on the cut: dots at their exact value; tickers for holdings and the strongest |value| (decluttered).
+  const span1 = pts.length ? pts[pts.length - 1][coord] - pts[0][coord] : 1;
+  const xOf = (c) => padL + (c - pts[0][coord]) / Math.max(span1, 1e-9) * (W - padL - padR);
+  const ranked = onCut.slice().sort((a, b) => (b.holding ? 1e9 : Math.abs(b.v)) - (a.holding ? 1e9 : Math.abs(a.v)));
+  const taken = [];
+  for (const nd of ranked) {
+    if (!Number.isFinite(nd.v)) continue;
+    const cx = xOf(nd[coord]), cy = Y(Math.max(-m, Math.min(m, nd.v)));
+    const dot = svgEl('circle', { cx, cy, r: nd.holding ? 4 : 2.2, fill: nd.holding ? 'rgb(0, 200, 80)' : (nd.v >= 0 ? '#c81d3a' : '#2463c4'), stroke: '#fff', 'stroke-width': nd.holding ? 1.2 : 0.6 });
+    dot.append(svgEl('title', {}, `${nd.ticker} · ${fmtSigned(nd.v, 3)} · π·N ${fmt(nd.mr, 3)}`));
+    svg.append(dot);
+    const w = 6.2 * nd.ticker.length, box = [cx - w / 2, cy - 15, cx + w / 2, cy - 4];
+    if (taken.length >= 14 || taken.some((q) => box[0] < q[2] && q[0] < box[2] && box[1] < q[3] && q[1] < box[3])) continue;
+    taken.push(box);
+    svg.append(svgEl('text', { x: cx, y: cy - 6, 'text-anchor': 'middle', class: 'tk' }, nd.ticker));
+  }
+  titleEl.textContent = title;
+}
+function drawSections(prof, nodes, shock, vmax) {
+  const holdSet = new Set(((S.frame && S.frame.portfolio) || []).map((p) => p.i));
+  const L = S.frame.lattice;
+  const val = (n) => (shock ? n.v : n.hd);
+  const row = [], col = [];
+  for (const n of nodes) {
+    const c = Math.floor(n.x), r = Math.floor(n.y);
+    const o = { ticker: n.ticker, x: n.x, y: n.y, v: val(n), mr: n.mr, holding: holdSet.has(n.i) };
+    if (r === prof.row) row.push(o);
+    if (c === prof.col) col.push(o);
+  }
+  const what = shock ? 'Δh' : heightName().short;
+  drawProfile($('secX'), prof.alongX, 'x', row, vmax, '', $('secXTitle'));
+  drawProfile($('secY'), prof.alongY, 'y', col, vmax, '', $('secYTitle'));
+  $('secXTitle').textContent = `x-section · row ${prof.row + 1}/${L.rows} · ${row.length} stocks · ${what}`;
+  $('secYTitle').textContent = `y-section · column ${prof.col + 1}/${L.cols} · ${col.length} stocks · ${what}`;
 }
 
 // ---- Label decluttering: holdings first, then the highest, then the lowest values; a label is skipped when its
@@ -209,14 +290,47 @@ function scheduleLabels() {
   }, 120);
 }
 
+// ---- Views: 3D (perspective orbit), orthographic Top / Front / Side, and Sections (Top plus x- and y-profiles through
+// a crosshair). The landscape lives in its own clipped viewport box; the cards sit beside it, never over it.
+const VIEWS = {
+  '3d': { ortho: false, rotationX: 45, rotationOrbit: -25, rotate: true, fit: 1.6 },
+  top: { ortho: true, rotationX: 90, rotationOrbit: 0, rotate: false, fit: 1.08 },
+  front: { ortho: true, rotationX: 0, rotationOrbit: 0, rotate: false, fit: 1.08 },
+  side: { ortho: true, rotationX: 0, rotationOrbit: 90, rotate: false, fit: 1.08 },
+  sections: { ortho: true, rotationX: 90, rotationOrbit: 0, rotate: false, fit: 1.08 },
+};
+function viewProps(mode, lattice) {
+  const v = VIEWS[mode], el = $('canvas');
+  const fit = Math.log2(Math.max(64, Math.min(el.clientWidth, el.clientHeight)) / (v.fit * span(lattice)));
+  return {
+    views: new deck.OrbitView({ id: `v-${mode}`, orbitAxis: 'Z', fovy: 40, orthographic: v.ortho }),
+    initialViewState: { target: [lattice.cols / 2, lattice.rows / 2, 0], rotationX: v.rotationX, rotationOrbit: v.rotationOrbit,
+      zoom: fit, minZoom: -6, maxZoom: 12 },
+    controller: v.rotate ? true : { dragRotate: false, touchRotate: false, keyboard: { rotateSpeedX: 0, rotateSpeedY: 0 } },
+  };
+}
+function setView(mode) {
+  if (!VIEWS[mode]) return;
+  S.view = mode;
+  document.querySelectorAll('#viewbar [data-view]').forEach((b) => b.classList.toggle('on', b.dataset.view === mode));
+  $('sections').hidden = mode !== 'sections';
+  if (S.deck && S.frame) {
+    S.deck.setProps(viewProps(mode, S.frame.lattice));
+    render();
+  }
+}
 function initDeck(lattice) {
   const el = $('canvas');
   S.deck = new deck.Deck({
     parent: el,
-    views: new deck.OrbitView({ orbitAxis: 'Z', fovy: 40 }),
-    initialViewState: { target: [lattice.cols / 2, lattice.rows / 2, 0], rotationX: 45, rotationOrbit: -25, zoom: Math.log2(Math.min(el.clientWidth, el.clientHeight) / (1.6 * span(lattice))), minZoom: -6, maxZoom: 12 },
-    controller: true,
+    ...viewProps(S.view || '3d', lattice),
     onViewStateChange: () => { scheduleLabels(); },
+    onClick: (info) => {
+      if (S.view !== 'sections' || !info.coordinate || !S.frame) return;
+      const L = S.frame.lattice;
+      S.sec = { col: Math.max(0, Math.min(L.cols - 1, Math.floor(info.coordinate[0]))), row: Math.max(0, Math.min(L.rows - 1, Math.floor(info.coordinate[1]))) };
+      render();
+    },
     getTooltip: ({ object }) => (object && object.ticker
       ? `${object.ticker} · ${object.sector}\n${clusterLine(object)}MarketRank π·N ${fmt(object.mr, 3)}  heartbeat ${fmtSigned(object.pulse, 4)}\nπ ${object.pi === null ? 'n/a' : object.pi.toExponential(3)}  h ${fmt(object.h, 3)}\ndisplayed height (${heightName().short}) ${fmtSigned(object.hd, 3)}${holdingLine(object)}`
       : null),
@@ -484,7 +598,8 @@ async function onStatus(st) {
       $('shockSizeLabel').textContent = `${$('shockSize').value}%`;
       await applyShock();
     }
-    if (Q.has('path')) await openPath(Q.get('path'));  // ?path=TICKER opens the path panel in the self-test
+    if (Q.has('path')) await openPath(Q.get('path'));
+    if (Q.has('view')) setView(Q.get('view'));  // ?view=3d|top|front|side|sections  // ?path=TICKER opens the path panel in the self-test
     setTimeout(() => {
       if (!$('topRows').querySelector('.toprow')) fail(new Error('top table did not render'));
       // The product UI is fixed: no model or landscape knobs may come back.
@@ -520,7 +635,7 @@ async function setShowEtf(on) {
 // the displayed bar (the slope is its momentum). This value means the same on every bar, unlike the stock's place on
 // the map (which follows the re-clustered layout). The strip under the chart colours each bar by
 // the stock's flux community; frequent changes mean it has no stable group.
-const PATH_BARS = 60;
+const PATH_BARS = 300;  // the whole cached history (the server keeps up to 300 bars)
 function svgEl(tag, attrs, text) {
   const e = document.createElementNS(SVGNS, tag);
   for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, String(v));
@@ -535,9 +650,14 @@ function groupColor(g) {
 async function openPath(ticker) {
   const seq = S.pathSeq = (S.pathSeq || 0) + 1;
   S.pathTicker = ticker;
-  const q = S.frame ? `&t=${S.frame.t}` : '';
-  const r = await getJSON(`/api/path?ticker=${encodeURIComponent(ticker)}&bars=${PATH_BARS}${q}`);
-  if (seq !== S.pathSeq || S.pathTicker !== ticker) return;
+  // The whole history up to the latest bar; the displayed bar is a cursor on it (so Play sweeps across the year).
+  const key = `${ticker}|${S.loadedGen}|${S.times.length}`;
+  let r = S.pathCache && S.pathCache.key === key ? S.pathCache.r : null;
+  if (!r) {
+    r = await getJSON(`/api/path?ticker=${encodeURIComponent(ticker)}&bars=${PATH_BARS}`);
+    if (seq !== S.pathSeq || S.pathTicker !== ticker) return;
+    S.pathCache = { key, r };
+  }
   drawPath(r);
   $('path').hidden = false;
 }
@@ -547,7 +667,7 @@ function drawPath(r) {
   svg.replaceChildren();
   const W = 360, H = 250, padL = 40, padR = 10, padT = 10, stripH = 8, padB = 30 + stripH;
   const P = r.points, days = P.length;
-  $('pathTitle').textContent = `${r.ticker} · ${sectorAbbr(r.sector)} · last ${days} bars`;
+  $('pathTitle').textContent = `${r.ticker} · ${sectorAbbr(r.sector)} · ${days} bars`;
   const act = P.filter((p) => p.level !== null);
   if (act.length < 2) {
     svg.append(svgEl('text', { x: W / 2, y: H / 2, 'text-anchor': 'middle' }, 'not enough active bars'));
@@ -592,6 +712,11 @@ function drawPath(r) {
     hit.append(svgEl('title', {}, `${p.time.slice(0, 10)} · level ${p.level === null ? 'n/a' : fmtSigned(p.level, 3)} · π·N ${fmt(p.mr, 3)} · Δ5 log π·N ${fmtSigned(p.momentum, 4)}`));
     svg.append(hit);
   });
+  const ci = S.frame ? P.findIndex((p) => p.t === S.frame.t) : -1;  // the displayed bar
+  if (ci >= 0) {
+    svg.append(svgEl('line', { x1: X(ci), y1: padT, x2: X(ci), y2: bottom, stroke: '#ff4d6d', 'stroke-width': 1.2, 'stroke-dasharray': '3 2' }));
+    if (P[ci].level !== null) svg.append(svgEl('circle', { cx: X(ci), cy: Y(P[ci].level), r: 4, fill: '#ff4d6d', stroke: '#fff', 'stroke-width': 1.5 }));
+  }
   const last = P[days - 1];
   if (last.level !== null) svg.append(svgEl('circle', { cx: X(days - 1), cy: Y(last.level), r: 4.5, fill: 'rgb(0, 200, 80)', stroke: '#fff', 'stroke-width': 1.5 }));
   // Community strip, aligned with the time axis.
@@ -601,19 +726,31 @@ function drawPath(r) {
     rc.append(svgEl('title', {}, `${p.time.slice(0, 10)} · community ${p.group === null || p.group < 0 ? 'none' : p.group}`));
     svg.append(rc);
   });
+  // Month ticks.
+  const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  let lastX = -1e9;
+  P.forEach((p, k) => {
+    if (k === 0 || p.time.slice(5, 7) === P[k - 1].time.slice(5, 7)) return;
+    svg.append(svgEl('line', { x1: X(k), y1: bottom, x2: X(k), y2: bottom + 3, stroke: '#b8bcc6' }));
+    if (X(k) - lastX < 26) return;
+    lastX = X(k);
+    const m = Number(p.time.slice(5, 7)) - 1;
+    svg.append(svgEl('text', { x: X(k), y: bottom + stripH + 16, 'text-anchor': 'middle' }, m === 0 ? p.time.slice(0, 4) : MON[m]));
+  });
   svg.append(
-    svgEl('text', { x: padL, y: bottom + stripH + 16 }, P[0].time.slice(0, 10)),
-    svgEl('text', { x: W - padR, y: bottom + stripH + 16, 'text-anchor': 'end' }, last.time.slice(0, 10)),
     svgEl('text', { x: 10, y: (padT + bottom) / 2, 'text-anchor': 'middle', transform: `rotate(-90 10 ${(padT + bottom) / 2})` }, 'log(π / size share)'),
     svgEl('text', { x: padL + 4, y: padT + 11, class: 'q' }, 'more money than size predicts'),
     svgEl('text', { x: padL + 4, y: bottom - 4, class: 'q' }, 'less'),
   );
   let changes = 0;
   for (let k = 1; k < days; k++) if (P[k].group !== P[k - 1].group) changes++;
-  $('pathNote').textContent = `now: level ${last.level === null ? 'n/a' : fmtSigned(last.level, 3)} · π·N ${fmt(last.mr, 3)} · 5-bar Δlog π·N ${fmtSigned(last.momentum, 4)} · community changed ${changes}× in ${days} bars`;
+  const at = ci >= 0 ? P[ci] : last;
+  $('pathNote').textContent = `${at.time.slice(0, 10)}: level ${at.level === null ? 'n/a' : fmtSigned(at.level, 3)} · π·N ${fmt(at.mr, 3)} · 5-bar Δlog π·N ${fmtSigned(at.momentum, 4)} · community changed ${changes}× in ${days} bars`;
 }
 
 function wire() {
+  document.querySelectorAll('#viewbar [data-view]').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
+  $('viewReset').addEventListener('click', () => setView(S.view || '3d'));
   $('pathClose').addEventListener('click', () => {
     closePath();
     if (S.highlight !== null) { S.highlight = null; document.querySelectorAll('.toprow').forEach((el) => el.classList.remove('sel')); render(); }

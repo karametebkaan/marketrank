@@ -36,17 +36,30 @@
     <div id="shockHint" class="hint" hidden>shock applies to the latest bar</div>
     <div id="shockOut" class="list"></div>
   </aside>
-  <main id="canvas">
-    <section id="top" aria-live="polite">
-      <h3>MarketRank top 10 · π (exact)</h3>
-      <div id="topRows"></div>
+  <main id="stage">
+    <section id="viewport">
+      <div id="viewbar" role="toolbar" aria-label="view">
+        <button data-view="3d" class="on">3D</button><button data-view="top">Top</button><button data-view="front">Front</button><button data-view="side">Side</button><button data-view="sections">Sections</button>
+        <button id="viewReset" class="ghost" title="reset the camera">⟲</button>
+      </div>
+      <div id="canvas"></div>
+      <div id="sections" hidden>
+        <div class="sec"><h4 id="secXTitle"></h4><svg id="secX" viewBox="0 0 600 170" preserveAspectRatio="none"></svg></div>
+        <div class="sec"><h4 id="secYTitle"></h4><svg id="secY" viewBox="0 0 600 170" preserveAspectRatio="none"></svg></div>
+      </div>
+      <div id="legend"></div>
     </section>
-    <section id="path" hidden>
-      <h3><span id="pathTitle"></span><button id="pathClose" title="close" aria-label="close">×</button></h3>
-      <svg id="pathSvg" viewBox="0 0 360 250" role="img"></svg>
-      <div id="pathNote" class="hint"></div>
-    </section>
-    <div id="legend"></div>
+    <aside id="side">
+      <section id="top" aria-live="polite">
+        <h3>MarketRank top 10 · π (exact)</h3>
+        <div id="topRows"></div>
+      </section>
+      <section id="path" hidden>
+        <h3><span id="pathTitle"></span><button id="pathClose" title="close" aria-label="close">×</button></h3>
+        <svg id="pathSvg" viewBox="0 0 360 250" role="img"></svg>
+        <div id="pathNote" class="hint"></div>
+      </section>
+    </aside>
   </main>
 </div>
 <script src="https://unpkg.com/deck.gl@9.4.0/dist.min.js" integrity="sha384-NrpHmp6N6IhXZ+gSV+uRLo+Hqprkw4BfdGzmxgWXhjakjkAabyfQxokSmn/aK0VB" crossorigin="anonymous"></script>

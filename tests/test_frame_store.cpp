@@ -264,9 +264,17 @@ TEST_CASE("frame store skips the warm-up bars: no landscape and no clustering be
   CHECK(LandscapeParams{}.warmup_bars == 5);
   REQUIRE(times.size() == 120 - 5);
   CHECK(times.front() == m.panel.times[5]);
-  CHECK(fs.landscape(times.front())->reclustered);  // the first landscape clusters
-  CHECK_FALSE(fs.landscape(times[1])->reclustered);
-  CHECK(fs.landscape(times[5])->reclustered);  // then every recluster_bars frames
+  CHECK(LandscapeParams{}.recluster_bars == 1);  // default: a from-scratch re-cluster every frame
+  for (const auto t : times) CHECK(fs.landscape(t)->reclustered);
+  // with a longer cadence: the first landscape clusters, then every recluster_bars frames
+  LandscapeParams five;
+  five.recluster_bars = 5;
+  FrameStore fs5(m.panel, m.secs, CoreParams::money_flow(), five, 300);
+  fs5.start();
+  wait_ready(fs5);
+  CHECK(fs5.landscape(times.front())->reclustered);
+  CHECK_FALSE(fs5.landscape(times[1])->reclustered);
+  CHECK(fs5.landscape(times[5])->reclustered);
   // a short panel still yields its last bar
   LandscapeParams lp;
   lp.warmup_bars = 500;
@@ -394,4 +402,20 @@ TEST_CASE("exclude_etf: ETF/Fund nodes get no cell, the top table and pi are unc
     CHECK(top_shown[k].pi == top_hidden[k].pi);
     CHECK(top_shown[k].mr == top_hidden[k].mr);
   }
+}
+
+TEST_CASE("landscape communities come from the halflife_cluster (recent) flux, re-clustered cold every frame") {
+  CHECK(CoreParams{}.halflife_cluster == 20.0);
+  CHECK(CoreParams::market_rank().halflife_cluster == 20.0);
+  CHECK_FALSE(LandscapeParams{}.cluster_warm_start);
+  CoreParams bad = CoreParams::market_rank();
+  bad.halflife_cluster = 0;
+  CHECK_THROWS_AS(bad.validate(), std::invalid_argument);
+  Market m = market();
+  CorePipeline pipe(m.panel.N(), CoreParams::market_rank());
+  Frame f;
+  for (std::size_t t = 1; t < 40; ++t) f = pipe.step(m.panel, t);
+  REQUIRE(f.P_cluster.n == f.P.n);
+  // the slow (cumulative, half-life 1e9) and the 20-bar flux differ after 40 bars
+  CHECK(f.P_cluster.val != f.P.val);
 }

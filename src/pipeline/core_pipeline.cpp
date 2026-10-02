@@ -103,7 +103,7 @@ void CoreParams::validate() const {
   if (!(std::isfinite(flux.lambda) && flux.lambda >= 0 && flux.lambda <= 1))
     fail("lambda must be in [0, 1]");
   if (!(good_halflife(halflife_slow) && good_halflife(halflife_fast) &&
-        good_halflife(halflife_long)))
+        good_halflife(halflife_long) && good_halflife(halflife_cluster)))
     fail("half-lives must be > 0 (finite or +infinity)");
   if (transition.k_out == 0) fail("k_out must be >= 1");
   if (!(std::isfinite(transition.retention) && transition.retention >= 0))
@@ -132,6 +132,7 @@ CorePipeline::CorePipeline(std::size_t n, CoreParams params)
       window_(n, params_.corr_window),
       slow_(n, params_.halflife_slow, params_.row_cap),
       fast_(n, params_.halflife_fast, params_.row_cap),
+      cluster_(n, params_.halflife_cluster, params_.row_cap),
       last_close_(n, kNone) {
   if (params_.h_ref == HotRef::LongRun) long_.emplace(n, params_.halflife_long, params_.row_cap);
 }
@@ -215,6 +216,7 @@ Frame CorePipeline::step(const Panel& panel, std::size_t t, const std::vector<Sh
   window_.push(returns);
   slow_.add(bar);
   fast_.add(bar);
+  cluster_.add(bar);
   if (long_) long_->add(bar);
   last_bar_ = std::move(bar);
 
@@ -223,6 +225,7 @@ Frame CorePipeline::step(const Panel& panel, std::size_t t, const std::vector<Sh
   f.active = active;
   f.P = build_transition(slow_, params_.transition, active);
   f.P_fast = build_transition(fast_, params_.transition, active);
+  f.P_cluster = build_transition(cluster_, params_.transition, active);
 
   const Csr Pa = compact(f.P, map, n_active);
   const Csr Pa_fast = compact(f.P_fast, map, n_active);

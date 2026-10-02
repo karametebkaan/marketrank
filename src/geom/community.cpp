@@ -519,8 +519,8 @@ std::vector<std::int64_t> arrange_order(const std::vector<int>& spectral, int lo
   return ord;
 }
 
-CommunityTracker::CommunityTracker(std::size_t n, int recluster_bars, int min_size, double resolution)
-    : n_(n), bars_(std::max(1, recluster_bars)), min_size_(min_size), resolution_(resolution), label_(n, -1),
+CommunityTracker::CommunityTracker(std::size_t n, int recluster_bars, int min_size, double resolution, bool warm_start)
+    : n_(n), bars_(std::max(1, recluster_bars)), min_size_(min_size), resolution_(resolution), warm_(warm_start), label_(n, -1),
       group_(n, 0), node_group_(n, -1) {}
 
 const std::vector<std::uint32_t>& CommunityTracker::update(const Csr& P, const std::vector<bool>& active) {
@@ -534,8 +534,9 @@ const std::vector<std::uint32_t>& CommunityTracker::update(const Csr& P, const s
     // Warm start from the current labels. The very first clustering has none: it is refined by warm-starting from
     // its own result until that is a fixed point (at most 4 rounds), so the first warm re-cluster does not
     // reorganize a fragmented cold-start partition.
-    CommunityResult r = louvain(W, active, resolution_, min_size_, 256, label_);
-    if (!have_)
+    // Cold mode: a from-scratch Louvain every time (no seed, no refinement rounds).
+    CommunityResult r = louvain(W, active, resolution_, min_size_, 256, warm_ ? label_ : std::vector<std::int64_t>(n_, -1));
+    if (warm_ && !have_)
       for (int round = 0; round < 4; ++round) {
         std::vector<std::int64_t> seed(n_, -1);
         for (std::size_t i = 0; i < n_; ++i)

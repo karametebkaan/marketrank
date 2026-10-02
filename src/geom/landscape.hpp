@@ -63,7 +63,8 @@ struct LandscapeParams {
                                  // size (at least 2 slots); see territory_layout
   std::size_t max_arcs = 2000;
   TerritoryMode territory = TerritoryMode::Flux;
-  int recluster_bars = 5;   // flux mode: re-cluster every this many frames
+  int recluster_bars = 1;   // flux mode: re-cluster every this many frames
+  bool cluster_warm_start = false;  // flux mode: seed re-clusters with the previous labels (forces persistence)
   double resolution = 1.0;  // flux mode: Louvain resolution
   int warmup_bars = 5;      // serve mode: the first this many bars only feed the model (no landscape, no clustering)
   // Leave the ETF/Fund sector (kSectorEtfFund) out of the landscape surface: such nodes stay in the frame (exact pi,

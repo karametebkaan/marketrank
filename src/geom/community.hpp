@@ -56,7 +56,11 @@ std::vector<std::int64_t> arrange_order(const std::vector<int>& spectral, int lo
 // newly active node joins its strongest active neighbour's community (else loose) and an inactive node leaves.
 class CommunityTracker {
  public:
-  CommunityTracker(std::size_t n, int recluster_bars = 5, int min_size = 8, double resolution = 1.0);
+  // warm_start: seed each re-cluster with the current labels (stabilizes the partition by construction). Off, each
+  // re-cluster is a from-scratch Louvain; labels are still matched to the previous ones (identity and territory
+  // order only, not membership).
+  CommunityTracker(std::size_t n, int recluster_bars = 5, int min_size = 8, double resolution = 1.0,
+                   bool warm_start = true);
   // Per-node group = position of the node's community in the layout order (the loose pool is last). 0 for inactive.
   const std::vector<std::uint32_t>& update(const Csr& P, const std::vector<bool>& active);
   // Per node: the persistent community label (stable across re-clusters), or -1 for loose / inactive.
@@ -71,6 +75,7 @@ class CommunityTracker {
   std::size_t n_;
   int bars_, min_size_;
   double resolution_;
+  bool warm_ = true;
   bool have_ = false;
   int since_ = 0;
   std::int64_t next_label_ = 0;

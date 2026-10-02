@@ -26,6 +26,10 @@ struct CoreParams {
   double halflife_slow = 20;
   double halflife_fast = 3;
   double halflife_long = 120;  // used only when h_ref == LongRun
+  // Memory of the flux the landscape clusters (Frame::P_cluster): recent flows, not the cumulative slow flux, so the
+  // flux communities follow the market (measured: --cluster-persistence --cp-fast-hl 20). Display only: pi and
+  // the forecasts do not use it.
+  double halflife_cluster = 20;
   std::size_t row_cap = 256;
   TransitionParams transition;     // (B) lift, (C) k_out / k_in, (E) retention
   HotRef h_ref = HotRef::Uniform;  // (D)
@@ -64,6 +68,7 @@ struct Frame {
   std::vector<Forecast> forecasts;  // parallel to CoreParams::horizons
   Csr P;                            // slow (equilibrium) transition matrix
   Csr P_fast;                       // fast transition matrix
+  Csr P_cluster;                    // transition matrix of the halflife_cluster flux (landscape communities)
   double compute_ms = 0;
 };
 
@@ -90,7 +95,7 @@ class CorePipeline {
   CoreParams params_;
   PressureModel pressure_;
   ReturnWindow window_;
-  FluxAccumulator slow_, fast_;
+  FluxAccumulator slow_, fast_, cluster_;
   std::optional<FluxAccumulator> long_;
   std::vector<std::size_t> last_close_;  // per node: last bar with a finite close (npos = none)
   std::size_t next_bar_ = 0;             // first bar not yet scanned into last_close_
