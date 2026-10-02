@@ -361,3 +361,122 @@ TEST_CASE("territory mode parsing") {
   CHECK_THROWS_AS(parse_territory_mode("hex"), std::invalid_argument);
   CHECK(to_string(TerritoryMode::Sector) == "sector");
 }
+
+namespace {
+// A frame over n nodes with the given hotness and no flux edges (enough for sector-mode placement).
+Frame plain_frame(const std::vector<double>& h, TimePoint t) {
+  Frame f;
+  f.t = t;
+  f.active.assign(h.size(), true);
+  f.h = h;
+  f.pi.assign(h.size(), 1.0 / static_cast<double>(h.size()));
+  f.P.n = h.size();
+  f.P.row_ptr.assign(h.size() + 1, 0);
+  return f;
+}
+
+double spearman_rho(const std::vector<double>& a, const std::vector<double>& b) {
+  auto ranks = [](const std::vector<double>& v) {
+    std::vector<std::size_t> o(v.size());
+    for (std::size_t k = 0; k < o.size(); ++k) o[k] = k;
+    std::sort(o.begin(), o.end(), [&](auto x, auto y) { return v[x] < v[y]; });
+    std::vector<double> r(v.size());
+    for (std::size_t i = 0; i < o.size();) {
+      std::size_t j = i;
+      while (j + 1 < o.size() && v[o[j + 1]] == v[o[i]]) ++j;
+      for (std::size_t k = i; k <= j; ++k) r[o[k]] = 0.5 * static_cast<double>(i + j);
+      i = j + 1;
+    }
+    return r;
+  };
+  const auto ra = ranks(a), rb = ranks(b);
+  double ma = 0, mb = 0;
+  for (std::size_t i = 0; i < a.size(); ++i) ma += ra[i], mb += rb[i];
+  ma /= static_cast<double>(a.size());
+  mb /= static_cast<double>(a.size());
+  double sab = 0, saa = 0, sbb = 0;
+  for (std::size_t i = 0; i < a.size(); ++i) {
+    sab += (ra[i] - ma) * (rb[i] - mb);
+    saa += (ra[i] - ma) * (ra[i] - ma);
+    sbb += (rb[i] - mb) * (rb[i] - mb);
+  }
+  return sab / std::sqrt(saa * sbb);
+}
+}  // namespace
+
+TEST_CASE("stocks keep their cells while hotness drifts 2% per frame, and territories stay mountains or craters") {
+  // Real-shaped: 2000 stocks in 5 groups of unequal size, heavy-tailed hotness with hot and cold groups. As on real
+  // data the active set churns (10 stocks leave and 10 join every frame), so the territory ranges shift a little.
+  const std::vector<std::size_t> sizes = {800, 500, 350, 230, 120};
+  const std::vector<double> offset = {0.6, -0.5, 0.4, -0.8, 1.0};
+  std::vector<std::uint32_t> group;
+  for (std::size_t g = 0; g < sizes.size(); ++g) group.insert(group.end(), sizes[g], static_cast<std::uint32_t>(g));
+  const std::size_t n = group.size();
+  std::mt19937_64 rng(2026);
+  std::normal_distribution<double> N01(0.0, 1.0);
+  std::vector<double> z(n);
+  for (std::size_t i = 0; i < n; ++i) z[i] = offset[group[i]] + 0.7 * N01(rng);
+  std::vector<bool> active(n, true);
+  for (std::size_t i = 0; i < 10; ++i) active[i * 197] = false;
+  auto frame_at = [&](TimePoint t) {
+    Frame f = plain_frame(std::vector<double>(n), t);
+    f.active = active;
+    for (std::size_t i = 0; i < n; ++i) f.h[i] = active[i] ? std::exp(z[i]) - 1.0 : std::nan("");
+    return f;
+  };
+  LandscapeParams p;
+  p.territory = TerritoryMode::Sector;
+  LandscapeBuilder b(n, p, group);
+  LandscapeFrame prev = b.build(frame_at(0));
+  const auto W = static_cast<std::int32_t>(prev.size.cols);
+  for (int frame = 1; frame <= 10; ++frame) {
+    for (auto& v : z) v += 0.02 * N01(rng);  // ~2% drift of 1 + h per frame
+    std::vector<std::size_t> on, off;
+    for (std::size_t i = 0; i < n; ++i) (active[i] ? on : off).push_back(i);
+    std::shuffle(on.begin(), on.end(), rng);
+    for (std::size_t k = 0; k < 10; ++k) active[on[k]] = false;
+    for (auto i : off) active[i] = true;
+    const LandscapeFrame cur = b.build(frame_at(frame));
+    REQUIRE(cur.size == prev.size);
+    std::map<std::uint32_t, std::int32_t> before;
+    for (const auto& nd : prev.nodes) before[nd.i] = nd.cell;
+    std::vector<double> d;
+    std::size_t kept = 0;
+    for (const auto& nd : cur.nodes) {
+      auto it = before.find(nd.i);
+      if (it == before.end()) continue;
+      const auto a = it->second, c = nd.cell;
+      d.push_back(std::hypot(c % W - a % W, c / W - a / W));
+      kept += a == c ? 1 : 0;
+    }
+    std::nth_element(d.begin(), d.begin() + static_cast<std::ptrdiff_t>(d.size() / 2), d.end());
+    const double med = d[d.size() / 2], keep = static_cast<double>(kept) / static_cast<double>(d.size());
+    INFO("frame " << frame << ": median displacement " << med << " cells, " << 100 * keep << "% kept");
+    CHECK(med <= 3.0);
+    CHECK(keep >= 0.6);
+    // Territory ranges depend only on the group counts and the lattice, so a fresh layout gives the centres.
+    const auto terr = territory_layout(active, group, std::vector<double>(n, 0.0), cur.size).territories;
+    std::vector<double> all;
+    for (const auto& nd : cur.nodes) all.push_back(nd.hdisp);
+    std::sort(all.begin(), all.end());
+    for (const auto& t : terr) {
+      std::vector<double> hv, dist;
+      for (const auto& nd : cur.nodes)
+        if (group[nd.i] == t.group) {
+          hv.push_back(nd.hdisp);
+          dist.push_back(std::hypot(nd.cell % W + 0.5 - t.cx, nd.cell / W + 0.5 - t.cy));
+        }
+      const double rho = spearman_rho(hv, dist);
+      std::vector<double> sorted = hv;
+      std::sort(sorted.begin(), sorted.end());
+      const bool mountain = sorted[sorted.size() / 2] >= all[all.size() / 2];
+      INFO("group " << t.group << (mountain ? " mountain" : " crater") << " rho " << rho);
+      if (mountain)
+        CHECK(rho <= -0.8);
+      else
+        CHECK(rho >= 0.8);
+    }
+    if (frame == 10) MESSAGE("frame 10: median displacement " << med << " cells, " << 100 * keep << "% kept");
+    prev = cur;
+  }
+}

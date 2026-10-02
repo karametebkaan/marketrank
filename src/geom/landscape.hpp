@@ -28,6 +28,8 @@ struct LandscapeParams {
   HeightMode height = HeightMode::SignedLog;
   double smooth = 1.0;            // display smoothing: Gaussian sigma in lattice cells after IDW (0 = off)
   double order_smoothing = 0.5;  // weight on the previous frame's hotness when ranking nodes inside a territory
+  double rank_tolerance = 0.15;  // cell hysteresis: keep the cell while the spiral slot moves <= this x territory
+                                 // size (at least 2 slots); see territory_layout
   std::size_t max_arcs = 2000;
   TerritoryMode territory = TerritoryMode::Flux;
   int recluster_bars = 5;  // flux mode: re-cluster every this many frames
@@ -76,7 +78,10 @@ class LandscapeBuilder {
   LandscapeParams p_;
   std::vector<std::uint32_t> group_;
   std::vector<double> s_prev_;   // smoothed ranking hotness per node
-  std::vector<char> has_prev_;
+  std::vector<char> has_prev_;   // node was active in the previous frame
+  // Cell hysteresis: the previous frame's placement and each node's group identity in it.
+  PlacementMemory mem_;
+  std::vector<std::int64_t> prev_key_;
   CommunityTracker tracker_;
 };
 

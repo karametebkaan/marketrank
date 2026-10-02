@@ -72,6 +72,8 @@ LandscapeBuilder::LandscapeBuilder(std::size_t n, LandscapeParams params, std::v
   if (!group_.empty() && group_.size() != n) throw std::invalid_argument("LandscapeBuilder: group size mismatch");
   if (!(p_.order_smoothing >= 0.0 && p_.order_smoothing <= 1.0))
     throw std::invalid_argument("LandscapeBuilder: order_smoothing must be in [0, 1]");
+  if (!(std::isfinite(p_.rank_tolerance) && p_.rank_tolerance >= 0.0))
+    throw std::invalid_argument("LandscapeBuilder: rank_tolerance must be finite and >= 0");
   if (!(std::isfinite(p_.smooth) && p_.smooth >= 0.0))
     throw std::invalid_argument("LandscapeBuilder: smooth must be finite and >= 0");
 }
@@ -87,6 +89,7 @@ LandscapeFrame LandscapeBuilder::build(const Frame& f) {
   const LatticeSize size = lattice_size(n_active);
   // Ranking hotness: signed-log h blended with the previous frame's value; non-finite h ranks as 0.
   std::vector<double> rank(n_, 0.0);
+  const std::vector<char> was_active = has_prev_;
   for (std::size_t i = 0; i < n_; ++i) {
     if (!f.active[i]) {
       has_prev_[i] = 0;
@@ -100,7 +103,19 @@ LandscapeFrame LandscapeBuilder::build(const Frame& f) {
   }
   const bool flux = p_.territory == TerritoryMode::Flux;
   const std::vector<std::uint32_t>& grp = flux ? tracker_.update(f.P, f.active) : group_;
-  const std::vector<std::int32_t> cells = territory_layout(f.active, grp, rank, size).cell;
+  // Group identity: the persistent community label in flux mode (-1 = loose pool), the sector id otherwise.
+  std::vector<std::int64_t> key(n_, -1);
+  for (std::size_t i = 0; i < n_; ++i)
+    key[i] = flux ? tracker_.node_group()[i] : (group_.empty() ? 0 : static_cast<std::int64_t>(group_[i]));
+  const bool have_mem = !mem_.cell.empty();
+  if (have_mem)
+    for (std::size_t i = 0; i < n_; ++i)
+      if (!f.active[i] || !was_active[i] || key[i] != prev_key_[i]) mem_.cell[i] = -1;
+  const TerritoryLayout layout = territory_layout(f.active, grp, rank, size, have_mem ? &mem_ : nullptr, p_.rank_tolerance);
+  const std::vector<std::int32_t>& cells = layout.cell;
+  mem_.size = size;
+  mem_.cell = cells;
+  prev_key_ = std::move(key);
 
   LandscapeFrame lf;
   lf.t = f.t;

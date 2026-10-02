@@ -20,18 +20,34 @@ struct Territory {
 };
 
 struct TerritoryLayout {
-  std::vector<std::int32_t> cell;  // per node, -1 when inactive
-  std::vector<Territory> territories;  // ascending group id; groups without active nodes are absent
+  std::vector<std::int32_t> cell;       // per node, -1 when inactive
+  std::vector<std::int32_t> territory;  // per node, index into territories; -1 when inactive
+  std::vector<Territory> territories;   // ascending group id; groups without active nodes are absent
+};
+
+// The previous frame's placement, for cell hysteresis. The caller withholds (cell -1) every node that was inactive
+// last frame or has changed community or group.
+struct PlacementMemory {
+  LatticeSize size;                // lattice of the previous frame; a different size disables the memory
+  std::vector<std::int32_t> cell;  // per node: previous cell, or -1
 };
 
 // Sector-territory placement. Each group owns a consecutive gilbert range sized by its active count (spare cells by
-// largest remainder, ties to the lower group id). Inside a territory the cells are ordered by squared distance to the
-// territory centre (ties by cell index) and the group's nodes take them in order of rank value s: descending for a
-// mountain (median s of the group >= median s of all active nodes), ascending for a crater; ties by node index.
-// Non-finite s ranks as 0. The farthest cells of each territory stay empty.
+// largest remainder, ties to the lower group id). Inside a territory the cells form a spiral: ordered by ring
+// floor(sqrt(d2)) around the territory centre, then by angle atan2(dy, dx) ascending from -pi, then by cell index.
+// The group's nodes take the spiral slots in order of rank value s: descending for a mountain (median s of the group
+// >= median s of all active nodes), ascending for a crater; ties by node index. Non-finite s ranks as 0. The outer
+// slots of each territory stay empty.
+// Hysteresis (when `prev` is given): a node keeps its previous cell when the memory has one for it, the lattice size
+// is unchanged, that cell still lies inside the node's territory, and the cell's slot in the territory's current
+// spiral is within max(2, rank_tolerance * territory cells) of the node's new slot. (Requiring an identical territory
+// range would disable the memory on real data, where ~50 stocks join or leave per bar and every range shifts.)
+// Conflicts resolve as in a 3-pass assignment, each pass in rank order: kept cells first, then the ideal slot if
+// free, then the nearest free slot of the territory (ties to the lower slot).
 // `group` must be empty (one group) or have size active.size(); `s` must have size active.size().
 // Requires size.cells() >= active count. O(C log C), deterministic.
 TerritoryLayout territory_layout(const std::vector<bool>& active, const std::vector<std::uint32_t>& group,
-                                 const std::vector<double>& s, LatticeSize size);
+                                 const std::vector<double>& s, LatticeSize size, const PlacementMemory* prev = nullptr,
+                                 double rank_tolerance = 0.15);
 
 }  // namespace fx

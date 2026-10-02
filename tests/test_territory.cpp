@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <limits>
+#include <numbers>
 #include <numeric>
 #include <set>
 #include <vector>
@@ -158,10 +159,10 @@ TEST_CASE("high groups are mountains and low groups craters") {
       CHECK(rho <= -0.9);
     else
       CHECK(rho >= 0.9);
-    // the extreme node sits at (one of) the cells nearest the centre
+    // the extreme node sits in the innermost ring (distance < 1 cell band of the nearest cell)
     const double bd = std::hypot(L.cell[best] % static_cast<std::int32_t>(sz.cols) + 0.5 - t.cx,
                                  L.cell[best] / static_cast<std::int32_t>(sz.cols) + 0.5 - t.cy);
-    CHECK(bd <= *std::min_element(dv.begin(), dv.end()) + 1e-12);
+    CHECK(std::floor(bd) == std::floor(*std::min_element(dv.begin(), dv.end())));
   }
 }
 
@@ -189,4 +190,101 @@ TEST_CASE("territory edge cases: one group, empty groups, a single node, bad siz
   CHECK(O.cell[3] == -1);
   CHECK_THROWS(territory_layout(active, std::vector<std::uint32_t>(3, 0), s, lattice_size(n)));
   CHECK_THROWS(territory_layout(active, {}, s, LatticeSize{2, 2}));
+}
+
+namespace {
+double ring_of(std::int32_t c, std::size_t cols, double cx, double cy) {
+  const double dx = c % static_cast<std::int32_t>(cols) + 0.5 - cx, dy = c / static_cast<std::int32_t>(cols) + 0.5 - cy;
+  return std::floor(std::sqrt(dx * dx + dy * dy));
+}
+double angle_of(std::int32_t c, std::size_t cols, double cx, double cy) {
+  const double dx = c % static_cast<std::int32_t>(cols) + 0.5 - cx, dy = c / static_cast<std::int32_t>(cols) + 0.5 - cy;
+  const double a = std::atan2(dy, dx);
+  return a == std::numbers::pi ? -std::numbers::pi : a;
+}
+}  // namespace
+
+TEST_CASE("inside a territory the cells form a spiral: ring by ring, each ring by ascending angle from -pi") {
+  const std::size_t n = 1000;
+  std::vector<bool> active(n, true);
+  std::vector<double> s(n);
+  for (std::size_t i = 0; i < n; ++i) s[i] = static_cast<double>(n - i);  // node i takes slot i (mountain)
+  const LatticeSize sz = lattice_size(n);
+  auto L = territory_layout(active, {}, s, sz);
+  REQUIRE(L.territories.size() == 1);
+  const auto& t = L.territories[0];
+  double step = 0;
+  for (std::size_t i = 1; i < n; ++i) {
+    const double r0 = ring_of(L.cell[i - 1], sz.cols, t.cx, t.cy), r1 = ring_of(L.cell[i], sz.cols, t.cx, t.cy);
+    CHECK(r0 <= r1);
+    if (r0 == r1) {
+      const double a0 = angle_of(L.cell[i - 1], sz.cols, t.cx, t.cy), a1 = angle_of(L.cell[i], sz.cols, t.cx, t.cy);
+      CHECK((a0 < a1 || (a0 == a1 && L.cell[i - 1] < L.cell[i])));
+    }
+    const auto W = static_cast<std::int32_t>(sz.cols);
+    step += std::hypot(L.cell[i] % W - L.cell[i - 1] % W, L.cell[i] / W - L.cell[i - 1] / W);
+  }
+  MESSAGE("mean distance between consecutive slots: " << step / static_cast<double>(n - 1));
+  CHECK(step / static_cast<double>(n - 1) <= 1.6);  // consecutive ranks are neighbours, not opposite sides of a ring
+}
+
+namespace {
+PlacementMemory memory_of(const TerritoryLayout& L, LatticeSize sz) { return PlacementMemory{sz, L.cell}; }
+}  // namespace
+
+TEST_CASE("placement hysteresis keeps cells for small rank changes and stays a bijection") {
+  const std::size_t n = 390;  // 20 x 20 lattice: 10 spare cells
+  std::vector<bool> active(n, true);
+  std::vector<std::uint32_t> group(n);
+  std::vector<double> s(n);
+  for (std::size_t i = 0; i < n; ++i) {
+    group[i] = i < 300 ? 0 : 1;
+    s[i] = static_cast<double>(n - i);
+  }
+  const LatticeSize sz = lattice_size(n);
+  const auto L0 = territory_layout(active, group, s, sz);
+  const auto mem = memory_of(L0, sz);
+  // identical input: identical cells
+  CHECK(territory_layout(active, group, s, sz, &mem).cell == L0.cell);
+  // swap the ranks of nodes 10 and 12 (2 slots apart, within the tolerance): both keep their cells
+  auto s2 = s;
+  std::swap(s2[10], s2[12]);
+  auto L1 = territory_layout(active, group, s2, sz, &mem);
+  CHECK(L1.cell == L0.cell);
+  CHECK(territory_layout(active, group, s2, sz).cell != L0.cell);  // without memory they trade places
+  // node 5 drops far down the ranking (beyond 0.15 * territory size): it moves; everything stays a bijection
+  auto s3 = s;
+  s3[5] = -1000;
+  auto L2 = territory_layout(active, group, s3, sz, &mem);
+  CHECK(L2.cell[5] != L0.cell[5]);
+  std::set<std::int32_t> u(L2.cell.begin(), L2.cell.end());
+  CHECK(u.size() == n);
+  std::size_t kept = 0;
+  for (std::size_t i = 0; i < n; ++i) kept += L2.cell[i] == L0.cell[i] ? 1 : 0;
+  CHECK(kept >= n - 10);
+  // nodes whose memory is withheld (-1) or whose previous cell lies outside their territory are placed afresh
+  // (10 and 12 trade places)
+  const auto fresh = territory_layout(active, group, s2, sz).cell;
+  auto m2 = mem;
+  m2.cell[10] = m2.cell[12] = -1;
+  CHECK(territory_layout(active, group, s2, sz, &m2).cell == fresh);
+  auto m3 = mem;
+  REQUIRE(L0.territory[300] == 1);
+  m3.cell[10] = L0.cell[300];  // a cell of the other territory
+  m3.cell[12] = -1;
+  CHECK(territory_layout(active, group, s2, sz, &m3).cell == fresh);
+  // the memory survives a territory shift: one stock of group 0 leaves, so both ranges move by a few cells
+  auto act2 = active;
+  act2[299] = false;
+  auto L3 = territory_layout(act2, group, s, sz, &mem);
+  REQUIRE(L3.territories[0].end != L0.territories[0].end);
+  std::size_t kept3 = 0;
+  for (std::size_t i = 0; i < n; ++i) kept3 += act2[i] && L3.cell[i] == L0.cell[i] ? 1 : 0;
+  CHECK(kept3 >= n - 15);
+  // a different lattice size disables the memory
+  auto m4 = mem;
+  m4.size = LatticeSize{sz.cols + 1, sz.rows};
+  CHECK(territory_layout(active, group, s2, sz, &m4).cell == territory_layout(active, group, s2, sz).cell);
+  // zero tolerance still keeps a node whose ideal slot equals its old one, and the minimum is 2 slots
+  CHECK(territory_layout(active, group, s2, sz, &mem, 0.0).cell == L0.cell);
 }

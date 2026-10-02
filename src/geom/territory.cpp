@@ -3,7 +3,10 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <iterator>
 #include <map>
+#include <numbers>
+#include <set>
 #include <stdexcept>
 
 namespace fx {
@@ -68,12 +71,16 @@ std::vector<std::int32_t> gilbert_order(LatticeSize s) {
 }
 
 TerritoryLayout territory_layout(const std::vector<bool>& active, const std::vector<std::uint32_t>& group,
-                                 const std::vector<double>& s, LatticeSize size) {
+                                 const std::vector<double>& s, LatticeSize size, const PlacementMemory* prev,
+                                 double rank_tolerance) {
   const std::size_t n = active.size();
   if (s.size() != n) throw std::invalid_argument("territory_layout: s size mismatch");
   if (!group.empty() && group.size() != n) throw std::invalid_argument("territory_layout: group size mismatch");
+  if (prev && prev->cell.size() != n)
+    throw std::invalid_argument("territory_layout: memory size mismatch");
   TerritoryLayout out;
   out.cell.assign(n, -1);
+  out.territory.assign(n, -1);
   std::map<std::uint32_t, std::vector<std::uint32_t>> members;  // ascending group id
   std::size_t A = 0;
   for (std::size_t i = 0; i < n; ++i)
@@ -85,6 +92,7 @@ TerritoryLayout territory_layout(const std::vector<bool>& active, const std::vec
   const std::size_t C = size.cells();
   if (C < A) throw std::invalid_argument("territory_layout: lattice smaller than the active count");
   auto rank = [&](std::uint32_t i) { return std::isfinite(s[i]) ? s[i] : 0.0; };
+  const bool use_prev = prev && prev->size == size;
 
   std::vector<double> all;
   all.reserve(A);
@@ -110,6 +118,7 @@ TerritoryLayout territory_layout(const std::vector<bool>& active, const std::vec
 
   const auto order = gilbert_order(size);
   const auto cols = static_cast<std::int32_t>(size.cols);
+  std::vector<std::int32_t> slot_of(use_prev ? C : 0, -1);  // cell -> slot in its territory's spiral
   std::size_t pos = 0, g = 0;
   for (const auto& kv : members) {
     Territory t;
@@ -128,14 +137,25 @@ TerritoryLayout territory_layout(const std::vector<bool>& active, const std::vec
     }
     t.cx = sx / static_cast<double>(cells.size());
     t.cy = sy / static_cast<double>(cells.size());
-    auto d2 = [&](std::int32_t c) {
-      const double dx = c % cols + 0.5 - t.cx, dy = c / cols + 0.5 - t.cy;
-      return dx * dx + dy * dy;
+    // Spiral: ring, then angle from -pi (pi itself is mapped to -pi), then cell index.
+    struct Key {
+      double ring, angle;
+      std::int32_t c;
     };
-    std::sort(cells.begin(), cells.end(), [&](auto a, auto b) {
-      const double da = d2(a), db = d2(b);
-      return da < db || (da == db && a < b);
+    std::vector<Key> keys;
+    keys.reserve(cells.size());
+    for (auto c : cells) {
+      const double dx = c % cols + 0.5 - t.cx, dy = c / cols + 0.5 - t.cy;
+      double a = std::atan2(dy, dx);
+      if (a == std::numbers::pi) a = -std::numbers::pi;
+      keys.push_back({std::floor(std::sqrt(dx * dx + dy * dy)), a, c});
+    }
+    std::sort(keys.begin(), keys.end(), [](const Key& a, const Key& b) {
+      if (a.ring != b.ring) return a.ring < b.ring;
+      if (a.angle != b.angle) return a.angle < b.angle;
+      return a.c < b.c;
     });
+    for (std::size_t k = 0; k < keys.size(); ++k) cells[k] = keys[k].c;
     std::vector<double> sv;
     for (auto i : kv.second) sv.push_back(rank(i));
     t.mountain = median_of(sv) >= med_all;
@@ -143,7 +163,46 @@ TerritoryLayout territory_layout(const std::vector<bool>& active, const std::vec
     std::stable_sort(nodes.begin(), nodes.end(), [&](auto a, auto b) {
       return t.mountain ? rank(a) > rank(b) : rank(a) < rank(b);
     });
-    for (std::size_t k = 0; k < nodes.size(); ++k) out.cell[nodes[k]] = cells[k];
+    const auto tid = static_cast<std::int32_t>(out.territories.size());
+    for (auto i : nodes) out.territory[i] = tid;
+    if (!use_prev) {
+      for (std::size_t k = 0; k < nodes.size(); ++k) out.cell[nodes[k]] = cells[k];
+      out.territories.push_back(t);
+      continue;
+    }
+    // Hysteresis, in slots of this territory's spiral.
+    for (std::size_t k = 0; k < cells.size(); ++k) slot_of[static_cast<std::size_t>(cells[k])] = static_cast<std::int32_t>(k);
+    const double tol = std::max(2.0, rank_tolerance * static_cast<double>(cells.size()));
+    std::vector<char> taken(cells.size(), 0);
+    std::vector<std::int64_t> slot(nodes.size(), -1);  // by rank position
+    for (std::size_t k = 0; k < nodes.size(); ++k) {  // pass 1: keep the previous cell
+      const auto i = nodes[k];
+      const std::int32_t pc = prev->cell[i];
+      if (pc < 0 || static_cast<std::size_t>(pc) >= C) continue;
+      const std::int32_t ps = slot_of[static_cast<std::size_t>(pc)];
+      if (ps < 0 || taken[static_cast<std::size_t>(ps)]) continue;
+      if (std::fabs(static_cast<double>(ps) - static_cast<double>(k)) > tol) continue;
+      slot[k] = ps;
+      taken[static_cast<std::size_t>(ps)] = 1;
+    }
+    for (std::size_t k = 0; k < nodes.size(); ++k)  // pass 2: the ideal slot if free
+      if (slot[k] < 0 && !taken[k]) {
+        slot[k] = static_cast<std::int64_t>(k);
+        taken[k] = 1;
+      }
+    std::set<std::size_t> free;
+    for (std::size_t k = 0; k < cells.size(); ++k)
+      if (!taken[k]) free.insert(k);
+    for (std::size_t k = 0; k < nodes.size(); ++k) {  // pass 3: the nearest free slot, ties to the lower one
+      if (slot[k] >= 0) continue;
+      auto hi = free.lower_bound(k);
+      auto pick = hi;
+      if (hi == free.end() || (hi != free.begin() && k - *std::prev(hi) <= *hi - k)) pick = std::prev(hi);
+      slot[k] = static_cast<std::int64_t>(*pick);
+      free.erase(pick);
+    }
+    for (std::size_t k = 0; k < nodes.size(); ++k) out.cell[nodes[k]] = cells[static_cast<std::size_t>(slot[k])];
+    for (auto c : cells) slot_of[static_cast<std::size_t>(c)] = -1;
     out.territories.push_back(t);
   }
   return out;

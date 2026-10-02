@@ -68,7 +68,10 @@ TEST_CASE("IDW sparse lattice uses an O(cells) nearest-node fallback") {
   const auto t0 = std::chrono::steady_clock::now();
   Raster r = idw_raster(cell, v, s, IdwParams{});
   const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
-  CHECK(ms < 300);
+  MESSAGE("IDW fallback on a 78x77 lattice with one node: " << ms << " ms");
+#if defined(NDEBUG) && !defined(__SANITIZE_ADDRESS__) && !defined(__SANITIZE_THREAD__)
+  CHECK(ms < 300);  // optimized builds only; the time is printed above either way
+#endif
   REQUIRE(r.z.size() == 78 * 4 * 77 * 4);
   for (float z : r.z) CHECK(z == doctest::Approx(3.5));
 }
