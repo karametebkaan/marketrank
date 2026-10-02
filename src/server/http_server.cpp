@@ -86,8 +86,9 @@ struct SseSlot {
   ~SseSlot() { --n; }
 };
 
-// "money-flow" or "legacy" when the model parameters equal that preset, otherwise "custom".
+// "marketrank", "money-flow" or "legacy" when the model parameters equal that preset, otherwise "custom".
 std::string preset_name(const CoreParams& p) {
+  if (p == CoreParams::market_rank()) return "marketrank";
   if (p == CoreParams::money_flow()) return "money-flow";
   if (p == CoreParams::legacy()) return "legacy";
   return "custom";
@@ -102,6 +103,7 @@ json status_json(const FrameStore& s, const std::string& label) {
           {"params", describe(core)}, {"preset", preset_name(core)},
           {"h_ref", std::string(to_string(core.h_ref))},
           {"height", std::string(to_string(lp.height))},
+          {"value", std::string(to_string(lp.value))},
           {"label", label},          {"nodes", s.nodes().size()},
           {"smooth", lp.smooth},     {"idw_power", lp.idw.power},
           {"idw_radius", lp.idw.radius_cells}, {"subdivision", lp.idw.subdivision},
@@ -212,7 +214,8 @@ void FluxServer::routes() {
     const auto& nodes = store_.nodes();
     json jn = json::array();
     for (const auto& n : f->nodes)
-      jn.push_back({n.i, nodes[n.i].ticker, nodes[n.i].sector, n.cell, n.fx, n.fy, num(n.h), num(n.hdisp), num(n.pi), num(n.score), n.group});
+      jn.push_back({n.i, nodes[n.i].ticker, nodes[n.i].sector, n.cell, n.fx, n.fy, num(n.h), num(n.hdisp), num(n.pi),
+                    num(n.score), n.group, num(market_rank_score(n.pi, f->nodes.size())), num(n.pulse)});
     json ja = json::array();
     for (const auto& a : f->arcs) ja.push_back({a.a, a.b, a.w});
     json jp = json::array();
@@ -235,6 +238,7 @@ void FluxServer::routes() {
   svr_.Get("/api/top", [this](const httplib::Request& req, httplib::Response& res) {
     std::optional<TimePoint> t;
     long long n = 10, bars = 30;
+    TopBy by = TopBy::Pi;
     auto int_param = [&](const char* key, long long lo, long long hi, long long& out) {
       if (!req.has_param(key)) return;
       const long long x = parse_int(req.get_param_value(key));
@@ -244,27 +248,34 @@ void FluxServer::routes() {
     try {
       int_param("n", 1, 50, n);
       int_param("bars", 1, 300, bars);
+      if (req.has_param("by")) {
+        const std::string b = req.get_param_value("by");
+        if (b == "pi") by = TopBy::Pi;
+        else if (b == "h") by = TopBy::Hotness;
+        else throw std::invalid_argument("by must be pi or h");
+      }
       if (req.has_param("t")) {
         long long tv = 0;
         int_param("t", std::numeric_limits<long long>::min(), std::numeric_limits<long long>::max(), tv);
         t = tv;
       }
     } catch (const std::exception&) {
-      return send_json(res, 400, {{"error", "bad n, bars or t (n in [1, 50], bars in [1, 300])"}});
+      return send_json(res, 400, {{"error", "bad n, bars, by or t (n in [1, 50], bars in [1, 300], by pi or h)"}});
     }
     if (!store_.status().ready) return send_json(res, 503, {{"error", "landscapes are still being computed"}});
     const auto frames = store_.recent(t, static_cast<std::size_t>(std::max<long long>(bars, 2)));
     if (frames.empty()) return send_json(res, 404, {{"error", "no such frame"}});
     const auto& nodes = store_.nodes();
     json rows = json::array();
-    for (const auto& r : top_hot(frames, static_cast<std::size_t>(n), static_cast<std::size_t>(bars))) {
+    for (const auto& r : top_hot(frames, static_cast<std::size_t>(n), static_cast<std::size_t>(bars), by)) {
       json series = json::array();
       for (double v : r.series) series.push_back(num(v));
       rows.push_back({{"rank", r.rank}, {"i", r.i}, {"ticker", nodes[r.i].ticker}, {"sector", nodes[r.i].sector},
-                      {"h", num(r.h)}, {"hdisp", num(r.hdisp)}, {"pi", num(r.pi)}, {"score", num(r.score)},
+                      {"h", num(r.h)}, {"hdisp", num(r.hdisp)}, {"pi", num(r.pi)}, {"mr", num(r.mr)},
+                      {"pulse", num(r.pulse)}, {"score", num(r.score)},
                       {"prev_rank", r.prev_rank ? json(*r.prev_rank) : json(nullptr)}, {"series", series}});
     }
-    send_json(res, 200, {{"t", frames.back()->t}, {"rows", rows}});
+    send_json(res, 200, {{"t", frames.back()->t}, {"by", by == TopBy::Pi ? "pi" : "h"}, {"rows", rows}});
   });
 
   svr_.Get("/api/frame/grid", [this](const httplib::Request& req, httplib::Response& res) {
@@ -286,9 +297,13 @@ void FluxServer::routes() {
       // With a preset the model parameters start from it; without one they start from the current ones (which may
       // carry CLI flags such as --lambda), and only the given fields change.
       CoreParams p = store_.core_params();
+      LandscapeParams lp = store_.landscape_params();
       if (b.contains("preset")) {
         const std::string preset = get_str(b, "preset");
-        if (preset == "money-flow") p = CoreParams::money_flow();
+        // The landscape value follows the preset unless given: MarketRank pi under marketrank, else hotness.
+        lp.value = preset == "marketrank" ? LandscapeValue::Pi : LandscapeValue::Hotness;
+        if (preset == "marketrank") p = CoreParams::market_rank();
+        else if (preset == "money-flow") p = CoreParams::money_flow();
         else if (preset == "legacy") p = CoreParams::legacy();
         else if (preset == "defaults") p = CoreParams{};
         else throw std::invalid_argument("unknown preset: " + preset);
@@ -306,7 +321,7 @@ void FluxServer::routes() {
         if (!b["vol_scale"].is_boolean()) throw std::invalid_argument("vol_scale must be a boolean");
         p.vol_scale = b["vol_scale"].get<bool>();
       }
-      LandscapeParams lp = store_.landscape_params();
+      if (b.contains("value")) lp.value = parse_landscape_value(get_str(b, "value"));
       if (b.contains("height")) lp.height = parse_height_mode(get_str(b, "height"));
       if (b.contains("idw_power")) lp.idw.power = get_num(b, "idw_power", 0.0, 8.0, true);
       if (b.contains("idw_radius")) lp.idw.radius_cells = static_cast<int>(get_int(b, "idw_radius", 0, 16));

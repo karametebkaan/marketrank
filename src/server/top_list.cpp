@@ -7,15 +7,23 @@
 namespace mr {
 
 namespace {
-// Positions of f's nodes with finite h, sorted hottest first (ties by lower i).
-std::vector<std::size_t> ranking(const LandscapeFrame& f) {
+// The metric of node k of f: pi·N_active (Pi; same order as pi) or h.
+double metric(const LandscapeFrame& f, std::size_t k, TopBy by) {
+  const LandscapeNode& nd = f.nodes[k];
+  return by == TopBy::Pi ? nd.pi * static_cast<double>(f.nodes.size()) : nd.h;
+}
+
+// Positions of f's nodes with a finite metric, sorted highest first (ties by lower i).
+std::vector<std::size_t> ranking(const LandscapeFrame& f, TopBy by) {
   std::vector<std::size_t> pos;
   pos.reserve(f.nodes.size());
-  for (std::size_t k = 0; k < f.nodes.size(); ++k)
-    if (std::isfinite(f.nodes[k].h)) pos.push_back(k);
+  std::vector<double> m(f.nodes.size());
+  for (std::size_t k = 0; k < f.nodes.size(); ++k) {
+    m[k] = metric(f, k, by);
+    if (std::isfinite(m[k])) pos.push_back(k);
+  }
   std::sort(pos.begin(), pos.end(), [&](std::size_t a, std::size_t b) {
-    const auto &x = f.nodes[a], &y = f.nodes[b];
-    return x.h > y.h || (x.h == y.h && x.i < y.i);
+    return m[a] > m[b] || (m[a] == m[b] && f.nodes[a].i < f.nodes[b].i);
   });
   return pos;
 }
@@ -29,17 +37,17 @@ std::size_t find_node(const LandscapeFrame& f, std::uint32_t i) {
 }  // namespace
 
 std::vector<TopRow> top_hot(const std::vector<std::shared_ptr<const LandscapeFrame>>& frames, std::size_t n,
-                            std::size_t bars) {
+                            std::size_t bars, TopBy by) {
   std::vector<TopRow> rows;
   if (frames.empty() || !frames.back()) return rows;
   const LandscapeFrame& cur = *frames.back();
-  const auto order = ranking(cur);
+  const auto order = ranking(cur, by);
   // Rank of every node position in the previous frame (0 = unranked).
   const LandscapeFrame* prev = frames.size() >= 2 ? frames[frames.size() - 2].get() : nullptr;
   std::vector<std::size_t> prev_rank_at;
   if (prev) {
     prev_rank_at.assign(prev->nodes.size(), 0);
-    const auto po = ranking(*prev);
+    const auto po = ranking(*prev, by);
     for (std::size_t r = 0; r < po.size(); ++r) prev_rank_at[po[r]] = r + 1;
   }
   const double nan = std::numeric_limits<double>::quiet_NaN();
@@ -52,6 +60,8 @@ std::vector<TopRow> top_hot(const std::vector<std::shared_ptr<const LandscapeFra
     row.hdisp = nd.hdisp;
     row.pi = nd.pi;
     row.score = nd.score;
+    row.mr = nd.pi * static_cast<double>(cur.nodes.size());
+    row.pulse = nd.pulse;
     if (prev) {
       const std::size_t k = find_node(*prev, nd.i);
       if (k != std::size_t(-1) && prev_rank_at[k] > 0) row.prev_rank = prev_rank_at[k];
@@ -62,7 +72,9 @@ std::vector<TopRow> top_hot(const std::vector<std::shared_ptr<const LandscapeFra
       const LandscapeFrame* f = frames[frames.size() - 1 - q].get();
       if (!f) continue;
       const std::size_t k = find_node(*f, nd.i);
-      if (k != std::size_t(-1) && std::isfinite(f->nodes[k].h)) row.series[bars - 1 - q] = f->nodes[k].h;
+      if (k == std::size_t(-1)) continue;
+      const double v = metric(*f, k, by);
+      if (std::isfinite(v)) row.series[bars - 1 - q] = v;
     }
     rows.push_back(std::move(row));
   }

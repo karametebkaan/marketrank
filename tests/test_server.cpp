@@ -156,7 +156,7 @@ TEST_CASE("server: 503 before ready, shock grid 404, node field order") {
   CHECK(cli.Get("/api/shock/grid?id=1")->status == 404);
   auto fr = json::parse(cli.Get("/api/frame")->body);
   const auto& n0 = fr["nodes"][0];
-  REQUIRE(n0.size() == 11);
+  REQUIRE(n0.size() == 13);
   CHECK(n0[10].is_number_integer());
   REQUIRE(fr.contains("communities"));
   CHECK(fr["communities"]["count"].is_number_integer());
@@ -256,7 +256,7 @@ TEST_CASE("server: /api/top ranks exact h, with prev_rank and aligned series") {
   CHECK(cli.Get("/api/top?t=1")->status == 404);
   auto times = json::parse(cli.Get("/api/times")->body);
   REQUIRE(times.size() == 10);
-  auto r = cli.Get("/api/top?n=10&bars=30");
+  auto r = cli.Get("/api/top?n=10&bars=30&by=h");
   REQUIRE(r->status == 200);
   auto top = json::parse(r->body);
   CHECK(top["t"] == times.back());
@@ -288,11 +288,61 @@ TEST_CASE("server: /api/top ranks exact h, with prev_rank and aligned series") {
     for (std::size_t q = 0; q < 20; ++q) CHECK(row["series"][q].is_null());  // only 10 bars are cached
     CHECK(row["series"][29].get<double>() == row["h"].get<double>());
   }
-  auto early = json::parse(cli.Get("/api/top?n=3&bars=2&t=" + std::to_string(times[0].get<long long>()))->body);
+  auto early = json::parse(cli.Get("/api/top?n=3&bars=2&by=h&t=" + std::to_string(times[0].get<long long>()))->body);
   REQUIRE(early["rows"].size() == 3);
   CHECK(early["rows"][0]["prev_rank"].is_null());  // no earlier cached bar
   CHECK(early["rows"][0]["series"].size() == 2);
   CHECK(early["rows"][0]["series"][0].is_null());
+}
+
+TEST_CASE("server: /api/top ranks by π by default (by=pi), rows carry mr = π·N and pulse") {
+  Fixture f;
+  httplib::Client cli("127.0.0.1", f.port);
+  CHECK(cli.Get("/api/top?by=bogus")->status == 400);
+  auto times = json::parse(cli.Get("/api/times")->body);
+  auto fr = json::parse(cli.Get("/api/frame?t=" + std::to_string(times.back().get<long long>()))->body);
+  const double n_active = static_cast<double>(fr["nodes"].size());
+  std::vector<std::pair<double, std::size_t>> v;
+  for (const auto& n : fr["nodes"]) {
+    REQUIRE(n.size() == 13);  // [..., group, mr, pulse]
+    CHECK(n[11].get<double>() == doctest::Approx(n[8].get<double>() * n_active));
+    v.push_back({n[8].get<double>(), n[0].get<std::size_t>()});
+  }
+  std::sort(v.begin(), v.end(), [](auto a, auto b) { return a.first > b.first || (a.first == b.first && a.second < b.second); });
+  const auto def = json::parse(cli.Get("/api/top?n=10&bars=5")->body);
+  const auto pi = json::parse(cli.Get("/api/top?n=10&bars=5&by=pi")->body);
+  CHECK(def == pi);
+  const auto& rows = pi["rows"];
+  REQUIRE(rows.size() == std::min<std::size_t>(10, v.size()));
+  for (std::size_t k = 0; k < rows.size(); ++k) {
+    CHECK(rows[k]["i"] == v[k].second);
+    CHECK(rows[k]["pi"].get<double>() == v[k].first);
+    CHECK(rows[k]["mr"].get<double>() == doctest::Approx(v[k].first * n_active));
+    CHECK(rows[k]["series"][4].get<double>() == doctest::Approx(rows[k]["mr"].get<double>()));
+    CHECK(rows[k].contains("pulse"));
+    CHECK(rows[k]["pulse"].is_number());  // every cached frame has a previous bar
+  }
+}
+
+TEST_CASE("server: the marketrank preset and the landscape value") {
+  Fixture f(true, CoreParams::market_rank());
+  httplib::Client c("127.0.0.1", f.port);
+  auto status = [&] { return json::parse(c.Get("/api/status")->body); };
+  CHECK(status()["preset"] == "marketrank");
+  CHECK(status()["value"] == "hotness");  // LandscapeParams{} in the fixture
+  CHECK(c.Post("/api/params", R"({"value":"pi"})", "application/json")->status == 202);
+  CHECK(f.store->landscape_params().value == LandscapeValue::Pi);
+  CHECK(status()["value"] == "pi");
+  CHECK(c.Post("/api/params", R"({"value":"nope"})", "application/json")->status == 400);
+  CHECK(c.Post("/api/params", R"({"preset":"money-flow"})", "application/json")->status == 202);
+  CHECK(status()["preset"] == "money-flow");
+  CHECK(f.store->landscape_params().value == LandscapeValue::Hotness);  // preset default
+  CHECK(c.Post("/api/params", R"({"preset":"marketrank"})", "application/json")->status == 202);
+  CHECK(status()["preset"] == "marketrank");
+  CHECK(f.store->core_params() == CoreParams::market_rank());
+  CHECK(f.store->landscape_params().value == LandscapeValue::Pi);  // Pi under the marketrank preset
+  CHECK(c.Post("/api/params", R"({"preset":"marketrank","value":"hotness"})", "application/json")->status == 202);
+  CHECK(f.store->landscape_params().value == LandscapeValue::Hotness);
 }
 
 TEST_CASE("server: posting params without a preset keeps the CLI model flags; status reports the preset") {
@@ -366,6 +416,11 @@ TEST_CASE("server: a display-only POST redraws without re-running the pipeline")
   CHECK(st["generation"].get<std::uint64_t>() > g0);
   CHECK(f.store->pipeline_steps() == steps);
   CHECK(c.Get("/api/frame/grid")->status == 200);
+  // The landscape value orders the territories: a placement change, so the pipeline re-runs.
+  CHECK(c.Post("/api/params", R"({"value":"pi"})", "application/json")->status == 202);
+  for (int k = 0; k < 600 && !f.store->status().ready; ++k) std::this_thread::sleep_for(10ms);
+  CHECK(f.store->status().ready);
+  CHECK(f.store->pipeline_steps() > steps);
 }
 
 TEST_CASE("server: shock ids, an LRU of the last 8 shock grids, shocked stocks not listed as receivers or losers") {

@@ -67,6 +67,22 @@ CoreParams CoreParams::legacy() {
   return p;
 }
 
+CoreParams CoreParams::market_rank() {
+  CoreParams p;
+  p.pressure = PressureMode::Dollar;
+  p.transition.lift = LiftMode::Off;
+  p.transition.retention = 0.0;
+  p.transition.dangling = DanglingMode::Teleport;
+  // k_out = 20 / k_in = 10 stay: a dense chain is infeasible at 10K nodes.
+  p.alpha = 0.85;
+  p.h_ref = HotRef::Uniform;
+  p.max_volume_ratio = 0;
+  p.vol_scale = false;
+  p.halflife_slow = 1e9;  // cumulative over the data window (decay per bar ~ 1 - 7e-10)
+  p.halflife_fast = 3;    // the forecast's fast chain
+  return p;
+}
+
 CoreParams CoreParams::money_flow() {
   CoreParams p;
   p.pressure = PressureMode::Dollar;
@@ -269,6 +285,10 @@ Frame CorePipeline::step(const Panel& panel, std::size_t t, const std::vector<Sh
     f.h[i] = h_a[map[i]];
   }
   f.solve.pi = f.pi;
+  f.pulse.assign(n_, nan);
+  if (prev_pi_.size() == n_)
+    for (std::size_t i = 0; i < n_; ++i)
+      if (active[i] && f.pi[i] > 0 && prev_pi_[i] > 0) f.pulse[i] = std::log(f.pi[i]) - std::log(prev_pi_[i]);
   f.inflow.assign(slow_.in().begin(), slow_.in().begin() + static_cast<std::ptrdiff_t>(n_));
   for (int k : params_.horizons) {
     Forecast fa = forecast(Pa_fast, params_.alpha, pi_a, prev_a, k, params_.beta);

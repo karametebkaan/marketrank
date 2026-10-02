@@ -18,8 +18,9 @@ TEST_CASE("cli defaults") {
   CHECK(a.universe_size == 10000);
   CHECK_FALSE(a.eval);
   CHECK(a.threads == 0);
-  CHECK(a.params.transition.lift == LiftMode::Excess);
-  CHECK(describe(a.params).find("lift=excess") != std::string::npos);
+  CHECK(a.params == CoreParams::market_rank());  // the MarketRank concept model is the default
+  CHECK(describe(a.params).find("lift=off") != std::string::npos);
+  CHECK(describe(a.params).find("retention=0") != std::string::npos);
 }
 
 TEST_CASE("--legacy applies first regardless of position") {
@@ -65,8 +66,9 @@ TEST_CASE("model, universe and eval flags") {
 TEST_CASE("liquidity floor and volume cap flags") {
   CliArgs d = parse_cli({});
   CHECK(d.params.min_dollar_volume == 1e6);
-  CHECK(d.params.max_volume_ratio == 5.0);
-  CHECK(describe(d.params).find("min_dv=1e+06 max_vr=5") != std::string::npos);
+  CHECK(d.params.max_volume_ratio == 0.0);  // market_rank(): uncapped
+  CHECK(describe(d.params).find("min_dv=1e+06 max_vr=0") != std::string::npos);
+  CHECK(describe(CoreParams{}).find("min_dv=1e+06 max_vr=5") != std::string::npos);
   CliArgs a = parse_cli({"--min-dollar-volume", "250000", "--max-volume-ratio", "3.5"});
   CHECK(a.params.min_dollar_volume == 250000.0);
   CHECK(a.params.max_volume_ratio == 3.5);
@@ -151,14 +153,14 @@ TEST_CASE("--sync-sectors parses and is documented") {
   CHECK(cli_usage().find("--sync-sectors") != std::string::npos);
 }
 
-TEST_CASE("serve flags default to the money-flow preset") {
+TEST_CASE("serve flags default to the marketrank preset") {
   CliArgs a = parse_cli({"--serve", "--port", "9000", "--host", "0.0.0.0", "--web", "/tmp/w"});
   CHECK(a.serve);
   CHECK(a.port == 9000);
   CHECK(a.host == "0.0.0.0");
   CHECK(a.web == "/tmp/w");
-  CHECK(a.params.pressure == PressureMode::Dollar);  // money_flow()
-  CHECK(a.params.h_ref == HotRef::Size);
+  CHECK(a.params == CoreParams::market_rank());
+  CHECK(a.params.h_ref == HotRef::Uniform);
   CliArgs b = parse_cli({"--serve", "--h-ref", "netflow"});
   CHECK(b.params.h_ref == HotRef::NetFlow);
   CHECK(b.port == 8765);  // 8080 is taken by Kinetica on the dev machine

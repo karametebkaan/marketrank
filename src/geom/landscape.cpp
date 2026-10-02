@@ -32,8 +32,22 @@ double display_height(double h, HeightMode m) {
   return h >= 0 ? std::log1p(h) : -std::log1p(-h);
 }
 
+LandscapeValue parse_landscape_value(std::string_view s) {
+  if (s == "pi") return LandscapeValue::Pi;
+  if (s == "hotness") return LandscapeValue::Hotness;
+  throw std::invalid_argument("unknown landscape value: " + std::string(s));
+}
+
+std::string_view to_string(LandscapeValue v) { return v == LandscapeValue::Pi ? "pi" : "hotness"; }
+
+double landscape_value(double h, double pi, std::size_t n_active, LandscapeValue v, HeightMode height) {
+  if (v == LandscapeValue::Hotness) return display_height(h, height);
+  const double s = pi * static_cast<double>(n_active);
+  return std::isfinite(s) && s > 0 ? std::log(s) : std::numeric_limits<double>::quiet_NaN();
+}
+
 bool same_placement(const LandscapeParams& a, const LandscapeParams& b) {
-  return a.order_smoothing == b.order_smoothing && a.rank_tolerance == b.rank_tolerance && a.max_arcs == b.max_arcs &&
+  return a.value == b.value && a.order_smoothing == b.order_smoothing && a.rank_tolerance == b.rank_tolerance && a.max_arcs == b.max_arcs &&
          a.territory == b.territory && a.recluster_bars == b.recluster_bars && a.resolution == b.resolution &&
          a.warmup_bars == b.warmup_bars;
 }
@@ -53,7 +67,7 @@ Raster node_raster(const LandscapeFrame& f, const LandscapeParams& p) {
 
 LandscapeFrame restyle(const LandscapeFrame& f, const LandscapeParams& p) {
   LandscapeFrame out = f;
-  for (auto& nd : out.nodes) nd.hdisp = display_height(nd.h, p.height);
+  for (auto& nd : out.nodes) nd.hdisp = landscape_value(nd.h, nd.pi, out.nodes.size(), p.value, p.height);
   out.raster = node_raster(out, p);
   return out;
 }
@@ -113,7 +127,8 @@ LandscapeFrame LandscapeBuilder::build(const Frame& f) {
   std::size_t n_active = 0;
   for (std::size_t i = 0; i < n_; ++i) n_active += f.active[i] ? 1 : 0;
   const LatticeSize size = lattice_size(n_active);
-  // Ranking hotness: signed-log h blended with the previous frame's value; non-finite h ranks as 0.
+  // Ranking value: the landscape value (log(pi N) or signed-log h) blended with the previous frame's value;
+  // non-finite values rank as 0.
   std::vector<double> rank(n_, 0.0);
   const std::vector<char> was_active = has_prev_;
   for (std::size_t i = 0; i < n_; ++i) {
@@ -121,7 +136,7 @@ LandscapeFrame LandscapeBuilder::build(const Frame& f) {
       has_prev_[i] = 0;
       continue;
     }
-    double cur = display_height(f.h[i], p_.height);
+    double cur = landscape_value(f.h[i], f.pi[i], n_active, p_.value, p_.height);
     if (!std::isfinite(cur)) cur = 0.0;
     rank[i] = has_prev_[i] ? (1.0 - p_.order_smoothing) * cur + p_.order_smoothing * s_prev_[i] : cur;
     s_prev_[i] = rank[i];
@@ -151,11 +166,12 @@ LandscapeFrame LandscapeBuilder::build(const Frame& f) {
   const auto& score = f.forecasts.empty() ? f.h : f.forecasts.front().score;
   for (std::size_t i = 0; i < n_; ++i) {
     if (!f.active[i]) continue;
-    const double hd = display_height(f.h[i], p_.height);
+    const double hd = landscape_value(f.h[i], f.pi[i], n_active, p_.value, p_.height);
     lf.nodes.push_back({static_cast<std::uint32_t>(i), cells[static_cast<std::size_t>(i)],
                         static_cast<float>((cells[i] % cols + 0.5) / static_cast<double>(size.cols)),
                         static_cast<float>((cells[i] / cols + 0.5) / static_cast<double>(size.rows)), f.h[i], hd, f.pi[i], score[i],
-                        flux ? tracker_.node_group()[i] : (group_.empty() ? 0 : static_cast<std::int32_t>(group_[i]))});
+                        flux ? tracker_.node_group()[i] : (group_.empty() ? 0 : static_cast<std::int32_t>(group_[i])),
+                        f.pulse.size() == n_ ? f.pulse[i] : std::numeric_limits<double>::quiet_NaN()});
   }
   lf.raster = node_raster(lf, p_);
   lf.arcs = top_arcs(f.P, f.active, p_.max_arcs);

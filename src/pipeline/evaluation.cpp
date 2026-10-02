@@ -95,7 +95,13 @@ double floor_share(const Frame& f, double alpha) {
   std::size_t n_active = 0;
   for (bool a : f.active) n_active += a ? 1 : 0;
   if (n_active == 0) return 0.0;
-  const double floor = (1.0 - alpha) / static_cast<double>(n_active);
+  // The floor is the teleport share every node gets: (1 - alpha)/N plus, under DanglingMode::Teleport,
+  // alpha/N of the mass on dangling (empty) active rows.
+  double dangling = 0;
+  if (f.P.n == f.active.size() && f.P.row_ptr.size() == f.P.n + 1 && f.pi.size() == f.P.n)
+    for (std::size_t i = 0; i < f.P.n; ++i)
+      if (f.active[i] && f.P.row_ptr[i] == f.P.row_ptr[i + 1]) dangling += f.pi[i];
+  const double floor = ((1.0 - alpha) + alpha * dangling) / static_cast<double>(n_active);
   std::size_t at_floor = 0;
   for (std::size_t i = 0; i < f.active.size(); ++i)
     if (f.active[i] && f.pi[i] <= floor * (1.0 + 1e-6)) ++at_floor;
@@ -290,6 +296,7 @@ std::vector<EvalConfig> evaluation_grid() {
     p.vol_scale = true;
     g.push_back({"money-flow+volscale", p});
   }
+  g.push_back({"marketrank", CoreParams::market_rank()});
   return g;
 }
 

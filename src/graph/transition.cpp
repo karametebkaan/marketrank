@@ -117,7 +117,8 @@ Csr build_transition(const FluxAccumulator& acc, const TransitionParams& params,
       P.raw.push_back(retained);
     };
     if (!(offsum > 0)) {
-      push_self(1.0);
+      // Teleport leaves an active row with nothing to give (no kept edge, nothing retained) empty.
+      if (!is_active(i) || params.dangling == DanglingMode::SelfLoop || retained > 0) push_self(1.0);
     } else {
       const double denom = out[i] + retained;
       const double self_mass = denom > 0 ? retained / denom : 0.0;

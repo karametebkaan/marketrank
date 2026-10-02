@@ -11,6 +11,7 @@ namespace mr {
 
 double gini(std::span<const double> x);
 double spearman(std::span<const double> a, std::span<const double> b);
+// Share of active nodes at the teleport floor ((1 - alpha)/N plus the dangling rows' uniform share), 1e-6 relative.
 double floor_share(const Frame& f, double alpha);
 double structure_gain(const Frame& f);  // 1 - Spearman(pi, inflow share) over active nodes
 double sector_coherence(const Frame& f, const std::vector<Security>& nodes);

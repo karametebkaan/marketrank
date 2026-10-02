@@ -35,6 +35,11 @@ struct CoreParams {
   std::size_t vol_window = 20;  // trailing returns used for that volatility (>= 5)
   std::vector<int> horizons{1, 4, 8};
 
+  // The MarketRank concept model (spec 5, "MarketRank preset"): the damped chain on the out-shares of
+  // the cumulative paired dollar flow, r_i = (1-p) sum_j r_j T_ji / sum_k T_jk + p/N with p = 1 - alpha:
+  // dollar pressure, no lift, no retention (no self-loops; a row with nothing to give teleports),
+  // uniform reference, no volume cap, no vol scaling, slow half-life 1e9 bars (effectively cumulative).
+  static CoreParams market_rank();
   static CoreParams money_flow();  // dollar flux, no lift, two-sided pruning, retention, size ref
   static CoreParams legacy();  // milestone-1 behaviour (spec 5)
   void validate() const;       // throws std::invalid_argument
@@ -46,6 +51,9 @@ struct Frame {
   std::vector<bool> active;         // size n; causal: a recent close and the liquidity floor
   std::vector<double> pi, h;        // inactive: pi = 0, h = NaN
   std::vector<double> inflow;       // size n; slow accumulator in() (structure-gain metric)
+  // Heartbeat: log pi_i(t) - log pi_i(t-1) against the previous step's frame; NaN when the node is
+  // inactive now or was inactive (or there was no previous step) at t-1.
+  std::vector<double> pulse;
   SolveResult solve;
   SolveResult solve_long;           // h_ref == LongRun only (pi full size n); else default
   std::vector<Forecast> forecasts;  // parallel to CoreParams::horizons
@@ -83,5 +91,8 @@ class CorePipeline {
 };
 
 Frame run_panel_last(const Panel& panel, const CoreParams& params);
+
+// MarketRank score of a node: pi_i * N_active (1 = average).
+inline double market_rank_score(double pi, std::size_t n_active) { return pi * static_cast<double>(n_active); }
 
 }  // namespace mr

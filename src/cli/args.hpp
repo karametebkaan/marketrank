@@ -11,6 +11,7 @@
 namespace mr {
 
 enum class UniverseSource { Auto, Sp500, Snapshot };
+enum class RankBy { Pi, Hotness };  // primary rank table: MarketRank pi (default) or hotness h
 
 struct CliArgs {
   std::string mode = "synthetic";
@@ -35,7 +36,9 @@ struct CliArgs {
   std::string host = "127.0.0.1";
   std::filesystem::path web = "web";
   bool help = false;
-  CoreParams params;
+  RankBy rank_by = RankBy::Pi;
+  std::string preset = "marketrank";  // the preset the model parameters started from: marketrank | money-flow | legacy
+  CoreParams params = CoreParams::market_rank();
 };
 
 // Time range of bars to load and analyse: everything for synthetic (fixed historical dates),

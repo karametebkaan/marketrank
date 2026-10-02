@@ -1,6 +1,7 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <string_view>
 #include <vector>
 
@@ -23,7 +24,17 @@ enum class TerritoryMode { Flux, Sector };
 TerritoryMode parse_territory_mode(std::string_view s);  // "flux" | "sector"
 std::string_view to_string(TerritoryMode m);
 
+// What the landscape height (and the territory ordering, and the mountain/crater rule) is made of: the
+// MarketRank score as log(pi * N_active), signed around 0 = average, or hotness h through HeightMode.
+enum class LandscapeValue { Pi, Hotness };
+LandscapeValue parse_landscape_value(std::string_view s);  // "pi" | "hotness"
+std::string_view to_string(LandscapeValue v);
+// Display value of a node: log(pi * n_active) under Pi (NaN for pi <= 0; HeightMode is not applied), else
+// display_height(h, height).
+double landscape_value(double h, double pi, std::size_t n_active, LandscapeValue v, HeightMode height);
+
 struct LandscapeParams {
+  LandscapeValue value = LandscapeValue::Hotness;  // Pi is the default under the marketrank preset (main, server)
   IdwParams idw{1, 2.0, 3};  // subdivision 1: raster = lattice mesh vertices
   HeightMode height = HeightMode::SignedLog;
   double smooth = 1.0;            // display smoothing: Gaussian sigma in lattice cells after IDW (0 = off)
@@ -43,6 +54,7 @@ struct LandscapeNode {
   float fx, fy;  // cell centre normalized to [0, 1]
   double h, hdisp, pi, score;
   std::int32_t group = -1;  // flux: persistent community label (stable across re-clusters); sector: sector id; -1 = loose
+  double pulse = std::numeric_limits<double>::quiet_NaN();  // heartbeat: Frame::pulse (delta log pi)
 };
 
 struct LandscapeArc {
@@ -66,10 +78,11 @@ struct LandscapeFrame {
 };
 
 // Whether two parameter sets place stocks identically. The display parameters (smooth, height and idw: power,
-// radius, subdivision) only change how a frame is drawn; everything else (territory, ranking, clustering, arcs,
-// warm-up) is placement.
+// radius, subdivision) only change how a frame is drawn; everything else (value, territory, ranking, clustering,
+// arcs, warm-up) is placement. The value is placement because it orders the stocks inside a territory.
 bool same_placement(const LandscapeParams& a, const LandscapeParams& b);
-// The frame redrawn with display parameters p: hdisp recomputed from h, the raster rebuilt from (cell, hdisp).
+// The frame redrawn with display parameters p: hdisp recomputed (landscape_value with p.value), the raster
+// rebuilt from (cell, hdisp).
 LandscapeFrame restyle(const LandscapeFrame& f, const LandscapeParams& p);
 
 std::vector<LandscapeArc> top_arcs(const Csr& P, const std::vector<bool>& active, std::size_t max_arcs);

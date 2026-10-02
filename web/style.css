@@ -11,11 +11,16 @@ html, body { height: 100%; margin: 0; font: 13px/1.4 system-ui, -apple-system, S
 #panel button { margin: 6px 6px 0 0; padding: 4px 10px; }
 #status { color: var(--muted); font-size: 12px; min-height: 2.8em; }
 #canvas { position: relative; }
-#top { position: absolute; top: 10px; right: 10px; z-index: 2; width: 370px; max-width: calc(100% - 20px);
+#top { position: absolute; top: 10px; right: 10px; z-index: 2; width: 420px; max-width: calc(100% - 20px);
   background: rgba(255, 255, 255, .93); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
   box-shadow: 0 2px 10px rgba(0, 0, 0, .08); }
 #top h3 { font-size: 12px; margin: 0 0 6px; color: var(--muted); font-weight: 600; letter-spacing: .02em; }
-.toprow { display: grid; grid-template-columns: 22px 30px 64px 1fr 58px 72px; align-items: center; gap: 4px;
+.tophead { display: flex; justify-content: space-between; align-items: center; margin: 0 0 6px; }
+.tophead h3 { margin: 0 !important; }
+.toggle button { font: 12px system-ui, sans-serif; padding: 1px 9px; border: 1px solid var(--line); background: #fff; color: var(--muted); cursor: pointer; }
+.toggle button:first-child { border-radius: 4px 0 0 4px; } .toggle button:last-child { border-radius: 0 4px 4px 0; border-left: 0; }
+.toggle button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.toprow { display: grid; grid-template-columns: 22px 30px 60px 1fr 52px 56px 72px; align-items: center; gap: 4px;
   padding: 2px 4px; border-radius: 4px; cursor: pointer; font-variant-numeric: tabular-nums; }
 .toprow:hover { background: #f0f0ec; }
 .toprow.sel { background: #fff3b0; }
@@ -25,6 +30,8 @@ html, body { height: 100%; margin: 0; font: 13px/1.4 system-ui, -apple-system, S
 .toprow .tk { font-weight: 600; }
 .toprow .sec { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .toprow .hv { text-align: right; color: #b2182b; }
+.toprow .pl { text-align: right; font-size: 11px; color: var(--muted); }
+.toprow .pl.up { color: #1a9641; } .toprow .pl.down { color: #b2182b; }
 .toprow svg { display: block; }
 .toprow.beat { animation: beat 400ms ease-out; }
 @keyframes beat {

@@ -4,7 +4,7 @@ const Q = new URLSearchParams(location.search);
 const S = {
   status: null, times: [], frame: null, raster: null, shock: null, shockRaster: null, shockVmax: 1,
   baseVmax: 1, deck: null, playing: false, loadedKey: '', loadedGen: null, selftest: Q.has('selftest'),
-  frameSeq: 0, shockSeq: 0, topSeq: 0, topPrev: new Map(), highlight: null, idx: null, idxKey: '', colCache: null, arcsInit: false, selftestDone: false,
+  frameSeq: 0, shockSeq: 0, topSeq: 0, topPrev: new Map(), topBy: 'pi', highlight: null, idx: null, idxKey: '', colCache: null, arcsInit: false, selftestDone: false,
 };
 const $ = (id) => document.getElementById(id);
 const MID = [247, 247, 247], POS = [178, 24, 43], NEG = [33, 102, 172];
@@ -112,11 +112,12 @@ function render() {
   const nodes = f.nodes.map((n) => {
     const col = n[3] % L.cols, row = Math.floor(n[3] / L.cols), s = sample(z, meta, L, col, row);
     const zt = heightOf(s.v, scale, clip);
-    return { i: n[0], ticker: n[1], sector: n[2], x: s.x, y: s.y, zt, v: s.v, h: n[6], pi: n[8], score: n[9], group: n[10] };
+    return { i: n[0], ticker: n[1], sector: n[2], x: s.x, y: s.y, zt, v: s.v, h: n[6], hd: n[7], pi: n[8], score: n[9], group: n[10], mr: n[11], pulse: n[12] };
   });
   const byI = new Map(nodes.map((n) => [n.i, n]));
   const pos = (n, lift = 0.3) => [n.x, n.y, n.zt + lift];
-  const ranked = nodes.filter((n) => n.h !== null).sort((a, b) => b.h - a.h);
+  // Labels: the 30 highest and lowest by the landscape value (log π·N or signed-log h).
+  const ranked = nodes.filter((n) => n.hd !== null).sort((a, b) => b.hd - a.hd);
   const labeled = ranked.slice(0, 30).concat(ranked.slice(-30));
   const nArcs = shock ? 0 : Number($('arcs').value);
   const arcs = f.arcs.slice(0, nArcs).map((a) => ({ s: byI.get(a[0]), t: byI.get(a[1]), w: a[2] })).filter((a) => a.s && a.t);
@@ -129,7 +130,7 @@ function render() {
     }),
     new deck.ScatterplotLayer({
       id: 'nodes', data: nodes, getPosition: (n) => pos(n), getRadius: 0.16, radiusUnits: 'common',
-      getFillColor: (n) => signColor(shock ? n.v : n.h, 220), pickable: true,
+      getFillColor: (n) => signColor(shock ? n.v : n.hd, 220), pickable: true,
     }),
     new deck.ArcLayer({
       id: 'arcs', data: arcs, getSourcePosition: (a) => pos(a.s), getTargetPosition: (a) => pos(a.t),
@@ -174,7 +175,7 @@ function initDeck(lattice) {
     initialViewState: { target: [lattice.cols / 2, lattice.rows / 2, 0], rotationX: 45, rotationOrbit: -25, zoom: Math.log2(Math.min(el.clientWidth, el.clientHeight) / (1.6 * span(lattice))), minZoom: -6, maxZoom: 12 },
     controller: true,
     getTooltip: ({ object }) => (object && object.ticker
-      ? `${object.ticker} · ${object.sector}\n${clusterLine(object)}h ${object.h === null ? 'n/a' : object.h.toFixed(3)}  π ${object.pi === null ? 'n/a' : object.pi.toExponential(2)}\nscore+1 ${object.score === null ? 'n/a' : object.score.toFixed(3)}`
+      ? `${object.ticker} · ${object.sector}\n${clusterLine(object)}MarketRank π·N ${fmt(object.mr, 3)}  Δlog π ${fmtSigned(object.pulse, 4)}\nh ${fmt(object.h, 3)}  π ${object.pi === null ? 'n/a' : object.pi.toExponential(2)}\nscore+1 ${fmt(object.score, 3)}`
       : null),
   });
 }
@@ -193,6 +194,9 @@ function clusterLine(o) {
   return o.group < 0 ? `loose · ${k} stocks\n` : `${flux ? 'cluster' : 'sector group'} #${o.group} · ${k} stocks\n`;
 }
 
+function fmt(v, d) { return v === null || v === undefined || !Number.isFinite(v) ? 'n/a' : v.toFixed(d); }
+function fmtSigned(v, d) { const t = fmt(v, d); return t !== 'n/a' && v >= 0 ? `+${t}` : t; }
+
 function setArcsLabel() { $('arcsLabel').textContent = $('arcs').value; }
 
 // Server strings only ever reach the DOM through .value / textContent.
@@ -206,12 +210,14 @@ function fillHoldings(f) {
   box.replaceChildren();
   (f.portfolio || []).forEach((p, k) => {
     const n = p.i === null ? undefined : byI.get(p.i);
-    const h = n && n[6] !== null ? n[6] : null;
+    // The selected metric: MarketRank π·N (coloured around 1 = average) or hotness h.
+    const pi = S.topBy === 'pi';
+    const v = n ? (pi ? n[11] : n[6]) : null;
     if (k) box.appendChild(document.createTextNode('\n'));
-    box.appendChild(document.createTextNode(`${p.ticker.padEnd(6)} ${(100 * p.weight).toFixed(1).padStart(5)}%  `));
+    box.appendChild(document.createTextNode(`${p.ticker.padEnd(6)} ${(100 * p.weight).toFixed(1).padStart(5)}%  ${pi ? 'π·N ' : 'h '}`));
     const el = document.createElement('span');
-    if (h !== null) el.className = h >= 0 ? 'pos' : 'neg';
-    el.textContent = h === null ? 'n/a' : h.toFixed(3);
+    if (v !== null && v !== undefined) el.className = v >= (pi ? 1 : 0) ? 'pos' : 'neg';
+    el.textContent = fmt(v, 3);
     box.appendChild(el);
   });
 }
@@ -226,7 +232,7 @@ function updateShockEnabled() {
   $('shockHint').hidden = ok;
 }
 
-// ---- Heartbeat table: hottest 10 by exact (unsmoothed) model h ----
+// ---- Heartbeat table: top 10 by exact MarketRank π (default) or exact hotness h ----
 const SVGNS = 'http://www.w3.org/2000/svg';
 function sparkline(series) {
   const W = 72, H = 18, pad = 2;
@@ -251,34 +257,51 @@ function sparkline(series) {
 
 function cell(cls, text) { const d = document.createElement('span'); d.className = cls; d.textContent = text; return d; }
 
+// The selected metric of a top row: π·N (`mr`) or h. The sparkline and the pulse animation follow it.
+function topValue(r) { return S.topBy === 'pi' ? r.mr : r.h; }
+
 function renderTop(rows) {
   const box = $('topRows');
   const els = rows.map((r) => {
     const row = document.createElement('div');
     row.className = 'toprow' + (S.highlight === r.i ? ' sel' : '');
     const mv = r.prev_rank === null ? ['new', 'new'] : r.prev_rank > r.rank ? ['▲', 'up'] : r.prev_rank < r.rank ? ['▼', 'down'] : ['•', 'same'];
-    row.title = r.prev_rank === null ? 'new in the ranking' : `previous rank ${r.prev_rank}`;
+    row.title = `${r.prev_rank === null ? 'new in the ranking' : `previous rank ${r.prev_rank}`} · MarketRank π·N ${fmt(r.mr, 4)} · heartbeat Δlog π ${fmtSigned(r.pulse, 5)} · h ${fmt(r.h, 4)}`;
+    const v = topValue(r);
+    const pl = r.pulse === null || r.pulse === undefined ? 'same' : r.pulse > 0 ? 'up' : r.pulse < 0 ? 'down' : 'same';
     row.append(cell('rk', String(r.rank)), cell(`mv ${mv[1]}`, mv[0]), cell('tk', r.ticker), cell('sec', r.sector),
-      cell('hv', r.h === null ? 'n/a' : r.h.toFixed(3)), sparkline(r.series));
+      cell('hv', fmt(v, 3)), cell(`pl ${pl}`, fmtSigned(r.pulse, 4)), sparkline(r.series));
     row.addEventListener('click', () => {
       S.highlight = S.highlight === r.i ? null : r.i;
       box.querySelectorAll('.toprow').forEach((el) => el.classList.remove('sel'));
       if (S.highlight === r.i) row.classList.add('sel');
       render();
     });
-    if (S.topPrev.has(r.i) && S.topPrev.get(r.i) !== r.h) row.classList.add('beat');
+    if (S.topPrev.has(r.i) && S.topPrev.get(r.i) !== v) row.classList.add('beat');
     return row;
   });
   box.replaceChildren(...els);
-  S.topPrev = new Map(rows.map((r) => [r.i, r.h]));
+  S.topPrev = new Map(rows.map((r) => [r.i, topValue(r)]));
 }
 
 // Refreshes the table for frame t; stale responses (superseded by a newer frame) are dropped.
 async function loadTop(t) {
   const seq = ++S.topSeq;
-  const r = await getJSON(`/api/top?n=10&bars=30&t=${t}`);
+  const by = S.topBy === 'pi' ? 'pi' : 'h';
+  const r = await getJSON(`/api/top?n=10&bars=30&by=${by}&t=${t}`);
   if (seq !== S.topSeq) return;
   renderTop(r.rows);
+}
+
+function setTopBy(by) {
+  if (by === S.topBy) return;
+  S.topBy = by; S.topPrev = new Map();  // no pulse across a metric switch
+  $('topTitle').textContent = by === 'pi' ? 'MarketRank top 10 · π (exact)' : 'Hottest 10 · model h (unsmoothed)';
+  [['byPi', 'pi'], ['byH', 'h']].forEach(([id, b]) => { $(id).classList.toggle('on', by === b); $(id).setAttribute('aria-pressed', String(by === b)); });
+  if (S.frame) {
+    fillHoldings(S.frame);
+    loadTop(S.frame.t).catch((e) => { $('topRows').textContent = String(e.message || e); });
+  }
 }
 
 function clearShock() {
@@ -351,10 +374,11 @@ async function applyShock() {
 // Parameter controls follow the server's current parameters: on the first status and after each Apply.
 // The preset and hotness selects are sent only when the user changed them, so CLI model flags survive.
 function initControls(st) {
-  S.controlsInit = true; S.presetDirty = false; S.hrefDirty = false;
+  S.controlsInit = true; S.presetDirty = false; S.hrefDirty = false; S.valueDirty = false;
   $('preset').value = st.preset === 'custom' ? 'custom' : st.preset;
   $('href').value = st.h_ref;
   $('height').value = st.height; $('territory').value = st.territory;
+  if (st.value) $('value').value = st.value;
   $('idwPower').value = st.idw_power; $('idwRadius').value = st.idw_radius; $('subdiv').value = st.subdivision;
   $('smooth').value = st.smooth; $('smoothLabel').textContent = $('smooth').value;
 }
@@ -417,10 +441,15 @@ function wire() {
   $('smooth').addEventListener('input', () => { $('smoothLabel').textContent = $('smooth').value; });
   $('preset').addEventListener('change', () => { S.presetDirty = $('preset').value !== 'custom'; });
   $('href').addEventListener('change', () => { S.hrefDirty = true; });
+  $('value').addEventListener('change', () => { S.valueDirty = true; });
+  $('byPi').addEventListener('click', () => setTopBy('pi'));
+  $('byH').addEventListener('click', () => setTopBy('h'));
   $('apply').addEventListener('click', async () => {
     const body = { height: $('height').value, idw_power: Number($('idwPower').value), idw_radius: Number($('idwRadius').value), subdivision: Number($('subdiv').value), smooth: Number($('smooth').value), territory: $('territory').value };
     if (S.presetDirty) body.preset = $('preset').value;
     if (S.hrefDirty && $('href').value) body.h_ref = $('href').value;
+    // Sent only when changed: otherwise a preset brings its own value (π under marketrank).
+    if (S.valueDirty) body.value = $('value').value;
     try {
       await getJSON('/api/params', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       S.controlsInit = false;  // re-read the controls from the next status

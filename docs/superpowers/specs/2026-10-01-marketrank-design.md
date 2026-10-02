@@ -107,7 +107,7 @@ For each bar *t* and stock *i* with return `r_i = C/C⁻ − 1`, volume V and VW
 - **Accumulators:** for each of slow (half-life 20 bars), fast (3) and long-run (120, only when `h_ref = longrun`), per-row sorted edge lists plus decayed `out`/`in` vectors: `F ← 2^(−1/halflife)·F + f`. Each row is capped at 256 edges by weight.
 - **(B) Lift** (`lift`, default `excess`): relative to the gravity baseline `E_ij = out_i · in_j / total`, the edge weight is `w_ij = max(0, F_ij − E_ij)` (`excess`), `max(0, F_ij/E_ij − 1)` (`ratio`), or `F_ij` (`off`). This keeps only the structure beyond "big flows meet big flows".
 - **(C) Two-sided pruning:** keep the union of each row's top `k_out` = 20 edges and each column's top `k_in` = 10 edges, by w. Ties go to the lower index.
-- **(E) Retention** (`retention` ρ_r, default 1.0): row i gives itself the mass `s_i = ρ_r·in_i / (ρ_r·in_i + out_i)` and splits `1 − s_i` over its kept edges in proportion to w. Net buyers therefore hold mass and net sellers pass it on, which makes valleys mean "draining". A row with no kept edges is a self-loop of 1. Inactive nodes (no data in the panel) get no edges in or out.
+- **(E) Retention** (`retention` ρ_r, default 1.0): row i gives itself the mass `s_i = ρ_r·in_i / (ρ_r·in_i + out_i)` and splits `1 − s_i` over its kept edges in proportion to w. Net buyers therefore hold mass and net sellers pass it on, which makes valleys mean "draining". A row with no kept edges is a self-loop of 1 (except under `market_rank()`, where it is a dangling node; see the MarketRank preset below). Inactive nodes (no data in the panel) get no edges in or out.
 - **Damping / teleport:** `P' = α·P + (1−α)·(1/N_active)·𝟙` (α = 0.85), solved on the active sub-index.
 - **Steady state:** power iteration `π ← π·P'`, warm-started, until ‖Δπ‖₁ < 1e-10 or 1000 iterations.
 - **(D) Hotness reference** (`h_ref`, default `uniform`): `h_i = π_i / π_ref,i − 1` with
@@ -117,6 +117,12 @@ For each bar *t* and stock *i* with return `r_i = C/C⁻ − 1`, volume V and VW
   - `netflow`: h = (in − out)/(in + out + κ), κ = the median total flow across active nodes. Bounded in (−1, 1); low-flow names shrink toward 0.
 - The defaults are confirmed or changed using the evaluation harness (§5.2).
 
+**MarketRank preset and score.** `CoreParams::market_rank()` (`--marketrank`) is the concept model and the default of the CLI and of `--serve` (`CoreParams{}` is unchanged). It solves the MarketRank Condition `r_i = (1−p)·Σ_{j∈B(i)} r_j·T_{j→i}/Σ_k T_{j→k} + p/N`, p = 0.15, on the dollar flux T: dollar pressure, `lift = off`, `retention = 0`, α = 0.85, `h_ref = uniform`, `max_volume_ratio = 0`, no vol scaling, `halflife_slow = 1e9` bars (cumulative over the data window), `halflife_fast = 3` (the forecast's fast chain), the default pruning `k_out = 20`, `k_in = 10` (dense is infeasible at 10K), and the default liquidity floor and staleness. With retention 0 no active row has a diagonal entry. An active row with no kept edge is a dangling node (`TransitionParams::dangling = Teleport`): its row is empty and the solver gives its mass to every active node uniformly, `π' = α·(πP + d/N) + (1−α)/N` with d the mass on dangling rows (the other presets keep `SelfLoop`, a self-loop of 1). The floor share (§5.2) counts this uniform share as part of the floor.
+- **Score:** `MR_i = π_i·N_active`, 1 = average. Under the uniform reference h = MR − 1, so h ranks identically.
+- **Heartbeat:** `pulse_i = log π_i(t) − log π_i(t−1)`, against the previous bar's frame of the same pipeline run (`Frame::pulse`); null on the first frame and for a node that is inactive at t or was at t−1.
+- **Worked example (golden test):** T: A→B 500K, A→C 100K, B→A 200K, B→C 1M, C→A 750K, C→B 400K. After 7 damped iterations from the uniform start B 0.35980, C 0.34770, A 0.29248 (±5e-5); converged B 0.36016, C 0.34665, A 0.29319 (±1e-5), through the solver and through a FluxAccumulator and `build_transition` under `market_rank()`.
+- **Rank output:** the CLI table is sorted by π (`--rank-by pi|hotness`, default pi): rank, ticker, sector, MarketRank (π·N), heartbeat (Δlog π), hotness h, score+1, in TOP MARKETRANK / BOTTOM MARKETRANK (HILLS / VALLEYS by hotness).
+
 ### 5.1 Forecast (no fitted model)
 π_t is stationary for P'_slow by construction, so the forecast contrasts two time scales:
 - Propagation: `π^(k) = π_t · P'_fast^k` for k ∈ {1, 4, 8} bars, where P'_fast is built from the fast accumulator with the same B/C/E settings.
@@ -124,8 +130,8 @@ For each bar *t* and stock *i* with return `r_i = C/C⁻ − 1`, volume V and VW
 - **Forecast score:** `s_i = N_active·(π^(k)_i − π_t,i) + β·N_active·d_i` (β = 0.5).
 
 ### 5.2 Evaluation harness
-`marketrank --mode replay --eval [--eval-bars B]` runs the pipeline over the cached history (the last B bars, default 120, after a warm-up) for this grid of 15 configurations: legacy; legacy + each of A (relative), B (excess lift), C (k_in = 10), D (size and longrun) and E (retention) on its own; the defaults (all on); defaults with relative pressure; defaults + longrun; defaults + netflow; money-flow; money-flow + netflow; defaults + volscale; and money-flow + volscale. Per configuration it prints:
-- **floor share:** the fraction of active nodes whose π is within 1e-6 relative of the teleport floor (1−α)/N_active
+`marketrank --mode replay --eval [--eval-bars B]` runs the pipeline over the cached history (the last B bars, default 120, after a warm-up) for this grid of 16 configurations: legacy; legacy + each of A (relative), B (excess lift), C (k_in = 10), D (size and longrun) and E (retention) on its own; the defaults (all on); defaults with relative pressure; defaults + longrun; defaults + netflow; money-flow; money-flow + netflow; defaults + volscale; money-flow + volscale; and marketrank. Per configuration it prints:
+- **floor share:** the fraction of active nodes whose π is within 1e-6 relative of the teleport floor (1−α)/N_active (plus α·d/N_active, d = π mass on dangling rows, under `market_rank()`)
 - **Gini:** the Gini coefficient of π
 - **sector coherence:** the share of off-diagonal raw edge weight between nodes of the same known sector
 - **structure gain:** 1 − Spearman(π, inflow share). Near 0 means the chain has collapsed to plain influx (for example a dense, unpruned graph); higher means the pruned multi-hop structure is shaping π.
@@ -276,7 +282,7 @@ data/       universe/, lake/ (ignored), portfolio.json
 Changing a parameter re-runs only the affected stage and those after it. Replay speed is clamped so that the frame interval ≥ max(user Δt, 1.5 × measured compute time), so larger graphs automatically slow playback rather than queuing frames.
 
 ### 9.2b Serve mode (milestone 2)
-`marketrank --serve [--port 8765] [--web web] [--mode replay|alpaca|synthetic] [model flags]`. The default preset is **money-flow** unless `--legacy`, `--money-flow` or explicit model flags change it.
+`marketrank --serve [--port 8765] [--web web] [--mode replay|alpaca|synthetic] [model flags]`. The default preset is **marketrank** unless `--legacy`, `--money-flow` or explicit model flags change it; under it the landscape value is π (`LandscapeParams::value = Pi`).
 - A background thread computes core frames and landscape frames for the data window and keeps up to 300 landscapes in memory for the scrubber.
 - Before the last bar it keeps a copy of the pipeline, so shocks at the latest bar cost about two frames.
 - The first `warmup_bars` = 5 bars feed the model only (§6.1).
@@ -287,17 +293,17 @@ Changing a parameter re-runs only the affected stage and those after it. Replay 
 ### 9.3 API
 | Endpoint | Purpose |
 |---|---|
-| `GET /api/frame` (or `?t=`) | JSON (milestone 2). `nodes` are arrays `[i, ticker, sector, cell, fx, fy, h, hdisp, pi, score, group]`: `group` is the persistent flux-community label (stable across re-clusters; the sector id in sector mode; −1 for the loose pool). Also `arcs`, `portfolio`, `lattice`, `raster` meta, `compute_ms`, and `communities: {count, modularity, loose, cluster_ms, reclustered}` (count excludes the loose pool; loose is its stock count; reclustered tells whether this frame re-clustered). `?t=` must be a whole integer, otherwise 400 |
-| `GET /api/top?n=&bars=&t=` | the hottest n stocks by exact model h with their last `bars` h values (the UI heartbeat table) |
+| `GET /api/frame` (or `?t=`) | JSON (milestone 2). `nodes` are arrays `[i, ticker, sector, cell, fx, fy, h, hdisp, pi, score, group, mr, pulse]` (`mr` = π·N_active, `pulse` = Δlog π, null on the first frame; `hdisp` is log(π·N) under `value = pi`, else the display hotness): `group` is the persistent flux-community label (stable across re-clusters; the sector id in sector mode; −1 for the loose pool). Also `arcs`, `portfolio`, `lattice`, `raster` meta, `compute_ms`, and `communities: {count, modularity, loose, cluster_ms, reclustered}` (count excludes the loose pool; loose is its stock count; reclustered tells whether this frame re-clustered). `?t=` must be a whole integer, otherwise 400 |
+| `GET /api/top?n=&bars=&t=&by=` | the top n stocks by exact π (`by=pi`, default) or exact h (`by=h`; anything else 400), with `mr` (π·N), `pulse` (Δlog π) and their last `bars` values of the metric (`series`: π·N or h; the UI heartbeat table) |
 | `GET /api/frame/grid` (or `?t=`) | the frame's raster as raw little-endian Float32, w × h row-major, no header; its metadata (`w`, `h`, `zmin`, `zmax`) is the `raster` object of `/api/frame` |
 | `GET /api/events` | SSE: `status` in milestone 2 (`frame`, `proposal`, `error` planned); at most 8 streams, a 9th gets 503 |
-| `GET/POST /api/params` | all parameters; POST of strategy parameters creates a new version. Milestone 2: with `"preset"` (`money-flow`, `legacy`, `defaults`) the model parameters start from that preset, without it from the current ones (so CLI flags such as `--lambda` survive), and only the given fields change. Landscape parameters: `height`, `idw_power`, `idw_radius` (0–16), `subdivision`, `smooth` (Gaussian σ in cells, 0–4) and `territory` (`flux` or `sector`, otherwise 400) |
+| `GET/POST /api/params` | all parameters; POST of strategy parameters creates a new version. Milestone 2: with `"preset"` (`marketrank`, `money-flow`, `legacy`, `defaults`) the model parameters start from that preset (and the landscape `value` becomes `pi` under `marketrank`, `hotness` otherwise, unless given), without it from the current ones (so CLI flags such as `--lambda` survive), and only the given fields change. Landscape parameters: `value` (`pi` or `hotness`; it orders the territories, so a change re-runs the placement), `height` (applies to hotness), `idw_power`, `idw_radius` (0–16), `subdivision`, `smooth` (Gaussian σ in cells, 0–4) and `territory` (`flux` or `sector`, otherwise 400) |
 | `GET/PUT /api/portfolio` | initial portfolio definition |
 | `GET /api/books`, `GET /api/books/{id}/nav` | books, metrics, NAV curves |
 | `GET /api/proposals?book=` | proposal history with fills |
 | `GET /api/strategies` | version tree |
 | `POST /api/replay` | play / pause / seek / speed |
-| `GET /api/status`, `GET /api/times` | computation progress and parameters: `preset` (`money-flow`, `legacy` or `custom`), `h_ref`, `height`, `smooth`, `idw_power`, `idw_radius`, `subdivision`, `territory`, which the UI uses to initialize its controls; frame times (milestone 2) |
+| `GET /api/status`, `GET /api/times` | computation progress and parameters: `preset` (`marketrank`, `money-flow`, `legacy` or `custom`), `h_ref`, `value`, `height`, `smooth`, `idw_power`, `idw_radius`, `subdivision`, `territory`, which the UI uses to initialize its controls; frame times (milestone 2) |
 | `POST /api/shock`, `GET /api/shock/grid?id=` | counterfactual shocks at the latest bar (§5.3): deltas plus a `shock_id`; receivers and losers exclude the shocked stocks. The grid route serves that shock's Δh raster (raw Float32 as above) from an LRU of the last 8 shocks; an unknown or expired id is 404, a missing one 400, and a parameter change clears them (milestone 2) |
 
 ### 9.4 UI

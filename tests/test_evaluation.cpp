@@ -49,7 +49,8 @@ TEST_CASE("floor share and sector coherence on a hand-built frame") {
 
 TEST_CASE("evaluation grid covers legacy, each switch and the defaults") {
   auto g = evaluation_grid();
-  REQUIRE(g.size() == 15);
+  REQUIRE(g.size() == 16);
+  CHECK(g[15].name == "marketrank");
   CHECK(g[10].name == "defaults+netflow");
   CHECK(g[10].params.h_ref == HotRef::NetFlow);
   CHECK(g[11].name == "money-flow");

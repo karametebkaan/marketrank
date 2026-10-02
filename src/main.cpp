@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <iostream>
@@ -169,9 +170,13 @@ fs::path ensure_snapshot(const mr::CliArgs& args, const mr::AlpacaConfig& cfg,
   return path;
 }
 
-void print_row(std::size_t rank, const mr::Security& s, double h, double pi, double score) {
-  std::printf("%5zu  %-7s %-24.24s %+10.4f  %.7f  %+9.4f\n", rank, s.ticker.c_str(),
-              s.sector.c_str(), h, pi, score);
+// rank, ticker, sector, MarketRank (pi*N), heartbeat (delta log pi), hotness h, score+k.
+void print_row(std::size_t rank, const mr::Security& s, double mr_score, double pulse, double h, double score) {
+  char beat[16];
+  if (std::isfinite(pulse)) std::snprintf(beat, sizeof beat, "%+10.5f", pulse);
+  else std::snprintf(beat, sizeof beat, "%10s", "n/a");
+  std::printf("%5zu  %-7s %-24.24s %10.4f %s %+10.4f %+9.4f\n", rank, s.ticker.c_str(), s.sector.c_str(), mr_score,
+              beat, h, score);
 }
 
 int run_eval(const mr::CliArgs& args, const mr::Panel& panel, const mr::Universe& universe) {
@@ -260,36 +265,43 @@ int run_rank(const mr::CliArgs& args, const mr::Panel& panel, const mr::Universe
               f.P.col.size(), f.P_fast.col.size(), 100.0 * mr::floor_share(f, args.params.alpha));
 
   const auto& nodes = universe.nodes();
-  std::vector<std::size_t> hills;
+  std::vector<std::size_t> order;
   for (std::size_t i = 0; i < panel.N(); ++i)
-    if (f.active[i]) hills.push_back(i);
-  const std::size_t inactive = panel.N() - hills.size();
+    if (f.active[i]) order.push_back(i);
+  const std::size_t n_active = order.size();
+  const std::size_t inactive = panel.N() - n_active;
+  const bool by_pi = args.rank_by == mr::RankBy::Pi;
+  // Primary metric: MarketRank pi (default) or hotness h; descending, ties by ticker.
+  auto key = [&](std::size_t i) { return by_pi ? f.pi[i] : f.h[i]; };
   auto by_ticker = [&](std::size_t a, std::size_t b) { return nodes[a].ticker < nodes[b].ticker; };
-  std::sort(hills.begin(), hills.end(), [&](auto a, auto b) {
-    return f.h[a] > f.h[b] || (f.h[a] == f.h[b] && by_ticker(a, b));
+  std::sort(order.begin(), order.end(), [&](auto a, auto b) {
+    return key(a) > key(b) || (key(a) == key(b) && by_ticker(a, b));
   });
-  std::vector<std::size_t> valleys(hills.rbegin(), hills.rend());
-  std::stable_sort(valleys.begin(), valleys.end(), [&](auto a, auto b) { return f.h[a] < f.h[b]; });
+  std::vector<std::size_t> bottom(order.rbegin(), order.rend());
+  std::stable_sort(bottom.begin(), bottom.end(), [&](auto a, auto b) { return key(a) < key(b); });
   const auto& score = f.forecasts.front().score;
-  const std::size_t top = std::min(args.top, hills.size());
+  const std::size_t top = std::min(args.top, order.size());
   if (inactive > 0) std::printf("%zu inactive (stale or below liquidity floor)\n\n", inactive);
-  std::printf("HILLS (money accumulating)            hotness         pi     score+%d\n",
-              f.forecasts.front().k);
-  for (std::size_t r = 0; r < top; ++r)
-    print_row(r + 1, nodes[hills[r]], f.h[hills[r]], f.pi[hills[r]], score[hills[r]]);
-  std::printf("\nVALLEYS (money draining)\n");
-  for (std::size_t r = 0; r < top; ++r) {
-    const std::size_t i = valleys[r];
-    print_row(valleys.size() - r, nodes[i], f.h[i], f.pi[i], score[i]);
-  }
+  std::printf("MarketRank = pi*N (1 = average, N = %zu active); heartbeat = delta log pi vs the previous bar\n\n",
+              n_active);
+  std::printf("%s\n", by_pi ? "TOP MARKETRANK" : "HILLS (money accumulating)");
+  std::printf("%5s  %-7s %-24s %10s %10s %10s %9s\n", "rank", "ticker", "sector", "MarketRank", "heartbeat", "hotness",
+              ("score+" + std::to_string(f.forecasts.front().k)).c_str());
+  auto row = [&](std::size_t rank, std::size_t i) {
+    print_row(rank, nodes[i], mr::market_rank_score(f.pi[i], n_active), f.pulse[i], f.h[i], score[i]);
+  };
+  for (std::size_t r = 0; r < top; ++r) row(r + 1, order[r]);
+  std::printf("\n%s\n", by_pi ? "BOTTOM MARKETRANK" : "VALLEYS (money draining)");
+  for (std::size_t r = 0; r < top; ++r) row(bottom.size() - r, bottom[r]);
   if (portfolio) {
     std::printf("\nPORTFOLIO HOLDINGS\n");
     for (const auto& hld : portfolio->holdings) {
       if (auto i = universe.index_of(hld.ticker); i && !f.active[*i]) {
         std::printf("  %-6s %5.1f%%  (no data)\n", hld.ticker.c_str(), hld.weight * 100);
       } else if (i) {
-        std::printf("  %-6s %5.1f%%  hotness %+9.4f  score+%d %+9.4f\n", hld.ticker.c_str(),
-                    hld.weight * 100, f.h[*i], f.forecasts.front().k, score[*i]);
+        std::printf("  %-6s %5.1f%%  MarketRank %8.4f  hotness %+9.4f  score+%d %+9.4f\n", hld.ticker.c_str(),
+                    hld.weight * 100, mr::market_rank_score(f.pi[*i], n_active), f.h[*i], f.forecasts.front().k,
+                    score[*i]);
       } else {
         std::printf("  %-6s %5.1f%%  (fund: look-through hotness arrives in milestone 3)\n",
                     hld.ticker.c_str(), hld.weight * 100);
@@ -377,7 +389,10 @@ int main(int argc, char** argv) {
         std::cerr << "warning: --host " << args.host
                   << " is not a loopback address: the server (which has no authentication) is reachable from the "
                      "network\n";
-      mr::FrameStore frames(std::move(panel), universe.nodes(), args.params, mr::LandscapeParams{});
+      mr::LandscapeParams land;
+      // Under the marketrank preset the landscape height is the MarketRank score log(pi*N).
+      land.value = args.preset == "marketrank" ? mr::LandscapeValue::Pi : mr::LandscapeValue::Hotness;
+      mr::FrameStore frames(std::move(panel), universe.nodes(), args.params, land);
       frames.start();
       mr::FluxServer server(frames, portfolio, args.mode + " " + std::string(mr::to_string(args.tf)));
       if (!fs::is_directory(args.web))

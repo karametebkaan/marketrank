@@ -47,13 +47,15 @@ std::pair<std::string, double> to_shock(const std::string& flag, const std::stri
 
 CliArgs parse_cli(const std::vector<std::string>& args) {
   CliArgs a;
-  const bool legacy = std::find(args.begin(), args.end(), "--legacy") != args.end();
-  const bool money = std::find(args.begin(), args.end(), "--money-flow") != args.end();
-  if (legacy && money) throw std::invalid_argument("--legacy and --money-flow are mutually exclusive");
-  if (legacy) a.params = CoreParams::legacy();
-  if (money) a.params = CoreParams::money_flow();
-  const bool serve = std::find(args.begin(), args.end(), "--serve") != args.end();
-  if (serve && !legacy) a.params = CoreParams::money_flow();
+  // Presets apply first, regardless of position, so later model flags override them. The default (rank and
+  // --serve alike) is the MarketRank concept model.
+  auto has = [&](const char* f) { return std::find(args.begin(), args.end(), f) != args.end(); };
+  const bool legacy = has("--legacy"), money = has("--money-flow"), market = has("--marketrank");
+  if (int(legacy) + int(money) + int(market) > 1)
+    throw std::invalid_argument("--marketrank, --money-flow and --legacy are mutually exclusive");
+  if (legacy) a.params = CoreParams::legacy(), a.preset = "legacy";
+  if (money) a.params = CoreParams::money_flow(), a.preset = "money-flow";
+  if (market) a.params = CoreParams::market_rank(), a.preset = "marketrank";
   for (std::size_t i = 0; i < args.size(); ++i) {
     const std::string& flag = args[i];
     auto value = [&]() -> std::string {
@@ -89,7 +91,13 @@ CliArgs parse_cli(const std::vector<std::string>& args) {
       a.port = static_cast<int>(p);
     } else if (flag == "--host") a.host = value();
     else if (flag == "--web") a.web = value();
-    else if (flag == "--legacy" || flag == "--money-flow") continue;
+    else if (flag == "--legacy" || flag == "--money-flow" || flag == "--marketrank") continue;
+    else if (flag == "--rank-by") {
+      const std::string v = value();
+      if (v == "pi") a.rank_by = RankBy::Pi;
+      else if (v == "hotness") a.rank_by = RankBy::Hotness;
+      else throw std::invalid_argument("--rank-by must be pi or hotness");
+    }
     else if (flag == "--pressure") a.params.pressure = parse_pressure_mode(value());
     else if (flag == "--lift") a.params.transition.lift = parse_lift_mode(value());
     else if (flag == "--k-out") a.params.transition.k_out = to_size(flag, value());
@@ -127,12 +135,14 @@ std::string cli_usage() {
          "                 [--lookback-days N] [--top N] [--data DIR] [--threads N]\n"
          "                 [--universe auto|sp500|snapshot] [--universe-size N] [--refresh-universe]\n"
          "                 [--eval] [--eval-bars N]\n"
-         "                 [--legacy | --money-flow] [--pressure dollar|sqrt|relative] [--lift off|excess|ratio]\n"
+         "                 [--marketrank | --money-flow | --legacy]   (model preset; default --marketrank, for --serve too)\n"
+         "                 [--rank-by pi|hotness]   (primary table: MarketRank pi*N (default) or hotness h)\n"
+         "                 [--pressure dollar|sqrt|relative] [--lift off|excess|ratio]\n"
          "                 [--k-out N] [--k-in N] [--retention X] [--h-ref uniform|size|longrun|netflow]\n"
          "                 [--lambda X] [--min-dollar-volume X] [--max-volume-ratio X]\n"
          "                 [--vol-scale] [--vol-window N]\n"
          "                 [--shock TICKER:SIZE ...]   (extra SIZE% return at normal volume on the last bar)\n"
-         "                 [--serve [--port N (8765)] [--host H] [--web DIR]]   (REST + SSE server; money-flow preset unless --legacy)\n"
+         "                 [--serve [--port N (8765)] [--host H] [--web DIR]]   (REST + SSE server)\n"
          "                 [--migrate-cache [DIR]] [--maintain]\n"
          "                 [--sync-sectors]   (fetch SEC EDGAR SIC sectors for the universe snapshot into\n"
          "                                   data/sectors/sec_sic.csv; needs SEC_USER_AGENT in .env, no Alpaca keys;\n"
@@ -148,7 +158,8 @@ std::string describe(const CoreParams& p) {
     << " retention=" << p.transition.retention << " h_ref=" << to_string(p.h_ref)
     << " lambda=" << p.flux.lambda << " alpha=" << p.alpha
     << " min_dv=" << p.min_dollar_volume << " max_vr=" << p.max_volume_ratio
-    << " vol_scale=" << (p.vol_scale ? 1 : 0);
+    << " vol_scale=" << (p.vol_scale ? 1 : 0) << " hl_slow=" << p.halflife_slow
+    << " hl_fast=" << p.halflife_fast;
   return s.str();
 }
 

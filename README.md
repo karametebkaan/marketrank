@@ -3,8 +3,43 @@
 MarketRank ranks stocks by the stationary distribution of a Markov chain over stock-to-stock money flows, à la PageRank; Fluxscape is its 3D landscape view.
 
 Models the market as a flux graph (money leaving net-sold stocks for net-bought ones),
-solves its Markov steady state like PageRank, and ranks the hottest and coldest stocks.
+solves its Markov steady state like PageRank, and ranks stocks by their MarketRank score π·N (and by hotness).
 Design: `docs/superpowers/specs/2026-10-01-marketrank-design.md`.
+
+## MarketRank model
+
+The default model (`CoreParams::market_rank()`, `--marketrank`) ranks stocks by the stationary distribution π of a
+damped Markov chain over the paired stock-to-stock dollar flows T, using the MarketRank Condition (MRC):
+
+```
+r_i = (1 − p) · Σ_{j ∈ B(i)} P_i(r_j) + p / N,   P_i(r_j) = r_j · T_{j→i} / Σ_k T_{j→k},   p = 0.15
+```
+
+B(i) is the set of stocks sending money to i, so each stock passes its rank on in proportion to the out-share
+of its dollar flow, and p/N is the teleport (α = 1 − p = 0.85). T is the dollar flux accumulated over the whole
+data window (slow half-life 1e9 bars), with no lift, no self-retention and the default two-sided pruning
+(top 20 out-edges per row, top 10 in-edges per column). A stock that passes nothing on (an empty row) is a
+dangling node: its rank teleports uniformly, as in PageRank.
+
+The **MarketRank score** is π_i·N_active (1 = average) and the **heartbeat** is its pulse,
+Δlog π_i between the current bar and the previous one.
+
+Worked example (three stocks, T in dollars):
+
+| From → To | A | B | C |
+|---|---|---|---|
+| A | – | 500K | 100K |
+| B | 200K | – | 1M |
+| C | 750K | 400K | – |
+
+Row-normalizing T gives P; the damped power iteration from the uniform start gives, after 7 iterations,
+B 0.35980, C 0.34770, A 0.29248, and converges to B 0.36016, C 0.34665, A 0.29319. B ranks first: it
+receives the most money relative to what its senders pass on. The test suite checks both results through the
+solver and through the pipeline's transition builder.
+
+`./build/marketrank --mode replay` prints the TOP and BOTTOM MARKETRANK tables (rank, ticker, sector,
+MarketRank π·N, heartbeat Δlog π, hotness h, score+1); `--rank-by hotness` sorts by h instead (HILLS and
+VALLEYS). `--money-flow` and `--legacy` select the earlier presets.
 
 ## Build and test
 
@@ -22,6 +57,7 @@ cp .env.example .env                                        # add Alpaca keys
 ./build/marketrank --mode alpaca --universe-size 10000       # build/reuse 10K liquidity snapshot, sync, solve
 ./build/marketrank --mode replay                             # cached data, latest snapshot (or --universe sp500)
 ./build/marketrank --mode replay --eval --eval-bars 120      # compare A-E settings (floor, Gini, coherence, IC)
+./build/marketrank --mode replay --rank-by hotness --money-flow  # size-relative hotness, the earlier serve default
 ./build/marketrank --mode replay --legacy                    # milestone-1 behaviour
 ./build/marketrank --mode replay --shock NVDA:-10 --top 8       # counterfactual: add an extra -10% return to NVDA at the last bar, see who absorbs it
 ./build/marketrank --help                                    # all switches (--pressure, --lift, --k-in, ...)
@@ -49,18 +85,18 @@ not observed order flow.
 ## Landscape UI (Fluxscape)
 
 ```bash
-./build/marketrank --serve --mode replay            # http://127.0.0.1:8765 (money-flow preset)
+./build/marketrank --serve --mode replay            # http://127.0.0.1:8765 (marketrank preset)
 ./build/marketrank --serve --mode synthetic --port 9000
 scripts/ui_smoke.sh                                # headless-Chrome smoke test + screenshot
 ```
 
-The page shows a triangulated landscape of signed-log hotness. Hills are where money settles relative to size, and valleys are where it drains.
+The page shows a triangulated landscape. Under the marketrank preset its height is the MarketRank score as log(π·N), signed around 0 = average; the "Height: MarketRank π / hotness" select (`"value":"pi"|"hotness"` in `/api/params`) switches to signed-log hotness, where hills are where money settles relative to the reference and valleys are where it drains. The same value orders the stocks inside each territory and decides mountain or crater, so changing it re-places the stocks.
 
 **Placement.** Territories are flux communities by default: Louvain on the model's own flux graph finds stocks that trade money among themselves, and spectral bisection of the community graph orders the communities so that trading partners sit next to each other along a Hilbert-type curve. Each community owns one contiguous region with area proportional to its stock count, and inside it stocks are ordered by hotness from the centre outward along a spiral, so a community reads as a mountain (inflow) or a crater (outflow). Choose "sectors" in the Territories select (or `"territory":"sector"` in `/api/params`) to use market sectors instead.
 
 **Stability.** Stocks stay put from bar to bar. Inside a territory the cells are taken in spiral order (ring by ring, each ring by angle), so a small change in rank is a small move. On top of that a stock keeps its cell while it stays in the same community, its cell is still inside the territory, and its new place in the spiral is within 15% of the territory (at least 2 slots) of that cell. The clustering is refreshed every 5 bars. Each refresh starts Louvain from the current communities rather than from scratch, and the new communities are matched to the old ones (Jaccard ≥ 0.3, or ≥ 60% of the new community inside an old one), so community labels and their order persist. The first 5 bars only warm up the model. On the real replay data about 85% of stocks keep their cell between refreshes, and about 74% keep their community at a refresh.
 
-**Surface.** The mesh vertices are the lattice points. Each stock's value (`hdisp`, its signed-log hotness) is exact; empty vertices are filled by IDW, and the displayed surface is then Gaussian-smoothed with σ = 1 cell by default (the Smoothing slider; edge windows are renormalized), so a vertex shows a local average rather than the stock's exact value. The shock Δh surface is smoothed the same way. The tooltip and the Hottest-10 table always show the exact values. Each triangle is Gouraud-shaded from its vertex colours, red for inflow and blue for outflow, with relief lighting on top. Changing only the display settings (smoothing, height, IDW, subdivision) redraws the cached frames without recomputing the model.
+**Surface.** The mesh vertices are the lattice points. Each stock's value (`hdisp`: log(π·N), or its signed-log hotness) is exact; empty vertices are filled by IDW, and the displayed surface is then Gaussian-smoothed with σ = 1 cell by default (the Smoothing slider; edge windows are renormalized), so a vertex shows a local average rather than the stock's exact value. The shock Δh surface is smoothed the same way. The tooltip and the top-10 table always show the exact values. Each triangle is Gouraud-shaded from its vertex colours, red for inflow and blue for outflow, with relief lighting on top. Changing only the display settings (smoothing, height, IDW, subdivision) redraws the cached frames without recomputing the model.
 
 **Overlays.** The strongest flux arcs and your portfolio, as green rings, are drawn on top.
 
@@ -69,7 +105,7 @@ The page shows a triangulated landscape of signed-log hotness. Hills are where m
 - choose the territories (flux communities or sectors);
 - set the IDW and height parameters and the display smoothing;
 - set the arc count with the Arcs slider;
-- scrub or play through the last 300 bars (the Hottest-10 table at the top right shows the ten highest model h with their recent history);
+- scrub or play through the last 300 bars (the table at the top right, "MarketRank top 10 · π (exact)", shows the ten highest π·N with their heartbeat and recent history; its π / h toggle switches it, its sparklines and its pulse to hotness);
 - apply a shock on the latest bar (`TICKER`, ±%) to show the Δh landscape of who absorbs the money and who loses it.
 
 ## How it works

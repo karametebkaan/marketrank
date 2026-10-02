@@ -83,5 +83,5 @@ TEST_CASE("serve mode releases the lake: a concurrent replay CLI succeeds") {
   INFO("serve log:\n" << slurp(dir / "serve.log") << "\ncli log:\n" << slurp(dir / "cli.log"));
   REQUIRE(WIFEXITED(rc));
   CHECK(WEXITSTATUS(rc) == 0);
-  CHECK(slurp(dir / "cli.log").find("HILLS") != std::string::npos);
+  CHECK(slurp(dir / "cli.log").find("TOP MARKETRANK") != std::string::npos);
 }

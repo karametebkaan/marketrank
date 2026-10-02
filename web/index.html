@@ -17,11 +17,12 @@
     <label>Follow latest <input id="follow" type="checkbox" checked></label>
     <button id="play">Play</button>
     <h2>Graph</h2>
-    <label>Preset <select id="preset"><option>money-flow</option><option>defaults</option><option>legacy</option><option value="custom">custom (current)</option></select></label>
+    <label>Preset <select id="preset"><option>marketrank</option><option>money-flow</option><option>defaults</option><option>legacy</option><option value="custom">custom (current)</option></select></label>
     <label>Hotness <select id="href"><option value="">preset</option><option>size</option><option>netflow</option><option>uniform</option><option>longrun</option></select></label>
     <h2>Landscape</h2>
     <label>Territories <select id="territory"><option value="flux">flux communities</option><option value="sector">sectors</option></select></label>
-    <label>Height <select id="height"><option>signed-log</option><option>linear</option></select></label>
+    <label>Height: MarketRank π / hotness <select id="value"><option value="pi">MarketRank π</option><option value="hotness">hotness h</option></select></label>
+    <label>Hotness scale <select id="height"><option>signed-log</option><option>linear</option></select></label>
     <label>IDW power <input id="idwPower" type="number" min="0.5" max="6" step="0.5" value="2"></label>
     <label>IDW radius <input id="idwRadius" type="number" min="0" max="10" step="1" value="3"></label>
     <label>Subdivision <input id="subdiv" type="number" min="1" max="8" step="1" value="1"></label>
@@ -43,7 +44,8 @@
   </aside>
   <main id="canvas">
     <section id="top" aria-live="polite">
-      <h3>Hottest 10 · model h (unsmoothed)</h3>
+      <div class="tophead"><h3 id="topTitle">MarketRank top 10 · π (exact)</h3>
+        <span class="toggle" role="group" aria-label="rank by"><button id="byPi" class="on" aria-pressed="true">π</button><button id="byH" aria-pressed="false">h</button></span></div>
       <div id="topRows"></div>
     </section>
   </main>
