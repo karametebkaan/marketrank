@@ -13,17 +13,17 @@ MarketRank shows where money concentrates. The goal is to learn whether followin
 - **Backfill**: download more past data. Today the model has about one year of daily prices. That is too short to tell a real pattern from luck, because in a single year almost any rule can look smart by accident. A backfill fetches 5–10 earlier years from the same data source into our lake. Nothing about the model changes; it just gets a much longer memory.
 - **Walk-forward**: test the way you would actually trade, never peeking at the future.
   1. Stand at a past date and decide the rule using only data up to that day.
-  2. Trade the next month and record the result.
-  3. Step one month forward and repeat, until today.
+  2. Trade the next week and record the result.
+  3. Step one week forward and repeat, until today.
 
   Every result therefore comes from a period the model had never seen.
 
-**How they fit together.** The backfill gives us many years to walk through. The walk-forward then answers one plain question: if we had followed MarketRank's signals month by month, would the portfolio have beaten simply holding the current mix, after trading costs?
+**How they fit together.** The backfill gives us many years to walk through. The walk-forward then answers one plain question: if we had followed MarketRank's signals week by week, would the portfolio have beaten simply holding the current mix, after trading costs?
 
 - **If yes, consistently:** we build the optimizer that moves the portfolio, and paper-track it before anyone trusts it.
 - **If no:** we have learned that cheaply, without risking money, and we look for better flow data, such as ETF flows or 13F.
 
-This is milestone 3. Its spec is `docs/superpowers/specs/2026-10-02-marketrank-m3-design.md`.
+Weekly is the primary test: any edge from flow pressure should show within about a week, and beyond that flows mix with unrelated news. Monthly is kept as a comparison. This is milestone 3. Its spec is `docs/superpowers/specs/2026-10-02-marketrank-m3-design.md`.
 
 Stocks are ranked by their MarketRank score π·N (1 = an average active stock) and, optionally, by hotness.
 Design: `docs/superpowers/specs/2026-10-01-marketrank-design.md`.
