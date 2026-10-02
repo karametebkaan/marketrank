@@ -111,24 +111,37 @@ int main(int argc, char** argv) {
                 f.solve.converged ? "converged" : "NOT converged", f.solve.iterations,
                 f.solve.residual, f.compute_ms, total_ms);
 
-    std::vector<std::size_t> order(panel.N());
-    std::iota(order.begin(), order.end(), 0);
-    std::sort(order.begin(), order.end(), [&](auto a, auto b) { return f.h[a] > f.h[b]; });
+    const auto& nodes = universe.nodes();
+    std::vector<std::size_t> hills;
+    for (std::size_t i = 0; i < panel.N(); ++i)
+      if (f.active[i]) hills.push_back(i);
+    const std::size_t inactive = panel.N() - hills.size();
+    auto by_ticker = [&](std::size_t a, std::size_t b) { return nodes[a].ticker < nodes[b].ticker; };
+    std::sort(hills.begin(), hills.end(), [&](auto a, auto b) {
+      return f.h[a] > f.h[b] || (f.h[a] == f.h[b] && by_ticker(a, b));
+    });
+    std::vector<std::size_t> valleys(hills);
+    std::sort(valleys.begin(), valleys.end(), [&](auto a, auto b) {
+      return f.h[a] < f.h[b] || (f.h[a] == f.h[b] && by_ticker(a, b));
+    });
     const auto& score = f.forecasts.front().score;
-    const std::size_t top = std::min(args.top, order.size());
+    const std::size_t top = std::min(args.top, hills.size());
+    if (inactive > 0) std::printf("%zu inactive (no data)\n\n", inactive);
     std::printf("HILLS (money accumulating)          hotness        pi     score+%d\n",
                 f.forecasts.front().k);
     for (std::size_t r = 0; r < top; ++r)
-      print_row(r + 1, universe.nodes()[order[r]], f.h[order[r]], f.pi[order[r]], score[order[r]]);
+      print_row(r + 1, nodes[hills[r]], f.h[hills[r]], f.pi[hills[r]], score[hills[r]]);
     std::printf("\nVALLEYS (money draining)\n");
     for (std::size_t r = 0; r < top; ++r) {
-      const std::size_t i = order[order.size() - 1 - r];
-      print_row(order.size() - r, universe.nodes()[i], f.h[i], f.pi[i], score[i]);
+      const std::size_t i = valleys[r];
+      print_row(valleys.size() - r, nodes[i], f.h[i], f.pi[i], score[i]);
     }
     if (portfolio) {
       std::printf("\nPORTFOLIO HOLDINGS\n");
       for (const auto& hld : portfolio->holdings) {
-        if (auto i = universe.index_of(hld.ticker)) {
+        if (auto i = universe.index_of(hld.ticker); i && !f.active[*i]) {
+          std::printf("  %-6s %5.1f%%  (no data)\n", hld.ticker.c_str(), hld.weight * 100);
+        } else if (i) {
           std::printf("  %-6s %5.1f%%  hotness %+8.4f  score+%d %+8.4f\n", hld.ticker.c_str(),
                       hld.weight * 100, f.h[*i], f.forecasts.front().k, score[*i]);
         } else {

@@ -20,10 +20,12 @@ struct CoreParams {
 
 struct Frame {
   TimePoint t = 0;
-  std::vector<double> pi, h;
+  std::vector<bool> active;         // size n; false = no data in the whole panel
+  std::vector<double> pi, h;        // inactive: pi = 0, h = NaN
   SolveResult solve;
   std::vector<Forecast> forecasts;  // parallel to CoreParams::horizons
   Csr P;                            // slow (equilibrium) transition matrix
+  Csr P_fast;                       // fast transition matrix
   double compute_ms = 0;
 };
 
@@ -36,7 +38,8 @@ class CorePipeline {
   std::size_t n_;
   CoreParams params_;
   FluxBuilder flux_;
-  std::vector<double> prev_pi_;
+  std::vector<bool> active_;  // computed from the panel on the first step
+  std::vector<double> prev_pi_;  // full size n, 0 for inactive
 };
 
 Frame run_panel_last(const Panel& panel, const CoreParams& params);

@@ -67,3 +67,13 @@ TEST_CASE("top-k ties are broken toward the lower column index") {
   CHECK(P.col[0] == 1);
   CHECK(P.col[1] == 2);
 }
+
+TEST_CASE("inactive nodes get only a self-loop and receive no edges") {
+  std::vector<double> F = {0, 1, 2,  //
+                           1, 0, 1,  //
+                           1, 1, 0};
+  Csr P = build_transition(F, 3, 5, {true, true, false});
+  REQUIRE(P.row_ptr[3] - P.row_ptr[2] == 1);
+  CHECK(P.col[P.row_ptr[2]] == 2);
+  for (std::size_t e = 0; e < P.row_ptr[2]; ++e) CHECK(P.col[e] != 2);
+}

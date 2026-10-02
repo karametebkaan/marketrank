@@ -14,7 +14,9 @@ struct Csr {
   std::vector<double> raw;  // un-normalized pruned flux weight, parallel to val (0 for self-loop)
 };
 
-Csr build_transition(std::span<const double> flux, std::size_t n, std::size_t k);
+// `active` (empty = all active): inactive nodes get no edges in or out, only a self-loop.
+Csr build_transition(std::span<const double> flux, std::size_t n, std::size_t k,
+                     const std::vector<bool>& active = {});
 std::vector<double> left_multiply(const Csr& P, std::span<const double> x);
 
 }  // namespace fx

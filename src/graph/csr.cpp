@@ -5,7 +5,8 @@
 
 namespace fx {
 
-Csr build_transition(std::span<const double> flux, std::size_t n, std::size_t k) {
+Csr build_transition(std::span<const double> flux, std::size_t n, std::size_t k,
+                     const std::vector<bool>& active) {
   Csr P;
   P.n = n;
   P.row_ptr.reserve(n + 1);
@@ -13,7 +14,9 @@ Csr build_transition(std::span<const double> flux, std::size_t n, std::size_t k)
   std::vector<std::pair<double, std::uint32_t>> row;
   for (std::size_t i = 0; i < n; ++i) {
     row.clear();
-    for (std::size_t j = 0; j < n; ++j) {
+    const bool row_active = active.empty() || active[i];
+    for (std::size_t j = 0; j < n && row_active; ++j) {
+      if (!active.empty() && !active[j]) continue;
       const double w = flux[i * n + j];
       if (j != i && w > 0) row.emplace_back(w, static_cast<std::uint32_t>(j));
     }
