@@ -3,6 +3,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <random>
 #include <vector>
 
@@ -130,13 +131,14 @@ TEST_CASE("embedding is deterministic across thread counts") {
   }
   Csr P = make_csr(rows);
   std::vector<bool> active(n, true);
+  const int saved_threads = omp_get_max_threads();
   omp_set_num_threads(1);
   SolveEmbedding e1(n);
   auto a = e1.positions(P, active);
   omp_set_num_threads(8);
   SolveEmbedding e2(n);
   auto b = e2.positions(P, active);
-  omp_set_num_threads(omp_get_max_threads());
+  omp_set_num_threads(saved_threads);
   REQUIRE(a.size() == b.size());
   bool same = true;
   for (std::size_t i = 0; i < a.size(); ++i) same = same && (a[i] == b[i]);
@@ -174,4 +176,44 @@ TEST_CASE("positions are stable on a repeated frame") {
   auto b = e.positions(P, active);
   REQUIRE(a.size() == b.size());
   for (std::size_t i = 0; i < a.size(); ++i) CHECK(std::abs(a[i] - b[i]) < 1e-9);
+}
+
+TEST_CASE("pca2 on rank-1 data puts everything on the first axis") {
+  const std::size_t n = 20, D = 16;
+  std::vector<double> Y(n * D);
+  for (std::size_t i = 0; i < n; ++i)
+    for (std::size_t d = 0; d < D; ++d) Y[i * D + d] = (static_cast<double>(i) - 7.5) * (1.0 + 0.1 * static_cast<double>(d));
+  std::vector<bool> active(n, true);
+  auto xy = pca2(Y, D, active);
+  double ss = 0;
+  for (std::size_t i = 0; i < n; ++i) {
+    CHECK(std::abs(xy[2 * i + 1]) <= 1e-9);
+    ss += xy[2 * i] * xy[2 * i];
+  }
+  CHECK(std::sqrt(ss / static_cast<double>(n)) == doctest::Approx(1.0));
+}
+
+TEST_CASE("non-finite transition values never produce non-finite positions") {
+  Csr P = cluster_csr();
+  P.val[P.row_ptr[2] + 1] = std::numeric_limits<double>::infinity();
+  std::vector<bool> active(16, true);
+  SolveEmbedding e(16);
+  auto a = e.positions(P, active);
+  for (double v : a) CHECK(std::isfinite(v));
+  auto b = e.positions(P, active);
+  for (double v : b) CHECK(std::isfinite(v));
+  Csr Q = cluster_csr();
+  auto c = e.positions(Q, active);
+  for (double v : c) CHECK(std::isfinite(v));
+}
+
+TEST_CASE("the self-loop is dropped and the row renormalized") {
+  Csr P = make_csr({{{0, 0.9}, {1, 0.1}}, {{1, 1.0}}, {{2, 1.0}}});
+  std::vector<bool> active(3, true);
+  EmbeddingParams p;
+  p.steps = 0;
+  auto G = destination_signatures(P, active, p);
+  p.steps = 1;
+  auto Y = destination_signatures(P, active, p);
+  for (std::size_t d = 0; d < static_cast<std::size_t>(p.dims); ++d) CHECK(Y[d] == G[static_cast<std::size_t>(p.dims) + d]);
 }

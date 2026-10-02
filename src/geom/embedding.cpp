@@ -49,6 +49,11 @@ std::vector<double> top_eigenvector(const std::vector<double>& C, std::size_t di
       for (std::size_t c = 0; c < dims; ++c) s += C[r * dims + c] * v[c];
       w[r] = s;
     }
+    if (against) {  // keep v2 orthogonal to v1 against round-off drift
+      double dot = 0;
+      for (std::size_t k = 0; k < dims; ++k) dot += w[k] * (*against)[k];
+      for (std::size_t k = 0; k < dims; ++k) w[k] -= dot * (*against)[k];
+    }
     lambda = normalize(w);
     if (lambda == 0) break;
     v = w;
@@ -90,11 +95,13 @@ std::vector<double> destination_signatures(const Csr& P, const std::vector<bool>
   for (std::size_t i = 0; i < n; ++i) {
     if (!active[i]) continue;
     double s = 0;
+    bool finite = true;
     for (std::size_t e = P.row_ptr[i]; e < P.row_ptr[i + 1]; ++e) {
+      if (!std::isfinite(P.val[e])) finite = false;
       std::uint32_t j = P.col[e];
       if (j != i && active[j]) s += P.val[e];
     }
-    if (s > 0)
+    if (finite && s > 0 && std::isfinite(s))
       inv[i] = 1.0 / s;
     else
       absorbing[i] = 1;
@@ -179,6 +186,9 @@ void align_to(std::vector<double>& xy, const std::vector<double>& prev, const st
   bool any = false;
   for (std::size_t i = 0; i < n; ++i) {
     if (!mask[i]) continue;
+    if (!std::isfinite(xy[2 * i]) || !std::isfinite(xy[2 * i + 1]) || !std::isfinite(prev[2 * i]) ||
+        !std::isfinite(prev[2 * i + 1]))
+      continue;
     any = true;
     M[0][0] += xy[2 * i] * prev[2 * i];
     M[0][1] += xy[2 * i] * prev[2 * i + 1];
@@ -205,6 +215,11 @@ const std::vector<double>& SolveEmbedding::positions(const Csr& P, const std::ve
     std::vector<bool> both(n_, false);
     for (std::size_t i = 0; i < n_; ++i) both[i] = active[i] && prev_active_[i];
     align_to(next, prev_, both);
+    for (std::size_t i = 0; i < n_; ++i)  // non-finite entries fall back to the previous position
+      if (active[i] && !(std::isfinite(next[2 * i]) && std::isfinite(next[2 * i + 1]))) {
+        next[2 * i] = both[i] ? prev_[2 * i] : 0.0;
+        next[2 * i + 1] = both[i] ? prev_[2 * i + 1] : 0.0;
+      }
     for (std::size_t i = 0; i < n_; ++i) {
       if (!active[i]) continue;  // inactive keep previous position
       if (both[i]) {
@@ -218,6 +233,7 @@ const std::vector<double>& SolveEmbedding::positions(const Csr& P, const std::ve
   } else {
     for (std::size_t i = 0; i < n_; ++i)
       if (active[i]) {
+        if (!(std::isfinite(next[2 * i]) && std::isfinite(next[2 * i + 1]))) next[2 * i] = next[2 * i + 1] = 0.0;
         prev_[2 * i] = next[2 * i];
         prev_[2 * i + 1] = next[2 * i + 1];
       }
