@@ -82,6 +82,18 @@ void fsync_path(const fs::path& p) {
   ::close(fd);
 }
 
+std::vector<fs::path> create_dirs_synced(const fs::path& p) {
+  std::vector<fs::path> made;
+  for (fs::path d = p; !d.empty() && !fs::exists(d); d = d.parent_path()) {
+    made.push_back(d);
+    if (d == d.parent_path()) break;
+  }
+  std::reverse(made.begin(), made.end());
+  fs::create_directories(p);
+  for (const auto& d : made) fsync_path(d.parent_path());
+  return made;
+}
+
 RetentionPolicy RetentionPolicy::defaults() {
   RetentionPolicy p;
   p.keep_days[Timeframe::Hour] = 730;
@@ -148,7 +160,9 @@ struct Lake::Impl {
   std::size_t quarantine(Timeframe tf) {
     std::size_t moved = 0;
     for (const auto& f : parquet_files(root / "bars" / tf_dir_name(tf))) {
-      auto r = con.Query("SELECT count(*) FROM read_parquet(" + sql_str(f.string()) + ")");
+      // Aggregate every column, so every data page is decoded (count(*) reads only the footer).
+      auto r = con.Query("SELECT count(*), sum(length(ticker)), sum(t), sum(o), sum(h), sum(l), sum(c), sum(v), "
+                         "sum(vw), sum(seq) FROM read_parquet(" + sql_str(f.string()) + ")");
       if (!r->HasError()) continue;
       const fs::path dest = root / "_quarantine" / fs::relative(f, root);
       fs::create_directories(dest.parent_path());
@@ -172,7 +186,7 @@ struct Lake::Impl {
       std::vector<fs::path> moved;
       for (const auto& f : parquet_files(staging)) {
         const fs::path dest = root / "bars" / fs::relative(f, staging);
-        fs::create_directories(dest.parent_path());
+        create_dirs_synced(dest.parent_path());  // new tf=/year=/month= entries are durable
         fs::rename(f, dest);
         moved.push_back(dest);
       }

@@ -18,6 +18,9 @@ struct LakeRow {
 
 // POSIX open + fsync + close of a file or directory; throws std::runtime_error on failure.
 void fsync_path(const std::filesystem::path& p);
+// create_directories that fsyncs the parent of every directory it creates (so the new entries are
+// durable). Returns the created directories, outermost first.
+std::vector<std::filesystem::path> create_dirs_synced(const std::filesystem::path& p);
 
 struct RetentionPolicy {
   std::map<Timeframe, std::optional<int>> keep_days;  // nullopt = keep forever

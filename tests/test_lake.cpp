@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <map>
 
 #include "core/time.hpp"
 #include "storage/lake.hpp"
@@ -172,4 +173,46 @@ TEST_CASE("complete marks only move later and persist across reopen") {
   CHECK(c.at("NVO") == 700);
   CHECK_FALSE(c.count("MSFT"));
   CHECK(lake.complete(Timeframe::Hour, {"AAPL"}).empty());
+}
+
+TEST_CASE("a Parquet file with corrupt pages but an intact footer is quarantined") {
+  namespace fs = std::filesystem;
+  auto dir = test::temp_dir("lake_pagecorrupt");
+  const TimePoint d0 = utc_seconds(2026, 9, 1, 4);
+  {
+    Lake lake(dir);
+    std::vector<LakeRow> rows;
+    for (int i = 0; i < 5000; ++i)
+      rows.push_back({"T" + std::to_string(i % 50), Bar{d0 + i * 60, 1, 2, 0.5, 1.5, 100, 1.2}});
+    lake.write(Timeframe::Day, rows, {{"T1", 0}});
+    lake.write(Timeframe::Day, {row("GOOD", d0 + 86400, 1)}, {});
+  }
+  fs::path big;
+  std::uintmax_t sz = 0;
+  for (const auto& e : fs::recursive_directory_iterator(dir / "bars"))
+    if (e.path().extension() == ".parquet" && fs::file_size(e.path()) > sz) {
+      sz = fs::file_size(e.path());
+      big = e.path();
+    }
+  {
+    std::fstream f(big, std::ios::in | std::ios::out | std::ios::binary);
+    f.seekp(static_cast<std::streamoff>(sz / 4));
+    const std::string junk(static_cast<std::size_t>(sz / 3), '\xAB');
+    f.write(junk.data(), static_cast<std::streamsize>(junk.size()));
+  }
+  Lake lake(dir);
+  std::map<std::string, std::vector<Bar>> got;
+  REQUIRE_NOTHROW(got = lake.read(Timeframe::Day, {"GOOD", "T1"}, 0, 2000000000));
+  CHECK(got["GOOD"].size() == 1);
+  CHECK_FALSE(fs::exists(big));
+  CHECK(fs::exists(dir / "_quarantine" / fs::relative(big, dir)));
+}
+
+TEST_CASE("create_dirs_synced creates missing directories and reports only the new ones") {
+  auto dir = test::temp_dir("lake_mkdirs");
+  const auto made = create_dirs_synced(dir / "a" / "b" / "c");
+  CHECK(made == std::vector<std::filesystem::path>{dir / "a", dir / "a" / "b", dir / "a" / "b" / "c"});
+  CHECK(std::filesystem::is_directory(dir / "a" / "b" / "c"));
+  CHECK(create_dirs_synced(dir / "a" / "b" / "c").empty());
+  CHECK(create_dirs_synced(dir / "a" / "d") == std::vector<std::filesystem::path>{dir / "a" / "d"});
 }
