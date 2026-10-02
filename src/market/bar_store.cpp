@@ -58,9 +58,49 @@ void BarStore::save(const std::string& ticker, Timeframe tf) const {
   std::filesystem::rename(tmp, path);
 }
 
+std::filesystem::path BarStore::from_file_for(const std::string& ticker, Timeframe tf) const {
+  return cache_dir_ / std::string(to_string(tf)) / (ticker + ".from");
+}
+
+std::optional<TimePoint> BarStore::covered_from(const std::string& ticker, Timeframe tf) const {
+  auto it = covered_.find({ticker, tf});
+  if (it == covered_.end()) return std::nullopt;
+  return it->second;
+}
+
+void BarStore::set_covered_from(const std::string& ticker, Timeframe tf, TimePoint t) {
+  auto it = covered_.find({ticker, tf});
+  if (it != covered_.end() && it->second <= t) return;
+  covered_[{ticker, tf}] = t;
+  const auto path = from_file_for(ticker, tf);
+  std::filesystem::create_directories(path.parent_path());
+  auto tmp = path;
+  tmp += ".tmp";
+  {
+    std::ofstream out(tmp, std::ios::trunc);
+    out << t << '\n';
+    out.flush();
+    if (!out) {
+      out.close();
+      std::filesystem::remove(tmp);
+      throw std::runtime_error("failed to write " + tmp.string());
+    }
+  }
+  std::filesystem::rename(tmp, path);
+}
+
 void BarStore::load_all(const std::vector<std::string>& tickers, Timeframe tf) {
   static const std::vector<std::string> kHeader = {"t", "o", "h", "l", "c", "v", "vw"};
   for (const auto& ticker : tickers) {
+    try {
+      std::ifstream from_in(from_file_for(ticker, tf));
+      long long v = 0;
+      if (from_in && (from_in >> v)) {
+        auto it = covered_.find({ticker, tf});
+        if (it == covered_.end() || v < it->second) covered_[{ticker, tf}] = v;
+      }
+    } catch (const std::exception&) {
+    }
     try {
       const auto path = file_for(ticker, tf);
       if (!std::filesystem::exists(path)) continue;

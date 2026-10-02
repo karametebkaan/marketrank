@@ -97,7 +97,7 @@ void write_universe_snapshot(const std::filesystem::path& path,
   const std::string tmp = path.string() + ".tmp";
   {
     std::ofstream out(tmp);
-    if (!out) throw std::runtime_error("cannot write " + tmp);
+    if (!out) throw std::runtime_error("cannot write " + tmp);  // no tmp file was created
     out << "ticker,name,sector,exchange,median_dollar_volume\n" << std::setprecision(15);
     for (const auto& r : ranked) {
       const auto idx = sp500.index_of(r.asset.symbol);
@@ -106,7 +106,12 @@ void write_universe_snapshot(const std::filesystem::path& path,
           << csv_field(sector) << ',' << csv_field(r.asset.exchange) << ','
           << r.median_dollar_volume << '\n';
     }
-    if (!out) throw std::runtime_error("write failed for " + tmp);
+    out.close();
+    if (!out) {
+      std::error_code ec;
+      std::filesystem::remove(tmp, ec);
+      throw std::runtime_error("write failed for " + tmp);
+    }
   }
   std::filesystem::rename(tmp, path);
 }

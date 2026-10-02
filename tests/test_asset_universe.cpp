@@ -95,3 +95,12 @@ TEST_CASE("read_ticker_list skips comments and blanks; a missing file is empty")
   CHECK(read_ticker_list(p) == std::set<std::string>{"AAPL", "MSFT"});
   CHECK(read_ticker_list(dir / "none.csv").empty());
 }
+
+TEST_CASE("snapshot write failure throws and leaves no tmp file") {
+  auto dir = test::temp_dir("snapfail");
+  auto blocker = test::write_file(dir / "file", "x");
+  Universe sp = Universe::from_securities({});
+  std::vector<RankedAsset> ranked = {{{"AAPL", "Apple", "NASDAQ", true}, 1.0}};
+  CHECK_THROWS(write_universe_snapshot(blocker / "universe_2026-10-01.csv", ranked, sp));
+  CHECK_FALSE(std::filesystem::exists(blocker / "universe_2026-10-01.csv.tmp"));
+}

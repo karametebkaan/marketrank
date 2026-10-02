@@ -223,3 +223,60 @@ TEST_CASE("client spaces requests by min_request_interval_ms and get returns the
   AlpacaClient bad(test_config(), [](const std::string&) { return HttpResponse{403, "no"}; });
   CHECK_THROWS_AS(bad.get("/v2/assets"), std::runtime_error);
 }
+
+TEST_CASE("covered history is not re-requested; an earlier start back-fills again") {
+  BarStore store(test::temp_dir("covered"));
+  store.merge("AAPL", Timeframe::Day, {{utc_seconds(2026, 9, 29, 4), 1, 1, 1, 1, 1, 1}});
+  std::vector<std::string> paths;
+  AlpacaClient client(test_config(), [&](const std::string& path) {
+    paths.push_back(path);
+    return HttpResponse{200, R"({"bars":{}})"};
+  });
+  const auto end = utc_seconds(2026, 10, 1);
+  sync_bars(client, store, {"AAPL"}, Timeframe::Day, utc_seconds(2026, 9, 1), end);
+  CHECK(paths.size() == 2);
+  CHECK(store.covered_from("AAPL", Timeframe::Day).value() == utc_seconds(2026, 9, 1));
+  paths.clear();
+  sync_bars(client, store, {"AAPL"}, Timeframe::Day, utc_seconds(2026, 9, 1), end);
+  REQUIRE(paths.size() == 1);
+  CHECK(paths[0].find("start=2026-09-29T04:00:00Z") != std::string::npos);
+  paths.clear();
+  sync_bars(client, store, {"AAPL"}, Timeframe::Day, utc_seconds(2026, 8, 1), end);
+  CHECK(paths.size() == 2);
+  CHECK(store.covered_from("AAPL", Timeframe::Day).value() == utc_seconds(2026, 8, 1));
+  store.set_covered_from("AAPL", Timeframe::Day, utc_seconds(2026, 9, 1));  // never moves later
+  CHECK(store.covered_from("AAPL", Timeframe::Day).value() == utc_seconds(2026, 8, 1));
+}
+
+TEST_CASE("covered_from persists through the sidecar file") {
+  auto dir = test::temp_dir("covered_persist");
+  {
+    BarStore store(dir);
+    store.set_covered_from("AAPL", Timeframe::Day, utc_seconds(2026, 9, 1));
+  }
+  BarStore fresh(dir);
+  CHECK_FALSE(fresh.covered_from("AAPL", Timeframe::Day).has_value());
+  fresh.load_all({"AAPL"}, Timeframe::Day);
+  CHECK(fresh.covered_from("AAPL", Timeframe::Day).value() == utc_seconds(2026, 9, 1));
+}
+
+TEST_CASE("sync_bars saves each group as it completes") {
+  auto dir = test::temp_dir("pergroup");
+  BarStore store(dir);
+  store.merge("AAPL", Timeframe::Day, {{utc_seconds(2026, 9, 29, 4), 1, 1, 1, 1, 1, 1}});
+  AlpacaClient client(test_config(), [&](const std::string& path) {
+    if (path.find("end=2026-09-29T04:00:00Z") != std::string::npos)
+      return HttpResponse{200, R"({"bars":{"AAPL":[{"t":"2026-09-10T04:00:00Z","o":1,"h":1,"l":1,"c":1,"v":1,"n":1,"vw":1}]}})"};
+    return HttpResponse{403, "no"};
+  });
+  auto stale = sync_bars(client, store, {"AAPL"}, Timeframe::Day, utc_seconds(2026, 9, 1),
+                         utc_seconds(2026, 10, 1));
+  CHECK(stale.size() == 1);
+  bool found = false;
+  for (const auto& e : std::filesystem::recursive_directory_iterator(dir))
+    found = found || e.path().filename() == "AAPL.csv";
+  CHECK(found);
+  BarStore reload(dir);
+  reload.load_all({"AAPL"}, Timeframe::Day);
+  CHECK(reload.bars("AAPL", Timeframe::Day).size() == 2);
+}
