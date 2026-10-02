@@ -384,41 +384,101 @@ class Sec13fTests(unittest.TestCase):
         self.assertEqual(cov["A"]["amendment_type"], "")
         sec13f.apply_amendments(subs, cov)  # must not raise
 
-    def test_normalise_value_units(self):
-        # 6 managers hold A (price 10) and B (price 50). Manager 7 reported dollars as thousands
-        # (x1000 too large after conversion), manager 8 reported thousands as dollars (x1000 too small),
-        # manager 10 has a single row 10^6 too large,
-        # manager 9 holds only an unseen CUSIP (no consensus: untouched). Idempotent on a second pass.
+    # --- VALUE unit repair (normalise_value_units) ---
+    PRICES = {"A": 10, "B": 50, "C": 20, "D": 5, "E": 100, "F": 2}
+
+    def _good(self, cik, scale=1, cusips="ABCDEF"):
+        return [("q", str(cik), c, c.lower(), 1000, 1000 * self.PRICES[c] * scale) for c in cusips]
+
+    def _norm(self, rows):
         p = os.path.join(self.tmp.name, "h.csv")
-        rows = []
-        for m in range(1, 7):
-            rows += [("q", str(m), "A", "a", 100, 1000 + m), ("q", str(m), "B", "b", 10, 500),
-                     ("q", str(m), "D", "d", 2, 40)]
-        rows += [("q", "7", "A", "a", 100, 1000000), ("q", "7", "B", "b", 10, 500000)]
-        rows += [("q", "8", "A", "a", 100, 1), ("q", "8", "C", "c", 3, 7)]
-        rows += [("q", "9", "Z", "z", 5, 5000000)]
-        # manager 10: one row 10^6 too large (row-level fix), the others fine
-        rows += [("q", "10", "A", "a", 100, 1000000000), ("q", "10", "B", "b", 10, 500),
-                 ("q", "10", "D", "d", 2, 40)]
-        # manager 11: one row whose SHARES are 10^6 too large; its value is not touched
-        rows += [("q", "11", "A", "a", 100000000, 1000), ("q", "11", "B", "b", 10, 500),
-                 ("q", "11", "D", "d", 2, 40)]
         sec13f.write_quarter(rows, p)
         st = sec13f.normalise_value_units(p)
-        self.assertEqual(st, {"managers_down": 1, "managers_up": 1, "rows_rescaled": 1, "rows_inconsistent": 1})
         with open(p) as f:
             got = {(r["cik"], r["cusip"]): r["value_usd"] for r in csv.DictReader(f)}
-        self.assertEqual(got[("7", "A")], "1000")
-        self.assertEqual(got[("7", "B")], "500")
-        self.assertEqual(got[("8", "A")], "1000")
-        self.assertEqual(got[("8", "C")], "7000")
-        self.assertEqual(got[("1", "A")], "1001")
+        return p, st, got
+
+    def test_normalise_value_units(self):
+        # Managers 1-6 are correct on A-F. Manager 7 is 1000x too large on all five of its rows (dollars before the
+        # cutover), manager 8 1000x too small (thousands after it): both rescaled. Manager 9 holds only an unseen
+        # CUSIP (no consensus: untouched). Manager 10 has one row 10^6 too large (value or deflated shares: ambiguous,
+        # left for the C++ guard), manager 11 one row whose shares are 10^6 too large: both untouched and counted.
+        rows = []
+        for m in range(1, 7):
+            rows += self._good(m)
+        rows += self._good(7, 1000, "ABCDE")
+        rows += [r[:5] + (r[5] // 1000,) for r in self._good(8, 1, "BCDEF")]  # reported in thousands
+        rows += [("q", "8", "Z", "z", 3, 7)]
+        rows += [("q", "9", "Z", "z", 5, 5000000)]
+        rows += self._good(10, 1, "BCDEF") + [("q", "10", "A", "a", 100, 1000000000)]
+        rows += self._good(11, 1, "BCDEF") + [("q", "11", "A", "a", 100000000, 1000)]
+        p, st, got = self._norm(rows)
+        self.assertEqual(st, {"managers_down": 1, "managers_up": 1, "rows_inconsistent": 2})
+        self.assertEqual(got[("7", "A")], "10000")
+        self.assertEqual(got[("7", "E")], "100000")
+        self.assertEqual(got[("8", "B")], "50000")
+        self.assertEqual(got[("8", "Z")], "7000")   # a manager's factor applies to all its rows
+        self.assertEqual(got[("1", "A")], "10000")
         self.assertEqual(got[("9", "Z")], "5000000")
-        self.assertEqual(got[("10", "A")], "1000")
-        self.assertEqual(got[("10", "B")], "500")
+        self.assertEqual(got[("10", "A")], "1000000000")
         self.assertEqual(got[("11", "A")], "1000")
-        self.assertEqual(sec13f.normalise_value_units(p),
-                         {"managers_down": 0, "managers_up": 0, "rows_rescaled": 0, "rows_inconsistent": 0})
+        # Idempotent: a second pass changes nothing and rescales no manager.
+        with open(p) as f:
+            before = f.read()
+        st2 = sec13f.normalise_value_units(p)
+        self.assertEqual((st2["managers_down"], st2["managers_up"]), (0, 0))
+        with open(p) as f:
+            self.assertEqual(f.read(), before)
+
+    def test_normalise_shares_deflated_row_is_not_rewritten(self):
+        # 7 holders of A at $10; one row reports shares=1, value=$1e6 (shares deflated, value right). Rewriting the
+        # value to $10 would hide the error from the C++ price guard; the row must stay as filed.
+        rows = []
+        for m in range(1, 8):
+            rows += self._good(m)
+        rows += self._good(8, 1, "BCDEF") + [("q", "8", "A", "a", 1, 1000000)]
+        _, st, got = self._norm(rows)
+        self.assertEqual(got[("8", "A")], "1000000")
+        self.assertEqual((st["managers_down"], st["managers_up"]), (0, 0))
+        self.assertEqual(st["rows_inconsistent"], 1)
+
+    def test_normalise_thin_consensus_from_mis_unit_majority(self):
+        # X has 5 holders; 3 of them report thousands after the cutover (on every row, so they are caught on A-F),
+        # 2 report dollars. The raw X consensus is 1000x low; it must be recomputed without the mis-unit managers,
+        # so the 2 correct X rows are not touched and the 3 others are rescaled up.
+        rows = []
+        for m in range(1, 7):
+            rows += self._good(m)
+        for m in (7, 8, 9):
+            rows += [r[:5] + (r[5] // 1000,) for r in self._good(m)] + [("q", str(m), "X", "x", 100, 30)]  # X is $300
+        for m in (10, 11):
+            rows += self._good(m, 1, "ABCDE") + [("q", str(m), "X", "x", 100, 30000)]
+        _, st, got = self._norm(rows)
+        self.assertEqual(st["managers_up"], 3)
+        self.assertEqual(st["managers_down"], 0)
+        for m in (7, 8, 9):
+            self.assertEqual(got[(str(m), "X")], "30000")
+            self.assertEqual(got[(str(m), "A")], "10000")
+        for m in (10, 11):
+            self.assertEqual(got[(str(m), "X")], "30000")
+            self.assertEqual(got[(str(m), "A")], "10000")
+
+    def test_normalise_thin_manager_is_not_rescaled(self):
+        # A manager needs >= 5 consensus rows, mostly at the same power of 1000, before it is rescaled.
+        # Manager 7: a single row 1000x high. Manager 8: one 40x row and four correct rows. Manager 9: 5 rows of which
+        # only 2 are 1000x off (no agreement). Manager 10: 100x on all rows (not a power of 1000). None is rescaled.
+        rows = []
+        for m in range(1, 7):
+            rows += self._good(m)
+        rows += [("q", "7", "A", "a", 100, 1000000)]
+        rows += self._good(8, 1, "BCDE") + [("q", "8", "A", "a", 100, 40000)]
+        rows += self._good(9, 1, "ABC") + self._good(9, 1000, "DE")
+        rows += self._good(10, 100)
+        _, st, got = self._norm(rows)
+        self.assertEqual((st["managers_down"], st["managers_up"]), (0, 0))
+        self.assertEqual(got[("7", "A")], "1000000")
+        self.assertEqual(got[("8", "A")], "40000")
+        self.assertEqual(got[("10", "A")], "1000000")
 
     def test_run_normalises_units(self):
         with mock.patch.object(sec13f, "normalise_value_units", return_value={}) as nv:

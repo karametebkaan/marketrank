@@ -9,9 +9,9 @@ VALUE units: the SEC reported VALUE in thousands of dollars for filings made bef
 2023-01-03 and in whole dollars from 2023-01-03 on (by FILING_DATE). Pre-cutover
 values are multiplied by 1000 so value_usd is always dollars. Some filers ignore the rule
 (dollars before the cutover, thousands after it), so each quarter file is then normalised per
-manager and row against the CUSIP's consensus price (median value/shares over >= 5 holders):
-a manager whose price sits at a power of ten >= 100x off (within a factor 3) has its values
-rescaled by that power; then a single row whose value is that much too large is rescaled. Shares are never changed (see normalise_value_units).
+manager against the CUSIP consensus price (median value/shares over >= 5 holders): a manager
+with >= 5 consensus rows, mostly 1000x (or 10^6x) off, has all its values rescaled. Single rows
+and shares are never changed (see normalise_value_units).
 
 Filters: 13F-HR / 13F-HR/A only; per (CIK, period) the latest RESTATEMENT replaces
 earlier filings and later NEW HOLDINGS amendments add rows; info-table rows need
@@ -315,7 +315,9 @@ def _write_rows(rows, path):
             w.writerow([r[1], r[2], r[3], r[4], r[5]])
 
 
-UNIT_MIN_HOLDERS = 5
+UNIT_MIN_HOLDERS = 5        # holders of a CUSIP needed for a consensus price
+UNIT_MIN_ROWS = 5           # consensus rows a manager needs before it can be rescaled
+UNIT_MIN_AGREE = 0.6        # ... and the share of them that must sit at the same power of 1000
 _LN10 = math.log(10.0)
 
 
@@ -326,10 +328,42 @@ def _unit_rows(path):
             yield r, sh, val
 
 
+def _logp(sh, val):
+    return math.log(float(val) / float(sh)) if sh > 0 and val > 0 else None
+
+
 def _decades(dev):
-    """Power of ten a log-price deviation sits at: k with |k| >= 2 and dev within a factor 3 of 10^k, else 0."""
-    k = int(round(dev / _LN10))
-    return k if abs(k) >= 2 and abs(dev - k * _LN10) < math.log(3.0) else 0
+    """k in {..., -6, -3, 3, 6, ...} when exp(dev) is within a factor 3 of 10^k (a units error), else 0."""
+    k = 3 * int(round(dev / (3 * _LN10)))
+    return k if k and abs(dev - k * _LN10) < math.log(3.0) else 0
+
+
+def _consensus(path, keep):
+    """Median log price per CUSIP over rows whose manager passes keep(cik); only CUSIPs with >= 5 such holders."""
+    px = {}
+    for r, sh, val in _unit_rows(path):
+        lp = _logp(sh, val)
+        if lp is not None and keep(r["cik"]):
+            px.setdefault(r["cusip"], []).append(lp)
+    return {c: statistics.median(v) for c, v in px.items() if len(v) >= UNIT_MIN_HOLDERS}
+
+
+def _manager_scales(path, med):
+    """Per manager: k when >= 5 of its rows have a consensus, their median deviation is at 10^k (k a nonzero
+    multiple of 3) and >= 60% of those rows sit at that same 10^k."""
+    devs = {}
+    for r, sh, val in _unit_rows(path):
+        lp, m = _logp(sh, val), med.get(r["cusip"])
+        if lp is not None and m is not None:
+            devs.setdefault(r["cik"], []).append(lp - m)
+    out = {}
+    for cik, d in devs.items():
+        if len(d) < UNIT_MIN_ROWS:
+            continue
+        k = _decades(statistics.median(d))
+        if k and sum(1 for x in d if _decades(x) == k) >= UNIT_MIN_AGREE * len(d):
+            out[cik] = k
+    return out
 
 
 def _rescale(val, k):
@@ -340,55 +374,34 @@ def _rescale(val, k):
 
 
 def normalise_value_units(path):
-    """Fix VALUE unit errors against the per-CUSIP consensus price, in place. Idempotent.
+    """Fix manager-wide VALUE unit errors against the per-CUSIP consensus price, in place. Idempotent.
 
-    Consensus: median log(value/shares) over >= 5 holders of the CUSIP. A manager whose median
-    deviation is at a power of ten 10^k (|k| >= 2, within a factor 3) has every value rescaled by
-    10^-k (dollars-vs-thousands filers); then any single row whose value is still too large by such
-    a power is rescaled on its own. A row whose value is too small for its shares is ambiguous (a
-    SHARES error inflates shares) and is left as is, counted in rows_inconsistent (only when the
-    file is rewritten). Shares are never changed. Three streaming passes; memory O(rows' log prices)."""
-    px = {}
+    1. Consensus: median log(value/shares) over >= 5 holders of the CUSIP.
+    2. A manager with >= 5 consensus rows whose median deviation sits at 10^k, k a nonzero multiple of 3
+       (1000x or 10^6x off, within a factor 3), with >= 60% of its rows at that same 10^k, is flagged.
+    3. The consensus is recomputed from unflagged managers only (so a CUSIP held mostly by mis-unit filers
+       cannot drag it), and step 2 is repeated against it; those flags are final, and every value of a flagged
+       manager is rescaled by 10^-k.
+    Single rows are never rewritten: a row far off the consensus is as consistent with a SHARES error as with
+    a VALUE error, so it is left as filed (counted in rows_inconsistent) for the C++ price guard to drop.
+    Shares are never changed."""
+    first = _manager_scales(path, _consensus(path, lambda cik: True))
+    med = _consensus(path, lambda cik: cik not in first)
+    scale = _manager_scales(path, med)
+    st = {"managers_down": sum(1 for k in scale.values() if k > 0),
+          "managers_up": sum(1 for k in scale.values() if k < 0), "rows_inconsistent": 0}
     for r, sh, val in _unit_rows(path):
-        if sh > 0 and val > 0:
-            px.setdefault(r["cusip"], []).append(math.log(float(val) / float(sh)))
-    med = {c: statistics.median(v) for c, v in px.items() if len(v) >= UNIT_MIN_HOLDERS}
-    del px
-    devs = {}
-    for r, sh, val in _unit_rows(path):
-        m = med.get(r["cusip"])
-        if m is not None and sh > 0 and val > 0:
-            devs.setdefault(r["cik"], []).append(math.log(float(val) / float(sh)) - m)
-    scale = {}
-    st = {"managers_down": 0, "managers_up": 0, "rows_rescaled": 0, "rows_inconsistent": 0}
-    for cik, d in devs.items():
-        k = _decades(statistics.median(d))
-        if k:
-            scale[cik] = k
-            st["managers_down" if k > 0 else "managers_up"] += 1
-    rows_fix = 0
-    for cik, d in devs.items():
-        k = scale.get(cik, 0)
-        rows_fix += sum(1 for x in d if _decades(x - k * _LN10) > 0)
-    del devs
-    if not scale and not rows_fix:
+        lp, m = _logp(sh, val), med.get(r["cusip"])
+        if lp is not None and m is not None and abs(lp - m - scale.get(r["cik"], 0) * _LN10) > math.log(100.0):
+            st["rows_inconsistent"] += 1
+    if not scale:
         return st
     tmp = path + ".tmp"
 
     def rows():
         for r, sh, val in _unit_rows(path):
             k = scale.get(r["cik"], 0)
-            if k:
-                val = _rescale(val, k)
-            m = med.get(r["cusip"])
-            if m is not None and sh > 0 and val > 0:
-                kr = _decades(math.log(float(val) / float(sh)) - m)
-                if kr > 0:  # value too large for its shares: a VALUE unit error, rescaled
-                    val = _rescale(val, kr)
-                    st["rows_rescaled"] += 1
-                elif kr < 0:  # value too small for its shares: maybe a SHARES error; left as is
-                    st["rows_inconsistent"] += 1
-            yield (None, r["cik"], r["cusip"], r["issuer"], sh, val)
+            yield (None, r["cik"], r["cusip"], r["issuer"], sh, _rescale(val, k) if k else val)
     _write_rows(rows(), tmp)
     os.replace(tmp, path)
     return st
@@ -516,9 +529,9 @@ def main(argv=None, env_path=None):
               file=sys.stderr)
     if stats.get("empty_cusip"):
         print("warning: skipped %d rows with empty CUSIP" % stats["empty_cusip"], file=sys.stderr)
-    if stats.get("managers_down") or stats.get("managers_up") or stats.get("rows_rescaled"):
-        print("value units: rescaled %d manager-quarters down, %d up, and %d single rows"
-              % (stats.get("managers_down", 0), stats.get("managers_up", 0), stats.get("rows_rescaled", 0)))
+    if stats.get("managers_down") or stats.get("managers_up") or stats.get("rows_inconsistent"):
+        print("value units: rescaled %d manager-quarters down and %d up; %d rows left >= 100x off consensus"
+              % (stats.get("managers_down", 0), stats.get("managers_up", 0), stats.get("rows_inconsistent", 0)))
     print("wrote %d quarters" % len(qs))
     return 0
 

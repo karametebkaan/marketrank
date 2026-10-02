@@ -15,8 +15,9 @@ struct FlowEdge { std::uint32_t from, to; double dollars; };
 struct ObservedParams { std::size_t top_n = 2000; double prune_rel = 1e-9; };
 // nodes = indices into `tickers` of the top_n tickers by total 13F value (ascending index); edge from/to are such indices.
 // outside_* = |d| of positions outside the node set; skipped_value = value of positions with unknown price / unknown ticker.
-// inconsistent_* = positions dropped because a side's value/shares is >= 100x off the known price (a SHARES or VALUE
-// filing error that would otherwise be a phantom flow), and their 13F value (both quarters).
+// inconsistent_* = positions dropped because a side's value/shares is >= 100x off the known price (the 13F-median price
+// moved through lake returns; q-1 at price * ratio), or a side filed at value 0 holds > $1M of shares at that price (a
+// SHARES or VALUE filing error that would otherwise be a phantom flow), and their 13F value summed over both quarters.
 struct ObservedFlows { std::string quarter; std::vector<FlowEdge> edges; std::vector<std::uint32_t> nodes;
                        double paired = 0, unpaired_in = 0, unpaired_out = 0, outside_in = 0, outside_out = 0, skipped_value = 0;
                        double inconsistent_value = 0;

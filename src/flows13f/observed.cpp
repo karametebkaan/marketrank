@@ -19,6 +19,7 @@ int col(const std::vector<std::string>& hdr, const std::string& name) {
   for (std::size_t i = 0; i < hdr.size(); ++i) if (hdr[i] == name) return static_cast<int>(i);
   return -1;
 }
+constexpr double kZeroValueMaxUsd = 1e6;  // shares filed at value 0 worth more than this are a filing error
 constexpr double kMaxPriceOff = 100.0;  // implied 13F price vs known price: beyond this the row is a filing error
 struct Pos { double prev_shares = 0, cur_shares = 0, prev_value = 0, cur_value = 0; };
 
@@ -130,8 +131,12 @@ ObservedFlows observed_flows(const QuarterHoldings& prev, const QuarterHoldings&
       double price = prices.size() > node ? prices[node] : std::nan("");
       if (std::isfinite(price) && price > 0) {
         // Each side's implied price must be within 100x of the known price (q's raw basis; q-1's is price * ratio).
+        // A side with shares but no value is off too when those shares are worth more than $1M at that price
+        // (a giant SHARES error filed at value 0).
         auto off = [&](double sh, double val, double expect) {
-          return sh > 0 && val > 0 && std::abs(std::log(val / sh / expect)) > std::log(kMaxPriceOff);
+          if (!(sh > 0)) return false;
+          if (!(val > 0)) return sh * expect > kZeroValueMaxUsd;
+          return std::abs(std::log(val / sh / expect)) > std::log(kMaxPriceOff);
         };
         if (off(p.cur_shares, p.cur_value, price) || (ratio > 0 && off(p.prev_shares, p.prev_value, price * ratio))) {
           ++res.inconsistent_positions;

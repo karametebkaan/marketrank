@@ -278,3 +278,27 @@ TEST_CASE("observed: a position whose shares are 100x+ off the price is dropped,
   CHECK(f.paired == doctest::Approx(100));
   CHECK(f.unpaired_out == doctest::Approx(100));  // manager 2 sold A, B dropped
 }
+
+TEST_CASE("observed: a zero-value row with a huge share count is dropped; small zero-value rows are kept") {
+  // Manager 1: C has 1e9 shares filed at value 0 (shares * price = $1e10 > $1M): dropped. Manager 2: B has 50 shares
+  // at value 0 ($500 at the known price): kept, so its 50-share add pairs with its A cut.
+  auto prev = Q("p", {{1, "A", 20, 200}, {2, "A", 10, 100}});
+  auto cur = Q("c", {{1, "A", 10, 100}, {1, "B", 10, 100}, {1, "C", 1e9, 0}, {2, "A", 5, 50}, {2, "B", 50, 0}});
+  auto f = observed_flows(prev, cur, T, P, one);
+  CHECK(f.inconsistent_positions == 1);
+  CHECK(edge(f, 0, 2) == 0.0);
+  CHECK(edge(f, 0, 1) == doctest::Approx(100 + 50));
+}
+
+TEST_CASE("observed: the price guard compares q-1 rows against the split-adjusted price") {
+  // 2:1 split of A in q (ratio 2): q-1 raw price 20 = price 10 * ratio. Manager 1's q-1 row at $20/share is
+  // consistent and must not be dropped (it is 2x off the q price only); manager 2's q-1 row at $0.02/share
+  // (1000x off price * ratio) is dropped.
+  auto split = [](const std::string& t) { return t == "A" ? 2.0 : 1.0; };
+  auto prev = Q("p", {{1, "A", 10, 200}, {2, "A", 10, 0.2}});
+  auto cur = Q("c", {{1, "A", 10, 100}, {1, "B", 10, 100}, {2, "A", 20, 200}});
+  auto f = observed_flows(prev, cur, T, P, split);
+  CHECK(f.inconsistent_positions == 1);
+  CHECK(f.paired == doctest::Approx(100));  // manager 1: A 10 -> 20 adj shares, sells 10 * $10, buys B $100
+  CHECK(edge(f, 0, 1) == doctest::Approx(100));
+}

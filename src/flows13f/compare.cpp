@@ -1008,8 +1008,11 @@ std::string compare_report_md(const nlohmann::json& r) {
        "- **Observed T_q** (13F): per manager, d = (shares_q - ratio * shares_{q-1}) * P_q; sources d < 0, sinks d > 0;\n"
        "  F_ij = out_i * in_j / sum(in) * min(1, sum(in)/sum(out)); summed over managers. Node set: the top "
     << r["observed_params"]["top_n"]
-    << " tickers by 13F value (q-1 and q), accumulated densely, no cap. A position is dropped when either side's\n"
-       "  value/shares is 100x or more off the known price (a SHARES or VALUE filing error; counted per quarter).\n"
+    << " tickers by 13F value (q-1 and q), accumulated densely, no cap.\n"
+       "- **Dropped positions**: a position is dropped when either side's value/shares is 100x or more off P_q (the\n"
+       "  13F-median price moved through lake returns; q-1 at P_q * ratio), or a side filed at value 0 holds over $1M\n"
+       "  of shares at that price: a SHARES or VALUE filing error. Counted per quarter; the dropped value is the 13F\n"
+       "  value of both quarters' rows, as filed (it can include the bogus values).\n"
        "- **Prices and splits**: lake bars are adjustment=all. Per ticker and quarter end, f = median(13F value/shares) /\n"
        "  last adjusted close of that quarter; P_q = mean adjusted close over q's bars * f_q (q's raw basis);\n"
        "  ratio = f_{q-1} / f_q, snapped to 1 within 8% (dividend drift); a split also needs the median holder share\n"
