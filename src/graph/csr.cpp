@@ -19,12 +19,15 @@ Csr build_transition(std::span<const double> flux, std::size_t n, std::size_t k)
     }
     if (row.size() > k) {
       std::partial_sort(row.begin(), row.begin() + static_cast<std::ptrdiff_t>(k), row.end(),
-                        [](const auto& a, const auto& b) { return a.first > b.first; });
+                        [](const auto& a, const auto& b) {
+                          return a.first > b.first || (a.first == b.first && a.second < b.second);
+                        });
       row.resize(k);
     }
     if (row.empty()) {
       P.col.push_back(static_cast<std::uint32_t>(i));
       P.val.push_back(1.0);
+      P.raw.push_back(0.0);
     } else {
       std::sort(row.begin(), row.end(),
                 [](const auto& a, const auto& b) { return a.second < b.second; });
@@ -33,6 +36,7 @@ Csr build_transition(std::span<const double> flux, std::size_t n, std::size_t k)
       for (const auto& [w, j] : row) {
         P.col.push_back(j);
         P.val.push_back(w / sum);
+        P.raw.push_back(w);
       }
     }
     P.row_ptr.push_back(P.col.size());

@@ -42,3 +42,28 @@ TEST_CASE("left_multiply computes x * P") {
   CHECK(y[0] == doctest::Approx(0.0));
   CHECK(y[1] == doctest::Approx(1.0));
 }
+
+TEST_CASE("raw holds the un-normalized pruned flux, 0 for synthesized self-loops") {
+  std::vector<double> F = {0, 5, 1, 3,  //
+                           0, 0, 0, 0,  //
+                           2, 0, 0, 0,  //
+                           0, 0, 0, 0};
+  Csr P = build_transition(F, 4, 2);
+  REQUIRE(P.raw.size() == P.val.size());
+  CHECK(P.raw[0] == 5.0);  // row 0, col 1
+  CHECK(P.raw[1] == 3.0);  // row 0, col 3
+  CHECK(P.raw[P.row_ptr[1]] == 0.0);  // self-loop
+  CHECK(P.raw[P.row_ptr[2]] == 2.0);
+}
+
+TEST_CASE("top-k ties are broken toward the lower column index") {
+  std::vector<double> F = {0, 2, 2, 2, 2,  //
+                           0, 0, 0, 0, 0,  //
+                           0, 0, 0, 0, 0,  //
+                           0, 0, 0, 0, 0,  //
+                           0, 0, 0, 0, 0};
+  Csr P = build_transition(F, 5, 2);
+  REQUIRE(P.row_ptr[1] - P.row_ptr[0] == 2);
+  CHECK(P.col[0] == 1);
+  CHECK(P.col[1] == 2);
+}

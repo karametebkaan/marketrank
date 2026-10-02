@@ -11,6 +11,7 @@ struct Csr {
   std::vector<std::size_t> row_ptr;
   std::vector<std::uint32_t> col;
   std::vector<double> val;
+  std::vector<double> raw;  // un-normalized pruned flux weight, parallel to val (0 for self-loop)
 };
 
 Csr build_transition(std::span<const double> flux, std::size_t n, std::size_t k);
