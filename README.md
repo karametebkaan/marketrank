@@ -41,20 +41,28 @@ beat simply holding the current mix, and the pre-registered gate fails.
   - The score and π-relative-to-size rank the other way round: π/size has IC −0.009 (t = −4.6) and is
     negative in 8 of 10 years.
   - The heartbeats (pulse1, pulse5, pulse20) and the forecast are noise.
-  - The relative-pressure configuration, where the earlier one-year sample showed t ≈ −11, does **not** reproduce
-    it over ten years: t = 1.4 at 1 day.
+  - The relative-pressure run gives t = 1.4 at 1 day for the reversal. That run is the marketrank preset with
+    `--pressure relative`, not the legacy +A relative configuration behind the earlier one-year t ≈ −11 (k_in = 0,
+    min_dv = 0, a different universe and eligibility). Both the configuration and the sample changed, so this run
+    neither replicates nor refutes the earlier result.
 - **Portfolio.** The effects are far too small to pay their way in a 20% tilt over 10 names:
 
-  | run (blend vs buy-and-hold) | ann. excess | 95% CI | IR | max DD | years + | DSR |
+  | run (blend vs buy-and-hold) | ann. excess | 95% CI | IR | max DD | years + | DSR_excess (c3) |
   |---|---:|---|---:|---:|---:|---:|
-  | weekly, 10 bps (main) | −4.09% | −7.73 .. −0.67% | −0.63 | 31.2% | 4 of 10 | 0.989 |
-  | weekly, 0 bps | −3.91% | −7.55 .. −0.51% | −0.60 | 31.2% | 4 of 10 | 0.990 |
-  | weekly, 25 bps | −4.36% | −8.00 .. −0.91% | −0.67 | 31.2% | 4 of 10 | 0.988 |
-  | weekly, relative pressure | −3.29% | −6.81 .. −0.03% | −0.51 | 31.2% | 4 of 10 | 0.992 |
-  | monthly, 10 bps | −3.62% | −7.04 .. −0.37% | −0.57 | 31.0% | 4 of 10 | 0.991 |
-  | weekly, large caps (top 500) | −4.75% | −8.48 .. −1.23% | −0.72 | 31.2% | 3 of 10 | 0.987 |
+  | weekly, 10 bps (main) | −4.09% | −7.73 .. −0.67% | −0.63 | 31.2% | 4 of 10 | 0.00003 (FAIL) |
+  | weekly, 0 bps | −3.91% | −7.55 .. −0.51% | −0.60 | 31.2% | 4 of 10 | 0.00004 (FAIL) |
+  | weekly, 25 bps | −4.36% | −8.00 .. −0.91% | −0.67 | 31.2% | 4 of 10 | 0.00002 (FAIL) |
+  | weekly, relative pressure | −3.29% | −6.81 .. −0.03% | −0.51 | 31.2% | 4 of 10 | 0.00012 (FAIL) |
+  | monthly, 10 bps | −3.62% | −7.04 .. −0.37% | −0.57 | 31.0% | 4 of 10 | 0.00006 (FAIL) |
+  | weekly, large caps (top 500) | −4.75% | −8.48 .. −1.23% | −0.72 | 31.2% | 3 of 10 | 0.00001 (FAIL) |
 
-  Buy-and-hold of the base returned 31.2% a year (max drawdown 32.2%).
+  Ann. excess is the mean daily excess return over buy-and-hold times 252. It is not the gap between the two
+  annualized returns (for the main run 26.6% against 31.2%, a 4.6-point gap). DSR_excess is the deflated
+  probability of the daily IR of that excess over the 54 registered trials, which is what c3 tests (spec amendment
+  of 2026-10-02). The runs as first reported deflated the strategy's *total* Sharpe instead (0.987 to 0.992, a
+  "pass"), but an 80% base of AAPL and NVDA has a high total Sharpe whatever the tilt does, so that number did not
+  test the excess; each report keeps it as "DSR(total), informational". The verdict is the same under either
+  definition. Buy-and-hold of the base returned 31.2% a year (max drawdown 32.2%).
   - **The blend's gate was rarely open.** Its own out-of-sample IC reached t > 2 in only 16 of 483 weeks (3.3%),
     so the blend mostly holds the base rebalanced weekly.
   - **Most of the shortfall is that rebalancing.** It trims AAPL and NVDA during their run and costs 3.5% a year
@@ -69,19 +77,21 @@ beat simply holding the current mix, and the pre-registered gate fails.
   |---|---|
   | c1 excess > 0 with CI above 0 | FAIL |
   | c2 positive in ≥ 60% of years | FAIL (40%) |
-  | c3 DSR > 0.95 | pass (0.989) |
+  | c3 deflated IR of the excess > 0.95 | FAIL (0.00003) |
   | c4 drawdown within base + 5 pp | pass |
   | c5 large caps | FAIL |
 
-  The DSR "pass" is not evidence. It deflates the strategy's *total* Sharpe, and an 80% base of AAPL and NVDA has a
-  high one; it does not test the excess.
 - **Decision.** The next step is M3c, observed flows (ETF creation and redemption, 13F pairing, signed order
   flow), not the optimizer.
 - **Caveats.**
   - **Survivorship.** The universe is today's ticker list, so names delisted since 2016 are missing.
   - **Frozen delistings.** A holding that stops trading stays frozen at its last price, a known limitation that
     flatters failed picks.
-  - Both biases favour the strategies, so the negative result is, if anything, generous to them.
+  - These two biases favour the strategies. One bias runs the other way. The base mix was chosen with hindsight
+    (today's portfolio, mostly AAPL and NVDA, two of the decade's winners), which biases c1 against any tilt away
+    from it. So the negative result is not simply "generous" to the signals. The secondaries in each report, every
+    strategy against the rebalanced base and base-free sleeves against an equal-weight universe, remove the base
+    from the comparison. They are pre-registered for M3c, not gated.
 
   Equity curves: `docs/img/walkforward-equity.svg`. Full reports: `data/walkforward/<run>/report.md` (not committed).
 
@@ -202,10 +212,11 @@ not observed order flow.
 ## Walk-forward
 
 ```bash
-./build/marketrank --mode replay --walkforward --lookback-days 3650          # weekly, all eligible names, 10 bps
-./build/marketrank --mode replay --walkforward --lookback-days 3650 --wf-top-n 500 --wf-run-id lc500
-./build/marketrank --mode replay --walkforward --lookback-days 3650 --wf-largecap-run lc500  # gate c5 from lc500
-./build/marketrank --mode replay --walkforward --wf-rebalance monthly --wf-cost-bps 25        # sensitivity runs
+./build/marketrank --mode replay --walkforward --lookback-days 3750          # weekly, all eligible names, 10 bps
+./build/marketrank --mode replay --walkforward --lookback-days 3750 --wf-top-n 500 --wf-run-id lc500
+./build/marketrank --mode replay --walkforward --lookback-days 3750 --wf-largecap-run lc500  # gate c5 from lc500
+./build/marketrank --mode replay --walkforward --lookback-days 3750 --wf-rebalance monthly --wf-cost-bps 25  # sensitivity
+./build/marketrank --wf-rereport <run_id>                                    # dev: re-render a stored run's report
 python3 scripts/render_equity.py data/walkforward/<run_id>                   # equity.csv -> equity.svg
 ```
 
@@ -218,10 +229,15 @@ portfolio (`data/portfolio.json`) toward its top `--wf-k` (10) names. Trades hap
 and pay `--wf-cost-bps` per side. Results go to `data/walkforward/<run_id>/` (or `--wf-out DIR`):
 
 - `report.md` holds the IC table (signal by horizon 1, 2, 5 and 20 bars) and the Perf of each strategy
-  against buy-and-hold of the base. It also has the blend weights and the decision gate.
+  against buy-and-hold of the base. Ann. excess there is the mean daily excess times 252, not the gap between
+  annualized returns. It also has the blend weights, the decision gate and two secondaries that are reported but
+  not gated: every strategy against the rebalanced base, and base-free sleeves (the top k at 1/k, no base) against
+  the equal-weight eligible universe (`bench:ew_eligible`).
 - `results.json`, `equity.csv` and `trades.csv` hold the full data.
 
-Every run adds its strategies to `registry.csv`, and the deflated Sharpe counts every row there as a trial.
+Every run adds its strategies (not the sleeves) to `registry.csv`, with their daily Sharpe and daily IR. Gate c3
+deflates the blend's IR of the excess over buy-and-hold against every row with an IR (`scripts/backfill_registry_ir.py`
+filled that column once for rows written before 2026-10-02); DSR(total) on the Sharpe is reported for information.
 Re-running a run id with the same parameters replaces its rows. Re-running it with different parameters is an error.
 The blend windows are in rebalance periods: 156/1/104/52 weekly and 36/1/24/12 monthly, and
 `--wf-blend TRAIN/EMBARGO/GATE/MIN` overrides them.

@@ -88,6 +88,28 @@ Each signal is a cross-sectional z-score over active stocks:
 
 Anything less is **"no"**, and M3 continues with §5.
 
+**Amendment (2026-10-02, after the M3a final review).**
+- **c3 is applied to the excess series.** From 2026-10-02, criterion 3 reads: the deflated probability of the
+  daily information ratio of the excess return over buy-and-hold of the base mix is above 0.95. In formula terms it
+  is `deflated_sharpe(ir_daily, T, skew_e, kurt_e, trial_ir_var, n_ir_trials)`, where e is the daily excess. The
+  trials are the registry rows that carry an `ir_daily`.
+  - An undefined IR fails c3. This happens when the excess has zero variance or there are no days.
+  - The deflated total Sharpe is still reported, as "DSR(total), informational".
+- **Why it changed.** The final review found that the original wording deflated the strategy's total Sharpe ratio.
+  A portfolio that is 80% the base mix has a high total Sharpe whatever the tilt does, so that criterion did not
+  test the excess. It "passed" (0.989) while the excess was −4.09% a year.
+- **The M3a verdict is unchanged under either definition.** It is "no". Under the old c3 the run fails on c1, c2
+  and c5; under the new one it fails c3 as well (DSR of the excess ≈ 3×10⁻⁵ on the main run).
+- **Pre-registered secondaries for the next experiment (M3c).** These are reported, not gated.
+  1. Every strategy against the base rebalanced on the same calendar (`bench:rebalanced`), with the same metrics:
+     excess, CI95, IR and DSR of the excess.
+  2. Base-free sleeves, one per signal and one for the blend. Each sleeve has tilt 1 and holds the top k names at
+     1/k each, with the same costs and turnover cap; a flat (gate-closed) blend holds the benchmark. They are
+     measured against an equal-weight portfolio of each rebalance's eligible names, rebalanced on the same calendar
+     (`bench:ew_eligible`).
+  - Both secondaries remove the hindsight-selected base, which biases c1 against tilting away from it.
+  - Sleeves are not registry trials.
+
 ## 4. If yes: optimizer and shadow ledger
 - **Optimizer:** the same tilt, generalized as a turnover-penalized mean-variance or fractional-Kelly tilt of the base, with a covariance estimated from trailing returns.
 - **Schedule:** it produces proposals daily or weekly. It stays advisory and never places orders.
@@ -116,4 +138,5 @@ Each of these is re-tested with the same walk-forward harness (§2).
 2. Tilt budget (20%) and K (10).
 3. Cost assumption (10 bps per side).
 4. Whether the base mix stays fixed as the core holding, or the optimizer may also resize AAPL's 60% position.
-5. The thresholds in §3.
+5. The thresholds in §3 (c3 amended 2026-10-02 to the IR of the excess, see §3; the secondaries listed there are
+   pre-registered for M3c).
