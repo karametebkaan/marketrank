@@ -30,6 +30,17 @@ TEST_CASE("--legacy applies first regardless of position") {
   CHECK(a.params.transition.retention == 0.0);
 }
 
+TEST_CASE("--money-flow applies first, later flags override, and conflicts with --legacy") {
+  CliArgs a = parse_cli({"--k-in", "5", "--money-flow", "--h-ref", "netflow"});
+  CHECK(a.params.pressure == PressureMode::Dollar);
+  CHECK(a.params.transition.lift == LiftMode::Off);
+  CHECK(a.params.transition.k_in == 5);
+  CHECK(a.params.h_ref == HotRef::NetFlow);
+  CHECK(parse_cli({"--money-flow"}).params.h_ref == HotRef::Size);
+  CHECK_THROWS_AS(parse_cli({"--legacy", "--money-flow"}), std::invalid_argument);
+  CHECK_THROWS_AS(parse_cli({"--money-flow", "--legacy"}), std::invalid_argument);
+}
+
 TEST_CASE("model, universe and eval flags") {
   CliArgs a = parse_cli({"--mode", "replay", "--timeframe", "1h", "--lift", "ratio", "--h-ref",
                          "longrun", "--retention", "0.5", "--lambda", "0.3", "--k-out", "12",

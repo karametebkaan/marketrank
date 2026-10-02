@@ -11,6 +11,7 @@ HotRef parse_hot_ref(std::string_view s) {
   if (s == "uniform") return HotRef::Uniform;
   if (s == "size") return HotRef::Size;
   if (s == "longrun") return HotRef::LongRun;
+  if (s == "netflow") return HotRef::NetFlow;
   throw std::invalid_argument("unknown hotness reference: " + std::string(s));
 }
 
@@ -19,6 +20,7 @@ std::string_view to_string(HotRef r) {
     case HotRef::Uniform: return "uniform";
     case HotRef::Size: return "size";
     case HotRef::LongRun: return "longrun";
+    case HotRef::NetFlow: return "netflow";
   }
   return "?";
 }
@@ -39,6 +41,25 @@ std::vector<double> relative_hotness(std::span<const double> pi, std::span<const
   }
   std::vector<double> h(n);
   for (std::size_t i = 0; i < n; ++i) h[i] = pi[i] / (r[i] / sum) - 1.0;
+  return h;
+}
+
+std::vector<double> net_flow_hotness(std::span<const double> in, std::span<const double> out) {
+  const std::size_t n = std::min(in.size(), out.size());
+  auto clean = [](double x) { return std::isfinite(x) ? x : 0.0; };
+  std::vector<double> total(n);
+  for (std::size_t i = 0; i < n; ++i) total[i] = clean(in[i]) + clean(out[i]);
+  double kappa = 0;
+  if (n > 0) {
+    std::vector<double> s = total;
+    std::sort(s.begin(), s.end());
+    kappa = n % 2 ? s[n / 2] : 0.5 * (s[n / 2 - 1] + s[n / 2]);
+  }
+  std::vector<double> h(n, 0.0);
+  for (std::size_t i = 0; i < n; ++i) {
+    const double den = total[i] + kappa;
+    if (den > 0) h[i] = (clean(in[i]) - clean(out[i])) / den;
+  }
   return h;
 }
 

@@ -49,7 +49,12 @@ TEST_CASE("floor share and sector coherence on a hand-built frame") {
 
 TEST_CASE("evaluation grid covers legacy, each switch and the defaults") {
   auto g = evaluation_grid();
-  REQUIRE(g.size() == 10);
+  REQUIRE(g.size() == 13);
+  CHECK(g[10].name == "defaults+netflow");
+  CHECK(g[10].params.h_ref == HotRef::NetFlow);
+  CHECK(g[11].name == "money-flow");
+  CHECK(g[12].name == "money-flow+netflow");
+  CHECK(g[12].params.h_ref == HotRef::NetFlow);
   CHECK(g.front().name == "legacy");
   CHECK(g[7].name == "defaults");
   CHECK(g[8].name == "defaults relative");
@@ -57,6 +62,15 @@ TEST_CASE("evaluation grid covers legacy, each switch and the defaults") {
   CHECK(g[8].params.max_volume_ratio == 5.0);
   CHECK(g[1].name == "+A relative");
   CHECK(g[1].params.max_volume_ratio == 0.0);
+  const CoreParams m = CoreParams::money_flow();
+  CHECK(m.pressure == PressureMode::Dollar);
+  CHECK(m.transition.lift == LiftMode::Off);
+  CHECK(m.transition.k_in == 10);
+  CHECK(m.transition.retention == 1.0);
+  CHECK(m.h_ref == HotRef::Size);
+  CHECK(m.min_dollar_volume == 1e6);
+  CHECK(g[11].params.pressure == PressureMode::Dollar);
+  CHECK(g[11].params.h_ref == HotRef::Size);
   for (const auto& c : g) CHECK_NOTHROW(c.params.validate());
 }
 

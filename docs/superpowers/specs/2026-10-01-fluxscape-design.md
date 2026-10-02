@@ -85,7 +85,7 @@ US Eastern time handling uses an explicit DST rule (2nd Sunday of March → 1st 
 
 ## 5. Flux graph model
 
-Each of the switches A–E below is a `CoreParams` field. Strategy versions (§8.4) record them, so they can be compared side by side. `CoreParams::legacy()` gives the milestone-1 behaviour (dollar pressure, no lift, no inbound pruning, no retention, uniform reference; the liquidity floor and the volume-ratio cap are off).
+Each of the switches A–E below is a `CoreParams` field. Strategy versions (§8.4) record them, so they can be compared side by side. `CoreParams::legacy()` gives the milestone-1 behaviour (dollar pressure, no lift, no inbound pruning, no retention, uniform reference; the liquidity floor and the volume-ratio cap are off). `CoreParams::money_flow()` runs the chain on true dollar flux (dollar pressure, no lift, two-sided pruning, retention) and reads hotness relative to size.
 
 For each bar *t* and stock *i* with return `r_i = C/C⁻ − 1`, volume V and VWAP:
 
@@ -108,6 +108,7 @@ For each bar *t* and stock *i* with return `r_i = C/C⁻ − 1`, volume V and VW
   - `uniform`: `π_ref = 1/N_active`, so `h = N_active·π − 1`
   - `size`: π_ref ∝ the trailing median dollar volume, so h reads as "hot relative to its size"
   - `longrun`: π_ref is the steady state of the long-run (120-bar) accumulator, so h reads as "hot relative to its own normal"
+  - `netflow`: h = (in − out)/(in + out + κ), κ = the median total flow across active nodes. Bounded in (−1, 1); low-flow names shrink toward 0.
 - The defaults are confirmed or changed using the evaluation harness (§5.2).
 
 ### 5.1 Forecast (no fitted model)

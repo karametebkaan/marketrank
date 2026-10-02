@@ -57,6 +57,29 @@ TEST_CASE("planted rotation makes the receiving sector the top hill (legacy)") {
   check_rotation(CoreParams::legacy());
 }
 
+TEST_CASE("net-flow hotness on the planted rotation is bounded and favours the receiving sector") {
+  SyntheticConfig cfg;
+  BarStore store(test::temp_dir("pipeline_netflow"));
+  auto secs = generate_synthetic(cfg, store);
+  std::vector<std::string> tickers;
+  for (auto& s : secs) tickers.push_back(s.ticker);
+  Panel panel = build_panel(store, tickers, cfg.tf);
+  CoreParams params;
+  params.h_ref = HotRef::NetFlow;
+  Frame f = run_panel_last(panel, params);
+  REQUIRE(f.h.size() == secs.size());
+  std::map<std::string, double> sector_mean;
+  for (std::size_t i = 0; i < secs.size(); ++i) {
+    if (!f.active[i]) continue;
+    CHECK(std::isfinite(f.h[i]));
+    CHECK(f.h[i] > -1.0);
+    CHECK(f.h[i] < 1.0);
+    sector_mean[secs[i].sector] += f.h[i] / 10.0;
+  }
+  for (const auto& [sector, mean] : sector_mean) INFO(sector << " mean h " << mean);
+  CHECK(sector_mean["Sector1"] > sector_mean["Sector0"]);
+}
+
 TEST_CASE("pipeline requires at least two bars") {
   Panel p;
   p.times = {100};

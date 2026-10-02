@@ -33,6 +33,7 @@ struct CoreParams {
   double beta = 0.5;
   std::vector<int> horizons{1, 4, 8};
 
+  static CoreParams money_flow();  // dollar flux, no lift, two-sided pruning, retention, size ref
   static CoreParams legacy();  // milestone-1 behaviour (spec 5)
   void validate() const;       // throws std::invalid_argument
 };

@@ -37,7 +37,11 @@ double to_double(const std::string& flag, const std::string& v) {
 
 CliArgs parse_cli(const std::vector<std::string>& args) {
   CliArgs a;
-  if (std::find(args.begin(), args.end(), "--legacy") != args.end()) a.params = CoreParams::legacy();
+  const bool legacy = std::find(args.begin(), args.end(), "--legacy") != args.end();
+  const bool money = std::find(args.begin(), args.end(), "--money-flow") != args.end();
+  if (legacy && money) throw std::invalid_argument("--legacy and --money-flow are mutually exclusive");
+  if (legacy) a.params = CoreParams::legacy();
+  if (money) a.params = CoreParams::money_flow();
   for (std::size_t i = 0; i < args.size(); ++i) {
     const std::string& flag = args[i];
     auto value = [&]() -> std::string {
@@ -64,7 +68,7 @@ CliArgs parse_cli(const std::vector<std::string>& args) {
       a.migrate_cache = true;
       if (i + 1 < args.size() && args[i + 1].rfind("--", 0) != 0) a.migrate_from = args[++i];
     } else if (flag == "--maintain") a.maintain = true;
-    else if (flag == "--legacy") continue;
+    else if (flag == "--legacy" || flag == "--money-flow") continue;
     else if (flag == "--pressure") a.params.pressure = parse_pressure_mode(value());
     else if (flag == "--lift") a.params.transition.lift = parse_lift_mode(value());
     else if (flag == "--k-out") a.params.transition.k_out = to_size(flag, value());
@@ -97,8 +101,8 @@ std::string cli_usage() {
          "                 [--lookback-days N] [--top N] [--data DIR] [--threads N]\n"
          "                 [--universe auto|sp500|snapshot] [--universe-size N] [--refresh-universe]\n"
          "                 [--eval] [--eval-bars N]\n"
-         "                 [--legacy] [--pressure dollar|sqrt|relative] [--lift off|excess|ratio]\n"
-         "                 [--k-out N] [--k-in N] [--retention X] [--h-ref uniform|size|longrun]\n"
+         "                 [--legacy | --money-flow] [--pressure dollar|sqrt|relative] [--lift off|excess|ratio]\n"
+         "                 [--k-out N] [--k-in N] [--retention X] [--h-ref uniform|size|longrun|netflow]\n"
          "                 [--lambda X] [--min-dollar-volume X] [--max-volume-ratio X]\n"
          "                 [--migrate-cache [DIR]] [--maintain]\n";
 }

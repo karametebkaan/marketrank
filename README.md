@@ -57,8 +57,8 @@ not observed order flow.
    and solve for the stationary distribution π, the PageRank-style steady state. π is where the
    market's money settles if the current flow pattern continues.
 7. **Hotness.** Hotness `h = π / reference − 1`: hills (h > 0) are where money accumulates and
-   valleys (h < 0) are where it drains. The reference can be uniform, size, or each stock's own
-   long-run normal.
+   valleys (h < 0) are where it drains. The reference can be uniform, size, each stock's own
+   long-run normal, or a bounded net-flow ratio `(in − out)/(in + out + κ)`.
 8. **Forecast.** Push the steady state one, four and eight bars forward through the fast flow,
    and add its recent drift. The result is a score for where the money is heading next.
 9. **Evaluate before trusting.** `--eval` compares every setting on historical data. It reports

@@ -226,6 +226,17 @@ std::vector<EvalConfig> evaluation_grid() {
     p.h_ref = HotRef::LongRun;
     g.push_back({"defaults+longrun", p});
   }
+  {
+    CoreParams p;
+    p.h_ref = HotRef::NetFlow;
+    g.push_back({"defaults+netflow", p});
+  }
+  g.push_back({"money-flow", CoreParams::money_flow()});
+  {
+    CoreParams p = CoreParams::money_flow();
+    p.h_ref = HotRef::NetFlow;
+    g.push_back({"money-flow+netflow", p});
+  }
   return g;
 }
 

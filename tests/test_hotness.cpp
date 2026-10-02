@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include <cmath>
 #include <stdexcept>
 #include <vector>
 
@@ -21,6 +22,22 @@ TEST_CASE("relative hotness against uniform, size and degenerate references") {
 }
 
 TEST_CASE("hot reference strings") {
-  for (auto r : {HotRef::Uniform, HotRef::Size, HotRef::LongRun}) CHECK(parse_hot_ref(to_string(r)) == r);
+  for (auto r : {HotRef::Uniform, HotRef::Size, HotRef::LongRun, HotRef::NetFlow}) CHECK(parse_hot_ref(to_string(r)) == r);
   CHECK_THROWS_AS(parse_hot_ref("cap"), std::invalid_argument);
+}
+
+TEST_CASE("net-flow hotness: shrunk (in - out) / (in + out + median total)") {
+  // totals {4, 2, 2, 0}: kappa = mean(2, 2) = 2
+  auto h = net_flow_hotness(std::vector<double>{3, 0, 1, 0}, std::vector<double>{1, 2, 1, 0});
+  REQUIRE(h.size() == 4);
+  CHECK(h[0] == doctest::Approx(2.0 / 6.0));
+  CHECK(h[1] == doctest::Approx(-0.5));
+  CHECK(h[2] == doctest::Approx(0.0));
+  CHECK(h[3] == doctest::Approx(0.0));
+  for (double x : net_flow_hotness(std::vector<double>{0, 0, 0}, std::vector<double>{0, 0, 0}))
+    CHECK(x == 0.0);
+  auto nf = net_flow_hotness(std::vector<double>{std::nan(""), 2}, std::vector<double>{1, 0});
+  for (double x : nf) CHECK(std::isfinite(x));
+  CHECK(parse_hot_ref("netflow") == HotRef::NetFlow);
+  CHECK(to_string(HotRef::NetFlow) == "netflow");
 }

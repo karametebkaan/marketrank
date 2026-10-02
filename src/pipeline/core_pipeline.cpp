@@ -67,6 +67,16 @@ CoreParams CoreParams::legacy() {
   return p;
 }
 
+CoreParams CoreParams::money_flow() {
+  CoreParams p;
+  p.pressure = PressureMode::Dollar;
+  p.transition.lift = LiftMode::Off;
+  p.transition.k_in = 10;
+  p.transition.retention = 1.0;
+  p.h_ref = HotRef::Size;
+  return p;
+}
+
 void CoreParams::validate() const {
   auto fail = [](const char* what) {
     throw std::invalid_argument(std::string("CoreParams: ") + what);
@@ -195,6 +205,18 @@ Frame CorePipeline::step(const Panel& panel, std::size_t t) {
           if (!(std::isfinite(x) && x > 0)) x = med;
       }
       h_a = relative_hotness(pi_a, ref);
+      break;
+    }
+    case HotRef::NetFlow: {
+      std::vector<double> in_a, out_a;
+      in_a.reserve(n_active);
+      out_a.reserve(n_active);
+      for (std::size_t i = 0; i < n_; ++i) {
+        if (!active[i]) continue;
+        in_a.push_back(slow_.in()[i]);
+        out_a.push_back(slow_.out()[i]);
+      }
+      h_a = net_flow_hotness(in_a, out_a);
       break;
     }
     case HotRef::LongRun: {
