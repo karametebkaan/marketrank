@@ -77,6 +77,14 @@ std::optional<TimePoint> query_t(const httplib::Request& req) {
 }
 
 constexpr std::size_t kShockCache = 8;
+constexpr int kMaxSse = 8;  // open /api/events streams; the worker pool is larger, so other requests still run
+
+// Holds one SSE slot; released when the stream's content provider is destroyed.
+struct SseSlot {
+  std::atomic<int>& n;
+  explicit SseSlot(std::atomic<int>& c) : n(c) {}
+  ~SseSlot() { --n; }
+};
 
 // "money-flow" or "legacy" when the model parameters equal that preset, otherwise "custom".
 std::string preset_name(const CoreParams& p) {
@@ -162,6 +170,8 @@ bool FluxServer::guard_post(const httplib::Request& req, httplib::Response& res)
 
 void FluxServer::routes() {
   svr_.set_payload_max_length(64 * 1024);
+  // Workers: room for kMaxSse long-lived event streams plus ordinary requests.
+  svr_.new_task_queue = [] { return new httplib::ThreadPool(std::max(16u, std::thread::hardware_concurrency())); };
   // DNS rebinding: a page on evil.example rebound to 127.0.0.1 reaches us with Host evil.example:<port>. Every
   // request (API and static files) must name this server by a loopback name or the configured --host.
   svr_.set_pre_routing_handler([this](const httplib::Request& req, httplib::Response& res) {
@@ -389,13 +399,18 @@ void FluxServer::routes() {
   });
 
   svr_.Get("/api/events", [this](const httplib::Request&, httplib::Response& res) {
+    if (sse_clients_.fetch_add(1) >= kMaxSse) {
+      --sse_clients_;
+      return send_json(res, 503, {{"error", "too many event streams"}});
+    }
+    auto slot = std::make_shared<SseSlot>(sse_clients_);
     res.set_header("Cache-Control", "no-cache");
     struct Sse {
       std::uint64_t seen = 0;
       std::chrono::steady_clock::time_point last_write = std::chrono::steady_clock::now();
     };
     auto st = std::make_shared<Sse>();
-    res.set_chunked_content_provider("text/event-stream", [this, st](size_t, httplib::DataSink& sink) {
+    res.set_chunked_content_provider("text/event-stream", [this, st, slot](size_t, httplib::DataSink& sink) {
       if (stopping_) return false;
       // Bounded wait so a stop request is noticed within ~250 ms.
       const auto v = store_.wait_for_change(st->seen, std::chrono::milliseconds(250));

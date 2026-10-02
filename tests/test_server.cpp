@@ -420,3 +420,40 @@ TEST_CASE("server: t must be a whole integer") {
   CHECK(c.Get("/api/frame?t=" + std::to_string(t))->status == 200);
   CHECK(c.Get("/api/frame?t=-5")->status == 404);
 }
+
+TEST_CASE("server: at most 8 SSE clients; a 9th gets 503") {
+  auto fx_ = std::make_unique<Fixture>();
+  const int port = fx_->port;
+  constexpr int kStreams = 8;
+  std::atomic<int> open{0};
+  std::vector<std::thread> readers;
+  for (int k = 0; k < kStreams; ++k)
+    readers.emplace_back([&, port] {
+      httplib::Client c("127.0.0.1", port);
+      c.set_read_timeout(20, 0);
+      bool counted = false;
+      c.Get("/api/events", [&](const char* data, size_t n) {
+        if (!counted && std::string(data, n).find("event: status") != std::string::npos) {
+          counted = true;
+          ++open;
+        }
+        return true;
+      });
+    });
+  for (int k = 0; k < 200 && open < kStreams; ++k) std::this_thread::sleep_for(25ms);
+  CHECK(open.load() == kStreams);  // (CHECK, not REQUIRE: the readers must be joined below)
+  httplib::Client c("127.0.0.1", port);
+  c.set_read_timeout(3, 0);  // an accepted 9th stream would never end: time out instead of hanging
+  auto r = c.Get("/api/events");
+  CHECK(r);
+  if (r) {
+    CHECK(r->status == 503);
+    CHECK(json::parse(r->body).contains("error"));
+  }
+  CHECK(c.Get("/api/status")->status == 200);  // ordinary requests still get a worker
+  auto fut = std::async(std::launch::async, [&] { fx_.reset(); });
+  const bool finished = fut.wait_for(10s) == std::future_status::ready;
+  CHECK(finished);
+  if (!finished) std::_Exit(1);
+  for (auto& t : readers) t.join();
+}

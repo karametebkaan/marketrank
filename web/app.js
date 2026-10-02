@@ -302,7 +302,7 @@ async function loadFrame(t) {
     initDeck(f.lattice);
     fillTickers(f.nodes);
   }
-  if (!S.arcsInit) { S.arcsInit = true; $('arcs').value = Math.min(400, 2 * f.nodes.length, 150); setArcsLabel(); }
+  if (!S.arcsInit) { S.arcsInit = true; $('arcs').value = Math.min(2 * f.nodes.length, 150); setArcsLabel(); }
   $('tlabel').textContent = `${f.time}  ·  ${f.nodes.length} active stocks  ·  ${f.params}`;
   fillHoldings(f);
   loadTop(f.t).catch((e) => { $('topRows').textContent = String(e.message || e); if (S.selftest) fail(e); });
