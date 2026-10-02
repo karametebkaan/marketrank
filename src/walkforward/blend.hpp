@@ -14,6 +14,8 @@ struct BlendParams { std::size_t train_months = 156, embargo = 1, gate_months = 
 // next rebalance execution (size N), both from the walk-forward pass.
 struct MonthRecord { std::array<std::vector<double>, kSignals> z; std::vector<double> label; };
 struct BlendStep { std::array<double, kSignals> w{}; bool gate_open = false; double oos_ic = NAN; std::vector<double> score; };
+// A NaN/non-finite z for a weighted signal contributes 0 (imputes the cross-sectional mean) without renormalising
+// the weights, so partially covered names are shrunk toward 0.
 // Causal: step m reads labels of periods <= m - embargo - 1 only (label(m) is used only for its own oos_ic,
 // which later steps consume after the embargo). Serial, deterministic.
 std::vector<BlendStep> run_blend(const std::vector<MonthRecord>& months, const BlendParams& p);

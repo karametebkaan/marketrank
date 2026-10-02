@@ -54,26 +54,44 @@ TEST_CASE("blend: planted signal opens the gate under default weekly params") {
   CHECK(r[399].w[0] > 0.8);
 }
 
-TEST_CASE("blend: pure noise keeps the gate closed") {
-  const auto ms = make_months(200, false, 3);
-  const auto r = run_blend(ms, kMonthly);
-  std::size_t open = 0, tot = 0;
-  for (std::size_t m = 36 + 1 + 12; m < r.size(); ++m) { ++tot; open += r[m].gate_open; }
-  CHECK(static_cast<double>(open) <= 0.05 * static_cast<double>(tot));
+TEST_CASE("blend: pure noise keeps the gate closed (mean over 20 seeds)") {
+  double frac_sum = 0;
+  for (unsigned seed = 100; seed < 120; ++seed) {
+    const auto r = run_blend(make_months(200, false, seed), kMonthly);
+    std::size_t open = 0, tot = 0;
+    for (std::size_t m = 36 + 1 + 12; m < r.size(); ++m) { ++tot; open += r[m].gate_open; }
+    frac_sum += static_cast<double>(open) / static_cast<double>(tot);
+  }
+  CHECK(frac_sum / 20.0 <= 0.05);
 }
 
-TEST_CASE("blend: causality - labels at months >= m-1 do not affect step m") {
-  const auto ms = make_months(80, true, 4);
+TEST_CASE("blend: causality - labels at periods >= m-1 do not affect step m (every m)") {
+  const std::size_t M = 80;
+  const auto ms = make_months(M, true, 4);
   const auto base = run_blend(ms, kMonthly);
-  const std::size_t m = 60;
-  auto ms2 = ms;
-  std::mt19937_64 g(99);
-  std::normal_distribution<double> nd(0, 1);
-  for (std::size_t j = m - 1; j < ms2.size(); ++j)
-    for (auto& v : ms2[j].label) v = nd(g);
-  const auto alt = run_blend(ms2, kMonthly);
-  for (std::size_t s = 0; s < kSignals; ++s) CHECK(same_bits(base[m].w[s], alt[m].w[s]));
-  CHECK(base[m].gate_open == alt[m].gate_open);
+  for (std::size_t m = 8; m < M; ++m) {
+    auto ms2 = ms;
+    for (std::size_t j = m - 1; j < M; ++j)
+      for (auto& v : ms2[j].label) v = std::numeric_limits<double>::quiet_NaN();  // a leaked oos_ic(m-1) would become NaN and shrink the gate sample n
+    const auto alt = run_blend(ms2, kMonthly);
+    for (std::size_t s = 0; s < kSignals; ++s) CHECK(same_bits(base[m].w[s], alt[m].w[s]));
+    CHECK(base[m].gate_open == alt[m].gate_open);
+    REQUIRE(base[m].score.size() == alt[m].score.size());
+    for (std::size_t i = 0; i < base[m].score.size(); ++i) CHECK(same_bits(base[m].score[i], alt[m].score[i]));
+    for (std::size_t j = 0; j + 2 <= m; ++j) CHECK(same_bits(base[j].oos_ic, alt[j].oos_ic));
+  }
+}
+
+TEST_CASE("blend: fewer than 6 training periods gives no weights") {
+  const auto r = run_blend(make_months(20, true, 6), kMonthly);
+  for (std::size_t m = 0; m <= 6; ++m) {
+    for (double w : r[m].w) CHECK(w == 0.0);
+    CHECK(std::isnan(r[m].oos_ic));
+  }
+  double sum = 0;
+  for (double w : r[7].w) sum += w;  // training window [0,5]: 6 periods
+  CHECK(sum > 0);
+  CHECK(r[7].w[0] > 0);
 }
 
 TEST_CASE("blend: weights are non-negative and sum to 1 or 0") {
@@ -85,7 +103,4 @@ TEST_CASE("blend: weights are non-negative and sum to 1 or 0") {
       CHECK((sum == 0 || std::abs(sum - 1) < 1e-12));
     }
   }
-  // fewer than 6 training periods -> no weights, no score
-  const auto r = run_blend(make_months(8, true, 6), kMonthly);
-  for (const auto& st : r) { CHECK(!st.gate_open); CHECK(st.score.empty()); }
 }
