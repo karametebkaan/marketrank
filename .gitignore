@@ -4,3 +4,11 @@ data/cache/
 data/universe/universe_*.csv
 data/lake/
 data/sectors/
+paper/*.aux
+paper/*.log
+paper/*.bbl
+paper/*.blg
+paper/*.out
+paper/*.synctex.gz
+paper/*.spl
+paper/*.pdf
