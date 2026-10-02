@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <iostream>
 #include <limits>
+#include <set>
 
 namespace fx {
 
@@ -99,7 +100,17 @@ void BarStore::load_range(const std::vector<std::string>& tickers, Timeframe tf,
                           TimePoint end) {
   lake();  // an open failure (e.g. lake in use by another process) must surface
   try {
-    for (auto& [ticker, loaded] : lake().read(tf, tickers, start, end)) upsert({ticker, tf}, loaded);
+    for (auto& [ticker, loaded] : lake().read(tf, tickers, start, end)) {
+      const Key key{ticker, tf};
+      // Unsaved (queued_) or unflushed (to_write_) bars are newer than the lake: keep them.
+      std::set<TimePoint> pending;
+      for (const auto* m : {&queued_, &to_write_})
+        if (auto it = m->find(key); it != m->end())
+          for (const Bar& b : it->second) pending.insert(b.t);
+      if (!pending.empty())
+        std::erase_if(loaded, [&](const Bar& b) { return pending.count(b.t) > 0; });
+      upsert(key, loaded);
+    }
     for (const auto& [ticker, t] : lake().coverage(tf, tickers)) {
       auto it = covered_.find({ticker, tf});
       if (it == covered_.end() || t < it->second) covered_[{ticker, tf}] = t;

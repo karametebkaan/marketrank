@@ -170,3 +170,22 @@ TEST_CASE("a corrupt lake file does not abort a load") {
   CHECK_NOTHROW(s2.load_range({"A"}, Timeframe::Day, 0, 2000000000));
   CHECK(s2.bars("A", Timeframe::Day).size() == 1);  // the valid file still loads
 }
+
+TEST_CASE("load_range does not roll back newer unsaved or unflushed bars") {
+  auto dir = test::temp_dir("bars_norollback");
+  {
+    BarStore s(dir);
+    s.merge("A", Timeframe::Day, {{100, 1, 1, 1, 1, 1, 1}, {200, 1, 1, 1, 2, 1, 1}, {300, 1, 1, 1, 3, 1, 1}});
+    s.save("A", Timeframe::Day);
+  }
+  BarStore s2(dir);
+  s2.merge("A", Timeframe::Day, {{100, 5, 5, 5, 5, 5, 5}});  // merged, not saved
+  s2.merge("A", Timeframe::Day, {{200, 6, 6, 6, 6, 6, 6}});
+  s2.save("A", Timeframe::Day);                              // saved, not flushed
+  s2.load_range({"A"}, Timeframe::Day, 0, 1000);
+  const auto& b = s2.bars("A", Timeframe::Day);
+  REQUIRE(b.size() == 3);
+  CHECK(b[0].c == 5);
+  CHECK(b[1].c == 6);
+  CHECK(b[2].c == 3);  // lake-only bar is loaded
+}
