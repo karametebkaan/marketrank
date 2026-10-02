@@ -96,6 +96,47 @@ function sample(z, meta, lattice, col, row) {
   return { x: (px + 0.5) * lattice.cols / meta.w, y: (py + 0.5) * lattice.rows / meta.h, v: z[py * meta.w + px] };
 }
 
+// ---- Holding arrows: from the smoothed surface to the holding's exact (unsmoothed) height ----
+// Everything about the look lives here; swap arrowLayers() for another glyph (cylinder shaft, etc.) freely.
+const ARROW = {
+  up: [0, 170, 80, 255], down: [210, 40, 40, 255], flat: [120, 120, 120, 230],
+  shaftPx: 7,          // shaft width in pixels
+  minGapFrac: 0.02,    // gaps below this fraction of the span get a neutral marker instead of an arrow
+};
+// Arrowheads: billboarded triangles of a fixed pixel size (IconLayer), so the direction reads at any zoom even
+// when the gap is short. The triangle's tip is anchored on the exact-height point.
+const HEAD_PX = 28;
+function headAtlas() {
+  if (headAtlas.url) return headAtlas.url;
+  // A white halo under a dark outline keeps a red head readable on red terrain (and a green one on green).
+  const tri = (dx, pts, c) => `<g transform="translate(${dx} 0)" stroke-linejoin="round"><polygon points="${pts}" fill="white" stroke="white" stroke-width="9"/>` +
+    `<polygon points="${pts}" fill="rgb(${c.slice(0, 3).join(',')})" stroke="rgb(25,25,25)" stroke-width="3"/></g>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="128" height="64">${tri(0, '32,7 57,57 7,57', ARROW.up)}${tri(64, '7,7 57,7 32,57', ARROW.down)}</svg>`;
+  headAtlas.url = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+  return headAtlas.url;
+}
+const HEAD_MAPPING = { up: { x: 0, y: 0, width: 64, height: 64, anchorY: 7 }, down: { x: 64, y: 0, width: 64, height: 64, anchorY: 57 } };
+
+// items: holdings with x, y, zt (surface height), ez (exact height), dir ('up' | 'down' | 'flat').
+function arrowLayers(items, params) {
+  const arrows = items.filter((n) => n.dir === 'up' || n.dir === 'down');
+  return [
+    new deck.LineLayer({
+      id: 'holding-arrow-shafts', data: arrows, getSourcePosition: (n) => [n.x, n.y, n.zt], getTargetPosition: (n) => [n.x, n.y, n.ez],
+      getColor: (n) => ARROW[n.dir], getWidth: ARROW.shaftPx, widthUnits: 'pixels', pickable: true, parameters: params,
+    }),
+    new deck.IconLayer({
+      id: 'holding-arrowheads', data: arrows, iconAtlas: headAtlas(), iconMapping: HEAD_MAPPING, getIcon: (n) => n.dir,
+      getPosition: (n) => [n.x, n.y, n.ez], getSize: HEAD_PX, sizeUnits: 'pixels', billboard: true, pickable: true, parameters: params,
+    }),
+    new deck.ScatterplotLayer({
+      id: 'holding-flat-markers', data: items.filter((n) => n.dir === 'flat'), getPosition: (n) => [n.x, n.y, n.zt + 0.2],
+      getRadius: 5, radiusUnits: 'pixels', getFillColor: ARROW.flat, stroked: true, getLineColor: [255, 255, 255, 230],
+      getLineWidth: 1.5, lineWidthUnits: 'pixels', pickable: true, parameters: params,
+    }),
+  ];
+}
+
 function signColor(v, alpha) {
   if (v === null || v === undefined || !Number.isFinite(v) || v === 0) return [150, 150, 150, alpha];
   return v > 0 ? [...POS, alpha] : [...NEG, alpha];
@@ -116,9 +157,8 @@ function render() {
   });
   const byI = new Map(nodes.map((n) => [n.i, n]));
   const pos = (n, lift = 0.3) => [n.x, n.y, n.zt + lift];
-  // Labels: the 30 highest and lowest by the displayed height value.
+  // Label candidates: the 30 highest and lowest by the displayed height value (decluttered later).
   const ranked = nodes.filter((n) => n.hd !== null).sort((a, b) => b.hd - a.hd);
-  const labeled = ranked.slice(0, 30).concat(ranked.slice(-30));
   const nArcs = shock ? 0 : Number($('arcs').value);
   const arcs = f.arcs.slice(0, nArcs).map((a) => ({ s: byI.get(a[0]), t: byI.get(a[1]), w: a[2] })).filter((a) => a.s && a.t);
   const wmax = arcs.reduce((m, a) => Math.max(m, a.w), 1e-12);
@@ -137,26 +177,25 @@ function render() {
       getWidth: (a) => 0.5 + 1.5 * a.w / wmax, widthUnits: 'pixels', getSourceColor: [255, 140, 0, 80], getTargetColor: [255, 215, 0, 80],
     }),
   ];
-  if ($('labels').checked) {
-    layers.push(new deck.TextLayer({
-      id: 'labels', data: labeled, getPosition: (n) => pos(n, 0.9), getText: (n) => n.ticker, getSize: 12,
-      getColor: [25, 25, 25], getTextAnchor: 'middle', getAlignmentBaseline: 'bottom', billboard: true,
-    }));
-  }
-  // Portfolio rings and tickers last, without depth testing, so they stay visible at any lattice size.
+  // Portfolio: an arrow from the smoothed surface to each holding's exact height (base view only; in the shock
+  // view the server sends no per-stock Δh for every holding, so the rings stay on the Δh surface). The ring and
+  // ticker sit at the arrow tip. Drawn last without depth testing, so they stay visible at any lattice size.
   const onTop = { depthCompare: 'always', depthWriteEnabled: false };
   const ring0 = Math.max(0.6, 0.012 * span(L));
+  const minGap = ARROW.minGapFrac * span(L);
+  const hold = holdings.map((n) => {
+    if (shock || n.hd === null || !Number.isFinite(n.hd)) return { ...n, ez: n.zt, dir: 'none' };
+    const ez = heightOf(n.hd, scale, clip), gap = ez - n.zt;
+    return { ...n, exact: n.hd, surface: n.v, ez, dir: Math.abs(gap) < minGap ? 'flat' : gap > 0 ? 'up' : 'down' };
+  });
+  if (!shock) layers.push(...arrowLayers(hold, onTop));
   layers.push(
     new deck.ScatterplotLayer({
-      id: 'portfolio', data: holdings, getPosition: (n) => pos(n, 0.4), getRadius: (n) => ring0 + 1.5 * n.weight, radiusUnits: 'common',
-      stroked: true, filled: false, getLineColor: [0, 230, 90, 255], getLineWidth: 3, lineWidthUnits: 'pixels', parameters: onTop,
-    }),
-    new deck.TextLayer({
-      id: 'portfolio-labels', data: holdings, getPosition: (n) => pos(n, 0.9), getText: (n) => n.ticker, getSize: 14,
-      getColor: [0, 110, 45], fontWeight: 'bold', getTextAnchor: 'middle', getAlignmentBaseline: 'bottom', billboard: true,
-      outlineWidth: 3, outlineColor: [255, 255, 255, 230], fontSettings: { sdf: true }, parameters: onTop,
+      id: 'portfolio', data: hold, getPosition: (n) => [n.x, n.y, n.ez + 0.1], getRadius: (n) => ring0 + 1.5 * n.weight, radiusUnits: 'common',
+      stroked: true, filled: false, getLineColor: [0, 230, 90, 255], getLineWidth: 3, lineWidthUnits: 'pixels', pickable: true, parameters: onTop,
     }),
   );
+  S.holdingArrows = hold.map((n) => ({ ticker: n.ticker, exact: n.exact, surface: n.surface, dir: n.dir }));
   const hi = S.highlight === null ? undefined : byI.get(S.highlight);
   if (hi) {
     layers.push(new deck.ScatterplotLayer({
@@ -164,7 +203,68 @@ function render() {
       stroked: true, filled: false, getLineColor: [255, 210, 0, 255], getLineWidth: 4, lineWidthUnits: 'pixels', parameters: onTop,
     }));
   }
-  S.deck.setProps({ layers });
+  S.baseLayers = layers;
+  S.labelCands = {
+    hold: hold.map((n) => ({ ticker: n.ticker, p: [n.x, n.y, n.ez], dir: n.dir })),
+    others: $('labels').checked
+      ? ranked.slice(0, 30).concat(ranked.slice(-30).reverse()).map((n) => ({ ticker: n.ticker, p: pos(n, 0.9) })) : [],
+    onTop,
+  };
+  S.deck.setProps({ layers: [...layers, ...labelLayers()] });
+  scheduleLabels();
+}
+
+// ---- Label decluttering: holdings first, then the highest, then the lowest values; a label is skipped when its
+// screen box overlaps one already placed. At most LABEL_CAP labels. Re-run (debounced) after camera moves.
+const LABEL_CAP = 25;
+function labelLayers() {
+  const c = S.labelCands;
+  if (!c || !S.deck) return [];
+  let vp;
+  try { vp = S.deck.getViewports()[0]; } catch (e) { vp = undefined; }  // no view manager before the first frame
+  const placed = [], hold = [], others = [];
+  const overlaps = (b) => placed.some((q) => b[0] < q[2] && q[0] < b[2] && b[1] < q[3] && q[1] < b[3]);
+  if (vp) {
+    for (const l of c.hold) {  // holdings are always labelled; their boxes still block the others
+      const [x, y] = vp.project(l.p);
+      placed.push([x + 14, y - 9, x + 14 + 8.4 * l.ticker.length, y + 9]);
+      const r = HEAD_PX / 2;  // the arrowhead hangs above (down arrow) or below (up arrow) the tip
+      if (l.dir === 'down') placed.push([x - r, y - HEAD_PX, x + r, y]);
+      if (l.dir === 'up') placed.push([x - r, y, x + r, y + HEAD_PX]);
+      hold.push(l);
+    }
+    for (const l of c.others) {
+      if (placed.length >= LABEL_CAP) break;
+      const [x, y] = vp.project(l.p), w = 7.2 * l.ticker.length;
+      const b = [x - w / 2 - 2, y - 15, x + w / 2 + 2, y + 1];
+      if (overlaps(b)) continue;
+      placed.push(b);
+      others.push(l);
+    }
+  } else {
+    hold.push(...c.hold);  // no viewport yet: holdings only; scheduleLabels() retries
+  }
+  return [
+    new deck.TextLayer({
+      id: 'labels', data: others, getPosition: (l) => l.p, getText: (l) => l.ticker, getSize: 12,
+      getColor: [25, 25, 25], getTextAnchor: 'middle', getAlignmentBaseline: 'bottom', billboard: true,
+    }),
+    new deck.TextLayer({
+      id: 'portfolio-labels', data: hold, getPosition: (l) => l.p, getText: (l) => l.ticker, getSize: 14,
+      getColor: [0, 110, 45], fontWeight: 'bold', getTextAnchor: 'start', getAlignmentBaseline: 'center', getPixelOffset: [14, 0],
+      billboard: true, outlineWidth: 3, outlineColor: [255, 255, 255, 230], fontSettings: { sdf: true }, parameters: c.onTop,
+    }),
+  ];
+}
+function scheduleLabels() {
+  clearTimeout(S.labelTimer);
+  S.labelTimer = setTimeout(() => {
+    if (!S.deck || !S.baseLayers) return;
+    S.deck.setProps({ layers: [...S.baseLayers, ...labelLayers()] });
+    let ready = false;
+    try { ready = S.deck.getViewports().length > 0; } catch (e) { ready = false; }
+    if (!ready) scheduleLabels();  // retry until the first frame has created the viewport
+  }, 120);
 }
 
 function initDeck(lattice) {
@@ -174,10 +274,17 @@ function initDeck(lattice) {
     views: new deck.OrbitView({ orbitAxis: 'Z', fovy: 40 }),
     initialViewState: { target: [lattice.cols / 2, lattice.rows / 2, 0], rotationX: 45, rotationOrbit: -25, zoom: Math.log2(Math.min(el.clientWidth, el.clientHeight) / (1.6 * span(lattice))), minZoom: -6, maxZoom: 12 },
     controller: true,
+    onViewStateChange: () => { scheduleLabels(); },
     getTooltip: ({ object }) => (object && object.ticker
-      ? `${object.ticker} · ${object.sector}\n${clusterLine(object)}MarketRank π·N ${fmt(object.mr, 3)}  heartbeat ${fmtSigned(object.pulse, 4)}\nπ ${object.pi === null ? 'n/a' : object.pi.toExponential(3)}  h ${fmt(object.h, 3)}\ndisplayed height (${heightName().short}) ${fmtSigned(object.hd, 3)}`
+      ? `${object.ticker} · ${object.sector}\n${clusterLine(object)}MarketRank π·N ${fmt(object.mr, 3)}  heartbeat ${fmtSigned(object.pulse, 4)}\nπ ${object.pi === null ? 'n/a' : object.pi.toExponential(3)}  h ${fmt(object.h, 3)}\ndisplayed height (${heightName().short}) ${fmtSigned(object.hd, 3)}${holdingLine(object)}`
       : null),
   });
+}
+
+// Holding tooltip line: exact (unsmoothed) value vs the smoothed surface under it.
+function holdingLine(o) {
+  if (o.exact === undefined || o.surface === undefined) return '';
+  return `\nholding: exact ${fmtSigned(o.exact, 3)} · surface ${fmtSigned(o.surface, 3)} · Δ ${fmtSigned(o.exact - o.surface, 3)}`;
 }
 
 // "cluster #k · n stocks" (flux territories) or the sector's group size; loose stocks are the pooled remainder.
@@ -275,6 +382,14 @@ function sparkline(series) {
   return svg;
 }
 
+// Short sector names for the narrow table column; the full name goes in the cell's title.
+const SECTOR_ABBR = {
+  'Information Technology': 'InfoTech', 'Consumer Discretionary': 'ConsDisc', 'Communication Services': 'CommSvc',
+  'Health Care': 'HealthCare', Financials: 'Financials', Industrials: 'Industrials', Energy: 'Energy', Materials: 'Materials',
+  'Real Estate': 'RealEst', Utilities: 'Utilities', 'Consumer Staples': 'ConsStap', 'ETF/Fund': 'ETF', Unclassified: 'Unclass.',
+};
+function sectorAbbr(s) { return SECTOR_ABBR[s] || s; }
+
 function cell(cls, text) { const d = document.createElement('span'); d.className = cls; d.textContent = text; return d; }
 
 // The table's metric: π·N (`mr`). The sparkline (series of π·N) and the pulse animation follow it.
@@ -289,7 +404,7 @@ function renderTop(rows) {
     row.title = `${r.prev_rank === null ? 'new in the ranking' : `previous rank ${r.prev_rank}`} · MarketRank π·N ${fmt(r.mr, 4)} · heartbeat Δlog π ${fmtSigned(r.pulse, 5)} · h ${fmt(r.h, 4)}`;
     const v = topValue(r);
     const pl = r.pulse === null || r.pulse === undefined ? 'same' : r.pulse > 0 ? 'up' : r.pulse < 0 ? 'down' : 'same';
-    row.append(cell('rk', String(r.rank)), cell(`mv ${mv[1]}`, mv[0]), cell('tk', r.ticker), cell('sec', r.sector),
+    row.append(cell('rk', String(r.rank)), cell(`mv ${mv[1]}`, mv[0]), cell('tk', r.ticker), Object.assign(cell('sec', sectorAbbr(r.sector)), { title: r.sector }),
       cell('hv', fmt(v, 3)), cell(`pl ${pl}`, fmtSigned(r.pulse, 4)), sparkline(r.series));
     row.addEventListener('click', () => {
       S.highlight = S.highlight === r.i ? null : r.i;
@@ -358,7 +473,10 @@ function showStatus() {
   const parts = ['MarketRank', st.label];
   if (st.error) parts.push(`error: ${st.error}`);
   else if (!st.ready || !S.frame) parts.push(`computing ${st.computed}/${st.total}`);
-  else parts.push(`${S.frame.nodes.length} stocks`, S.frame.time.slice(0, 10));
+  else {
+    const funds = S.frame.nodes.reduce((k, n) => k + (n[2] === 'ETF/Fund' ? 1 : 0), 0);
+    parts.push(`${S.frame.nodes.length} active (${S.frame.nodes.length - funds} stocks, ${funds} ETF/funds)`, S.frame.time.slice(0, 10));
+  }
   if (S.shock) parts.push(`shock ${S.shock.shocked.map((x) => x.ticker).join(',')}`);
   $('status').textContent = parts.join(' · ');
   showLegend();
