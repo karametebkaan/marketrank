@@ -1,10 +1,14 @@
 #include <doctest/doctest.h>
 
 #include <chrono>
+#include <atomic>
+#include <cmath>
 #include <thread>
+#include <omp.h>
 
 #include "market/panel.hpp"
 #include "market/synthetic_market.hpp"
+#include "pipeline/shock.hpp"
 #include "server/frame_store.hpp"
 #include "test_util.hpp"
 
@@ -100,4 +104,116 @@ TEST_CASE("shock before ready throws") {
   Market m = market();
   FrameStore fs(m.panel, m.secs, CoreParams::money_flow(), LandscapeParams{}, 10);
   CHECK_THROWS_AS(fs.shock({{0, -1.0}}), std::runtime_error);
+}
+
+TEST_CASE("frame store survives concurrent set_params") {
+  Market m = market();
+  FrameStore fs(m.panel, m.secs, CoreParams::money_flow(), LandscapeParams{}, 10);
+  fs.start();
+  auto hammer = [&](bool legacy) {
+    for (int k = 0; k < 50; ++k)
+      fs.set_params(legacy ? CoreParams::legacy() : CoreParams::money_flow(), LandscapeParams{});
+  };
+  std::thread a(hammer, true), b(hammer, false);
+  a.join();
+  b.join();
+  wait_ready(fs);
+}
+
+TEST_CASE("frame store destruction does not hang mid-compute") {
+  Market m = market();
+  {
+    FrameStore fs(m.panel, m.secs, CoreParams::money_flow(), LandscapeParams{}, 10);
+  }
+  {
+    FrameStore fs(m.panel, m.secs, CoreParams::money_flow(), LandscapeParams{}, 10);
+    fs.start();
+    std::this_thread::sleep_for(5ms);
+  }
+  {
+    FrameStore fs(m.panel, m.secs, CoreParams::money_flow(), LandscapeParams{}, 10);
+    fs.start();
+    fs.set_params(CoreParams::legacy(), LandscapeParams{});
+    fs.set_params(CoreParams::money_flow(), LandscapeParams{});
+  }
+  CHECK(true);
+}
+
+TEST_CASE("frame store shock matches run_with_shock and empty shock is neutral") {
+  Market m = market();
+  FrameStore fs(m.panel, m.secs, CoreParams::money_flow(), LandscapeParams{}, 10);
+  fs.start();
+  wait_ready(fs);
+  auto z = fs.shock({});
+  CHECK(z.delta.l1_dpi == 0.0);
+  for (double d : z.delta.dh)
+    if (!std::isnan(d)) CHECK(d == 0.0);
+  const std::size_t node = fs.landscape(std::nullopt)->nodes.front().i;
+  auto ref = run_with_shock(m.panel, CoreParams::money_flow(), {{node, -10.0}});
+  auto rd = shock_response(ref.first, ref.second);
+  auto r = fs.shock({{node, -10.0}});
+  CHECK(test::same_values(rd.dh, r.delta.dh));
+  CHECK(test::same_values(rd.dpi, r.delta.dpi));
+}
+
+TEST_CASE("frame store reports worker errors and stays not ready") {
+  SyntheticConfig cfg;
+  cfg.bars = 2;
+  cfg.rotation_start = 1;
+  BarStore store(test::temp_dir("frame_store_short"));
+  Market m;
+  m.secs = generate_synthetic(cfg, store);
+  std::vector<std::string> tickers;
+  for (auto& s : m.secs) tickers.push_back(s.ticker);
+  m.panel = build_panel(store, tickers, cfg.tf);
+  REQUIRE(m.panel.T() < 3);
+  FrameStore fs(m.panel, m.secs, CoreParams::money_flow(), LandscapeParams{}, 10);
+  fs.start();
+  for (int k = 0; k < 200 && fs.status().error.empty(); ++k) std::this_thread::sleep_for(10ms);
+  auto st = fs.status();
+  CHECK_FALSE(st.error.empty());
+  CHECK_FALSE(st.ready);
+  CHECK_FALSE(st.running);
+}
+
+TEST_CASE("frame store concurrent shocks agree") {
+  Market m = market();
+  FrameStore fs(m.panel, m.secs, CoreParams::money_flow(), LandscapeParams{}, 10);
+  fs.start();
+  wait_ready(fs);
+  const std::size_t node = fs.landscape(std::nullopt)->nodes.front().i;
+  auto ref = fs.shock({{node, -10.0}});
+  std::vector<FrameStore::ShockResult> rs(4);
+  std::vector<std::thread> th;
+  for (int k = 0; k < 4; ++k)
+    th.emplace_back([&, k] {
+      for (int i = 0; i < 3; ++i) rs[k] = fs.shock({{node, -10.0}});
+    });
+  for (auto& t : th) t.join();
+  for (auto& r : rs) {
+    CHECK(test::same_values(r.delta.dh, ref.delta.dh));
+    CHECK(r.raster.z == ref.raster.z);
+  }
+}
+
+TEST_CASE("frame store is identical for one and eight OpenMP threads") {
+  Market m = market();
+  const int saved = omp_get_max_threads();
+  auto run = [&](int threads) {
+    omp_set_num_threads(threads);
+    FrameStore fs(m.panel, m.secs, CoreParams::money_flow(), LandscapeParams{}, 10);
+    fs.start();
+    wait_ready(fs);
+    return fs.landscape(std::nullopt);
+  };
+  auto one = run(1);
+  auto eight = run(8);
+  omp_set_num_threads(saved);
+  CHECK(one->raster.z == eight->raster.z);
+}
+
+TEST_CASE("frame store rejects zero max_frames") {
+  Market m = market();
+  CHECK_THROWS_AS(FrameStore(m.panel, m.secs, CoreParams::money_flow(), LandscapeParams{}, 0),
+                  std::invalid_argument);
 }

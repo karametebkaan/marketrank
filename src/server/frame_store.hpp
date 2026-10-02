@@ -45,6 +45,8 @@ class FrameStore {
   std::vector<TimePoint> times() const;
   std::shared_ptr<const LandscapeFrame> landscape(std::optional<TimePoint> t) const;
   ShockResult shock(const std::vector<Shock>& shocks);
+  // Callers blocked here must be released (by progress, a timeout, or stopping them) before the store
+  // is destroyed: destruction does not wake waiters.
   std::uint64_t wait_for_change(std::uint64_t seen, std::chrono::milliseconds timeout) const;
   const Panel& panel() const { return panel_; }
   const std::vector<Security>& nodes() const { return nodes_; }
@@ -52,13 +54,15 @@ class FrameStore {
   LandscapeParams landscape_params() const;
 
  private:
-  void stop_worker();
+  void stop_worker();                  // call with control_m_ held and m_ NOT held (it joins)
+  void launch_locked();                // call with control_m_ held and m_ NOT held
   void run(std::uint64_t gen, CoreParams core, LandscapeParams land);
   void bump();  // version++ and notify (call with m_ held)
 
   const Panel panel_;
   const std::vector<Security> nodes_;
   const std::size_t max_frames_;
+  std::mutex control_m_;  // serializes start/set_params/stop; guards worker_. Always taken before m_.
   mutable std::mutex m_;
   mutable std::condition_variable cv_;
   std::thread worker_;

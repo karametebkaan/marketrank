@@ -8,11 +8,15 @@ FrameStore::FrameStore(Panel panel, std::vector<Security> nodes, CoreParams core
                        std::size_t max_frames)
     : panel_(std::move(panel)), nodes_(std::move(nodes)), max_frames_(max_frames), core_(std::move(core)),
       land_(land) {
+  if (max_frames_ == 0) throw std::invalid_argument("FrameStore: max_frames must be positive");
   if (nodes_.size() != panel_.N()) throw std::invalid_argument("FrameStore: nodes/panel size mismatch");
   core_.validate();
 }
 
-FrameStore::~FrameStore() { stop_worker(); }
+FrameStore::~FrameStore() {
+  std::lock_guard<std::mutex> ck(control_m_);
+  stop_worker();
+}
 
 void FrameStore::bump() {
   ++version_;
@@ -24,8 +28,7 @@ void FrameStore::stop_worker() {
   if (worker_.joinable()) worker_.join();
 }
 
-void FrameStore::start() {
-  stop_worker();
+void FrameStore::launch_locked() {
   std::lock_guard<std::mutex> lk(m_);
   const std::uint64_t gen = ++gen_;
   frames_.clear();
@@ -36,18 +39,35 @@ void FrameStore::start() {
   status_.running = true;
   status_.generation = gen;
   bump();
-  worker_ = std::thread([this, gen, core = core_, land = land_] { run(gen, core, land); });
+  try {
+    worker_ = std::thread([this, gen, core = core_, land = land_] { run(gen, core, land); });
+  } catch (const std::exception& e) {
+    status_.running = false;
+    status_.error = std::string("thread launch failed: ") + e.what();
+    bump();
+  }
+}
+
+void FrameStore::start() {
+  std::lock_guard<std::mutex> ck(control_m_);
+  stop_worker();
+  launch_locked();
 }
 
 void FrameStore::set_params(CoreParams core, LandscapeParams land) {
   core.validate();
+  std::lock_guard<std::mutex> ck(control_m_);
   stop_worker();
   {
     std::lock_guard<std::mutex> lk(m_);
     core_ = std::move(core);
     land_ = land;
+    status_.ready = false;
+    pre_last_.reset();
+    last_core_.reset();
+    frames_.clear();
   }
-  start();
+  launch_locked();
 }
 
 void FrameStore::run(std::uint64_t gen, CoreParams core, LandscapeParams land) {
@@ -83,6 +103,12 @@ void FrameStore::run(std::uint64_t gen, CoreParams core, LandscapeParams land) {
     if (gen_.load() != gen) return;
     status_.running = false;
     status_.error = e.what();
+    bump();
+  } catch (...) {
+    std::lock_guard<std::mutex> lk(m_);
+    if (gen_.load() != gen) return;
+    status_.running = false;
+    status_.error = "unknown error";
     bump();
   }
 }
