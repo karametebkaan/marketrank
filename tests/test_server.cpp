@@ -11,6 +11,7 @@
 
 #include "cli/args.hpp"
 #include "market/panel.hpp"
+#include "market/sec_sectors.hpp"
 #include "market/synthetic_market.hpp"
 #include "server/http_server.hpp"
 #include "test_util.hpp"
@@ -26,7 +27,7 @@ struct Fixture {
   std::unique_ptr<FluxServer> server;
   std::thread th;
   int port = 0;
-  explicit Fixture(bool start = true, CoreParams core = CoreParams::money_flow()) {
+  explicit Fixture(bool start = true, CoreParams core = CoreParams::money_flow(), std::size_t etf_tail = 0) {
     SyntheticConfig cfg;
     cfg.bars = 80;
     cfg.rotation_start = 40;
@@ -34,6 +35,7 @@ struct Fixture {
     auto secs = generate_synthetic(cfg, bars);
     std::vector<std::string> tickers;
     for (auto& s : secs) tickers.push_back(s.ticker);
+    for (std::size_t i = secs.size() - etf_tail; i < secs.size(); ++i) secs[i].sector = kSectorEtfFund;
     store = std::make_unique<FrameStore>(build_panel(bars, tickers, cfg.tf), secs, core, LandscapeParams{}, 10);
     if (start) store->start();
     for (int k = 0; start && k < 600 && !store->status().ready; ++k) std::this_thread::sleep_for(50ms);
@@ -546,4 +548,34 @@ TEST_CASE("server: at most 8 SSE clients; a 9th gets 503") {
   CHECK(finished);
   if (!finished) std::_Exit(1);
   for (auto& t : readers) t.join();
+}
+
+TEST_CASE("server: show_etf round-trips through /api/params and /api/status, default hidden") {
+  Fixture f(true, CoreParams::money_flow(), 5);
+  httplib::Client c("127.0.0.1", f.port);
+  auto etf_cells = [&] {
+    std::size_t placed = 0, etf = 0;
+    for (const auto& n : json::parse(c.Get("/api/frame")->body)["nodes"]) {
+      if (n[2] != kSectorEtfFund) continue;
+      ++etf;
+      placed += n[3].get<int>() >= 0 ? 1 : 0;
+    }
+    return std::pair{etf, placed};
+  };
+  CHECK(json::parse(c.Get("/api/status")->body)["show_etf"] == false);
+  auto [etf0, placed0] = etf_cells();
+  CHECK(etf0 == 5);  // still listed (exact pi, tables)
+  CHECK(placed0 == 0);
+  const auto steps = f.store->pipeline_steps();
+  CHECK(c.Post("/api/params", R"({"show_etf":true})", "application/json")->status == 202);
+  for (int k = 0; k < 600 && !f.store->status().ready; ++k) std::this_thread::sleep_for(10ms);
+  CHECK(json::parse(c.Get("/api/status")->body)["show_etf"] == true);
+  CHECK_FALSE(f.store->landscape_params().exclude_etf);
+  CHECK(f.store->pipeline_steps() > steps);
+  CHECK(etf_cells().second == 5);
+  CHECK(c.Post("/api/params", R"({"show_etf":"yes"})", "application/json")->status == 400);
+  CHECK(c.Post("/api/params", R"({"show_etf":false})", "application/json")->status == 202);
+  for (int k = 0; k < 600 && !f.store->status().ready; ++k) std::this_thread::sleep_for(10ms);
+  CHECK(json::parse(c.Get("/api/status")->body)["show_etf"] == false);
+  CHECK(etf_cells().second == 0);
 }

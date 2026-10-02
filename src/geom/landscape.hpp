@@ -66,6 +66,9 @@ struct LandscapeParams {
   int recluster_bars = 5;   // flux mode: re-cluster every this many frames
   double resolution = 1.0;  // flux mode: Louvain resolution
   int warmup_bars = 5;      // serve mode: the first this many bars only feed the model (no landscape, no clustering)
+  // Leave the ETF/Fund sector (kSectorEtfFund) out of the landscape surface: such nodes stay in the frame (exact pi,
+  // tables, flows) with cell -1 but are not placed, not on the lattice and not in the IDW / smoothing. Placement.
+  bool exclude_etf = true;
 };
 
 struct LandscapeNode {
@@ -88,7 +91,7 @@ struct LandscapeFrame {
   TimePoint t = 0;
   std::size_t n = 0;  // universe size the frame was built for
   LatticeSize size;
-  std::vector<LandscapeNode> nodes;  // active nodes, ascending i
+  std::vector<LandscapeNode> nodes;  // active nodes, ascending i; cell -1 = left out of the landscape (exclude_etf)
   std::vector<LandscapeArc> arcs;
   Raster raster;
   double compute_ms = 0;
@@ -123,11 +126,14 @@ class LandscapeBuilder {
   // group[i] is node i's sector id (used in sector mode); empty means one group for all nodes.
   LandscapeBuilder(std::size_t n, LandscapeParams params, std::vector<std::uint32_t> group = {});
   LandscapeFrame build(const Frame& f);
+  // Nodes (ex[i] != 0) left out of the landscape surface; empty = none. They stay in the frame with cell -1.
+  void set_excluded(std::vector<char> ex) { excluded_ = std::move(ex); }
 
  private:
   std::size_t n_;
   LandscapeParams p_;
   std::vector<std::uint32_t> group_;
+  std::vector<char> excluded_;
   std::vector<double> s_prev_;   // smoothed ranking hotness per node
   std::vector<char> has_prev_;   // node was active in the previous frame
   // Cell hysteresis: the previous frame's placement and each node's group identity in it.

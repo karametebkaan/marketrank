@@ -100,7 +100,7 @@ double landscape_value(double h, double pi, std::size_t n_active, double size_sh
 bool same_placement(const LandscapeParams& a, const LandscapeParams& b) {
   return a.value == b.value && a.order_smoothing == b.order_smoothing && a.rank_tolerance == b.rank_tolerance && a.max_arcs == b.max_arcs &&
          a.territory == b.territory && a.recluster_bars == b.recluster_bars && a.resolution == b.resolution &&
-         a.warmup_bars == b.warmup_bars;
+         a.warmup_bars == b.warmup_bars && a.exclude_etf == b.exclude_etf;
 }
 
 namespace {
@@ -109,6 +109,7 @@ Raster node_raster(const LandscapeFrame& f, const LandscapeParams& p) {
   std::vector<std::int32_t> cell(f.n, -1);
   std::vector<double> v(f.n, std::numeric_limits<double>::quiet_NaN());
   for (const auto& nd : f.nodes) {
+    if (nd.cell < 0) continue;  // left out of the landscape
     cell[nd.i] = nd.cell;
     v[nd.i] = nd.hdisp;
   }
@@ -151,6 +152,7 @@ Raster delta_raster(const LandscapeFrame& base, const std::vector<double>& delta
   std::vector<std::int32_t> cell(delta.size(), -1);
   std::vector<double> v(delta.size(), std::numeric_limits<double>::quiet_NaN());
   for (const auto& nd : base.nodes) {
+    if (nd.cell < 0) continue;
     cell[nd.i] = nd.cell;
     v[nd.i] = display_height(delta[nd.i], p.height);
   }
@@ -177,36 +179,50 @@ LandscapeFrame LandscapeBuilder::build(const Frame& f) {
   if (f.h.size() != n_ || f.pi.size() != n_ || f.P.n != n_ ||
       (!f.forecasts.empty() && f.forecasts.front().score.size() != n_))
     throw std::invalid_argument("LandscapeBuilder: frame vector sizes mismatch");
-  std::size_t n_active = 0;
-  for (std::size_t i = 0; i < n_; ++i) n_active += f.active[i] ? 1 : 0;
+  // Excluded nodes (exclude_etf) stay in the frame with their exact pi but are inactive for placement.
+  std::vector<bool> act = f.active;
+  if (excluded_.size() == n_)
+    for (std::size_t i = 0; i < n_; ++i)
+      if (excluded_[i]) act[i] = false;
+  std::size_t n_active = 0, n_all = 0;  // placed nodes; all active nodes (the N of pi*N)
+  for (std::size_t i = 0; i < n_; ++i) {
+    n_active += act[i] ? 1 : 0;
+    n_all += f.active[i] ? 1 : 0;
+  }
   const LatticeSize size = lattice_size(n_active);
   // Size shares over the active stocks (PiRelSize) and the teleport-floor flags.
   std::vector<double> share(n_, std::numeric_limits<double>::quiet_NaN());
   if (f.size_ref.size() == n_) {
     std::vector<double> ref(n_, 0.0);
     for (std::size_t i = 0; i < n_; ++i)
-      if (f.active[i]) ref[i] = f.size_ref[i];
+      if (act[i]) ref[i] = f.size_ref[i];
     share = size_shares(ref);
+    // Excluded nodes keep a share against the placed total, so their displayed value stays finite.
+    double sum = 0;
+    for (double r : ref)
+      if (std::isfinite(r) && r > 0) sum += r;
+    for (std::size_t i = 0; i < n_; ++i)
+      if (f.active[i] && !act[i] && std::isfinite(f.size_ref[i]) && f.size_ref[i] > 0 && sum > 0) share[i] = f.size_ref[i] / sum;
   }
   std::vector<bool> floor(n_, false);
-  for (std::size_t i = 0; i < n_; ++i) floor[i] = f.active[i] && at_teleport_floor(f.pi[i], f.pi_floor);
+  for (std::size_t i = 0; i < n_; ++i) floor[i] = act[i] && at_teleport_floor(f.pi[i], f.pi_floor);
   // Ranking value: the landscape value (log(pi N) or signed-log h) blended with the previous frame's value;
   // non-finite values rank as 0.
   std::vector<double> rank(n_, 0.0);
   const std::vector<char> was_active = has_prev_;
   for (std::size_t i = 0; i < n_; ++i) {
-    if (!f.active[i]) {
+    if (!act[i]) {
       has_prev_[i] = 0;
       continue;
     }
-    double cur = landscape_value(f.h[i], f.pi[i], n_active, share[i], p_.value, p_.height);
+    double cur = landscape_value(f.h[i], f.pi[i], n_all, share[i], p_.value, p_.height);
     if (!std::isfinite(cur)) cur = 0.0;
     rank[i] = has_prev_[i] ? (1.0 - p_.order_smoothing) * cur + p_.order_smoothing * s_prev_[i] : cur;
     s_prev_[i] = rank[i];
     has_prev_[i] = 1;
   }
   const bool flux = p_.territory == TerritoryMode::Flux;
-  const std::vector<std::uint32_t>& grp = flux ? tracker_.update(f.P, f.active) : group_;
+  const std::vector<std::uint32_t>& grp = flux ? tracker_.update(f.P, act) : group_;
   // Group identity: the persistent community label in flux mode (-1 = loose pool), the sector id otherwise.
   std::vector<std::int64_t> key(n_, -1);
   for (std::size_t i = 0; i < n_; ++i)
@@ -214,10 +230,10 @@ LandscapeFrame LandscapeBuilder::build(const Frame& f) {
   const bool have_mem = !mem_.cell.empty();
   if (have_mem)
     for (std::size_t i = 0; i < n_; ++i)
-      if (!f.active[i] || !was_active[i] || key[i] != prev_key_[i]) mem_.cell[i] = -1;
+      if (!act[i] || !was_active[i] || key[i] != prev_key_[i]) mem_.cell[i] = -1;
   // Under Pi the floor stocks all tie at one value; they would drag the territory medians (mountain or crater) to
   // the floor, so the medians leave them out.
-  const TerritoryLayout layout = territory_layout(f.active, grp, rank, size, have_mem ? &mem_ : nullptr, p_.rank_tolerance,
+  const TerritoryLayout layout = territory_layout(act, grp, rank, size, have_mem ? &mem_ : nullptr, p_.rank_tolerance,
                                                   p_.value == LandscapeValue::Pi ? floor : std::vector<bool>{});
   const std::vector<std::int32_t>& cells = layout.cell;
   mem_.size = size;
@@ -232,16 +248,17 @@ LandscapeFrame LandscapeBuilder::build(const Frame& f) {
   const auto& score = f.forecasts.empty() ? f.h : f.forecasts.front().score;
   for (std::size_t i = 0; i < n_; ++i) {
     if (!f.active[i]) continue;
-    const double hd = landscape_value(f.h[i], f.pi[i], n_active, share[i], p_.value, p_.height);
-    lf.nodes.push_back({static_cast<std::uint32_t>(i), cells[static_cast<std::size_t>(i)],
-                        static_cast<float>((cells[i] % cols + 0.5) / static_cast<double>(size.cols)),
-                        static_cast<float>((cells[i] / cols + 0.5) / static_cast<double>(size.rows)), f.h[i], hd, f.pi[i], score[i],
+    const double hd = landscape_value(f.h[i], f.pi[i], n_all, share[i], p_.value, p_.height);
+    const bool ex = !act[i];
+    lf.nodes.push_back({static_cast<std::uint32_t>(i), ex ? -1 : cells[static_cast<std::size_t>(i)],
+                        ex ? 0.f : static_cast<float>((cells[i] % cols + 0.5) / static_cast<double>(size.cols)),
+                        ex ? 0.f : static_cast<float>((cells[i] / cols + 0.5) / static_cast<double>(size.rows)), f.h[i], hd, f.pi[i], score[i],
                         flux ? tracker_.node_group()[i] : (group_.empty() ? 0 : static_cast<std::int32_t>(group_[i])),
                         f.pulse.size() == n_ ? f.pulse[i] : std::numeric_limits<double>::quiet_NaN(), share[i],
                         static_cast<bool>(floor[i])});
   }
   lf.raster = node_raster(lf, p_);
-  lf.arcs = top_arcs(f.P, f.active, p_.max_arcs);
+  lf.arcs = top_arcs(f.P, act, p_.max_arcs);
   if (flux) {
     lf.communities = tracker_.communities();
     lf.modularity = tracker_.modularity();
@@ -250,7 +267,8 @@ LandscapeFrame LandscapeBuilder::build(const Frame& f) {
     lf.reclustered = tracker_.reclustered();
   } else {
     std::set<std::int32_t> ids;
-    for (const auto& nd : lf.nodes) ids.insert(nd.group);
+    for (const auto& nd : lf.nodes)
+      if (nd.cell >= 0) ids.insert(nd.group);
     lf.communities = static_cast<int>(ids.size());
   }
   lf.compute_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();

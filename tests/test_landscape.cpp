@@ -622,3 +622,40 @@ TEST_CASE("pinned nodes: the CVT surface passes exactly through them in build, r
                     py = (static_cast<std::size_t>(n0.cell) / cols) * 3 + 1;
   CHECK(r3.raster.z[py * r3.raster.w + px] == static_cast<float>(n0.hdisp));
 }
+
+TEST_CASE("exclude_etf: excluded nodes stay in the frame without a cell, the others are placed, pi is untouched") {
+  const Frame f = synthetic_frame();
+  const std::size_t n = f.active.size();
+  std::vector<char> ex(n, 0);
+  for (std::size_t i = n - 7; i < n; ++i) ex[i] = 1;
+  LandscapeParams p;
+  LandscapeBuilder all(n, p, synthetic_groups(n));
+  LandscapeBuilder some(n, p, synthetic_groups(n));
+  some.set_excluded(ex);
+  const LandscapeFrame a = all.build(f), b = some.build(f);
+  REQUIRE(a.nodes.size() == b.nodes.size());
+  std::set<std::int32_t> cells;
+  std::size_t placed = 0;
+  for (std::size_t k = 0; k < b.nodes.size(); ++k) {
+    const auto& nd = b.nodes[k];
+    CHECK(nd.pi == a.nodes[k].pi);  // the truth is the same
+    CHECK(nd.h == a.nodes[k].h);
+    if (ex[nd.i]) {
+      CHECK(nd.cell < 0);
+    } else {
+      CHECK(nd.cell >= 0);
+      CHECK(cells.insert(nd.cell).second);
+      ++placed;
+    }
+  }
+  CHECK(b.size == lattice_size(placed));
+  for (const auto& ar : b.arcs) CHECK((!ex[ar.a] && !ex[ar.b]));
+}
+
+TEST_CASE("exclude_etf is a placement parameter and defaults to true") {
+  LandscapeParams a, b;
+  CHECK(a.exclude_etf);
+  CHECK(same_placement(a, b));
+  b.exclude_etf = false;
+  CHECK_FALSE(same_placement(a, b));
+}

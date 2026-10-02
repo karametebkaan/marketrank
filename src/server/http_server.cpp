@@ -110,7 +110,7 @@ json status_json(const FrameStore& s, const std::string& label) {
           {"cvt_iterations", lp.cvt.iterations}, {"cvt_lambda", lp.cvt.lambda}, {"cvt_eps", lp.cvt.eps_frac},
           {"idw_power", lp.idw.power},
           {"idw_radius", lp.idw.radius_cells}, {"subdivision", lp.idw.subdivision},
-          {"territory", std::string(to_string(lp.territory))}};
+          {"territory", std::string(to_string(lp.territory))}, {"show_etf", !lp.exclude_etf}};
 }
 
 }  // namespace
@@ -334,6 +334,10 @@ void FluxServer::routes() {
       if (b.contains("cvt_iterations")) lp.cvt.iterations = static_cast<int>(get_int(b, "cvt_iterations", 0, 50));
       if (b.contains("cvt_lambda")) lp.cvt.lambda = get_num(b, "cvt_lambda", 0.0, 1.0, true);
       if (b.contains("cvt_eps")) lp.cvt.eps_frac = get_num(b, "cvt_eps", 0.0, 10.0, true);
+      if (b.contains("show_etf")) {
+        if (!b["show_etf"].is_boolean()) throw std::invalid_argument("show_etf must be a boolean");
+        lp.exclude_etf = !b["show_etf"].get<bool>();
+      }
       if (b.contains("territory")) lp.territory = parse_territory_mode(get_str(b, "territory"));
       p.validate();
       const std::uint64_t gen = store_.set_params(p, lp);

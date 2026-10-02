@@ -10,7 +10,9 @@
 #include "market/panel.hpp"
 #include "market/synthetic_market.hpp"
 #include "pipeline/shock.hpp"
+#include "market/sec_sectors.hpp"
 #include "server/frame_store.hpp"
+#include "server/top_list.hpp"
 #include "test_util.hpp"
 
 using namespace mr;
@@ -329,4 +331,45 @@ TEST_CASE("a display-only parameter change re-renders the cached frames without 
   fs.set_params(CoreParams::legacy(), sector);
   wait_ready(fs);
   CHECK(fs.pipeline_steps() == 3 * steps);
+}
+
+TEST_CASE("exclude_etf: ETF/Fund nodes get no cell, the top table and pi are unchanged, toggling re-lays out") {
+  Market m = market();
+  const std::size_t n = m.secs.size();
+  for (std::size_t i = n - 6; i < n; ++i) m.secs[i].sector = kSectorEtfFund;
+  LandscapeParams on;  // exclude_etf = true by default
+  CHECK(on.exclude_etf);
+  FrameStore fs(m.panel, m.secs, CoreParams::money_flow(), on, 10);
+  fs.start();
+  wait_ready(fs);
+  auto hidden = fs.landscape(std::nullopt);
+  const auto top_hidden = top_hot(fs.recent(std::nullopt, 5), 10, 5, TopBy::Pi);
+  std::size_t etfs = 0;
+  for (const auto& nd : hidden->nodes) {
+    const bool etf = m.secs[nd.i].sector == kSectorEtfFund;
+    etfs += etf ? 1 : 0;
+    CHECK((nd.cell < 0) == etf);
+  }
+  CHECK(etfs > 0);
+  const auto steps = fs.pipeline_steps();
+  LandscapeParams off = on;
+  off.exclude_etf = false;
+  const auto g0 = fs.status().generation;
+  const auto g1 = fs.set_params(CoreParams::money_flow(), off);
+  CHECK(g1 > g0);
+  wait_ready(fs);
+  CHECK(fs.pipeline_steps() > steps);  // a re-layout, not a restyle
+  auto shown = fs.landscape(std::nullopt);
+  REQUIRE(shown->nodes.size() == hidden->nodes.size());
+  for (std::size_t k = 0; k < shown->nodes.size(); ++k) {
+    CHECK(shown->nodes[k].cell >= 0);
+    CHECK(shown->nodes[k].pi == hidden->nodes[k].pi);
+  }
+  const auto top_shown = top_hot(fs.recent(std::nullopt, 5), 10, 5, TopBy::Pi);
+  REQUIRE(top_shown.size() == top_hidden.size());
+  for (std::size_t k = 0; k < top_shown.size(); ++k) {
+    CHECK(top_shown[k].i == top_hidden[k].i);
+    CHECK(top_shown[k].pi == top_hidden[k].pi);
+    CHECK(top_shown[k].mr == top_hidden[k].mr);
+  }
 }

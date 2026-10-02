@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Headless-Chrome smoke test of the landscape UI. Usage: scripts/ui_smoke.sh [extra marketrank args...]
 # Env: PORT (default: a random free port), OUT (screenshot PNG), CHROME, LOG, MODE (default synthetic),
-#      WAIT_TICKS, SHOCK=TICKER:SIZE (also exercise the shock view; TICKER '*' = first active stock).
+#      SHOW_ETF=0|1 (set the "Show ETF clusters" checkbox before loading; default: the server's, off), WAIT_TICKS, SHOCK=TICKER:SIZE (also exercise the shock view; TICKER '*' = first active stock).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 PORT=${PORT:-$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')}
@@ -30,6 +30,7 @@ for _ in $(seq 1 "${WAIT_TICKS:-240}"); do
 done
 [ "$READY" = 1 ] || { echo "server not ready on port $PORT"; exit 1; }
 URL="http://127.0.0.1:$PORT/?selftest=1"
+if [ -n "${SHOW_ETF:-}" ]; then URL="$URL&show_etf=$SHOW_ETF"; fi
 if [ -n "${SHOCK:-}" ]; then URL="$URL&shock=$SHOCK"; fi
 FLAGS=(--headless=new --no-sandbox --user-data-dir="$PROFILE" --enable-unsafe-swiftshader --use-angle=swiftshader
        --window-size=1400,900 --virtual-time-budget=25000)

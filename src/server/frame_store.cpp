@@ -8,6 +8,8 @@
 #include <stdexcept>
 #include <string>
 
+#include "market/sec_sectors.hpp"
+
 namespace mr {
 
 namespace {
@@ -153,6 +155,11 @@ void FrameStore::run(std::uint64_t gen, CoreParams core, LandscapeParams land, i
     if (T < 3) throw std::runtime_error("need at least three bars to serve landscapes");
     CorePipeline pipe(panel_.N(), core);
     LandscapeBuilder builder(panel_.N(), land, sector_groups(nodes_));
+    if (land.exclude_etf) {
+      std::vector<char> ex(panel_.N(), 0);
+      for (std::size_t i = 0; i < nodes_.size() && i < ex.size(); ++i) ex[i] = nodes_[i].sector == kSectorEtfFund;
+      builder.set_excluded(std::move(ex));
+    }
     // Landscapes for the last max_frames bars, after the warm-up bars (which only feed the model's memory, so the
     // first frame is not dominated by stocks without flux yet); at least the last bar.
     const std::size_t warmup = static_cast<std::size_t>(std::max(0, land.warmup_bars));

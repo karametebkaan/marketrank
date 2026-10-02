@@ -4,7 +4,7 @@ const Q = new URLSearchParams(location.search);
 const S = {
   status: null, times: [], frame: null, raster: null, shock: null, shockRaster: null, shockVmax: 1,
   baseVmax: 1, deck: null, playing: false, loadedKey: '', loadedGen: null, selftest: Q.has('selftest'),
-  frameSeq: 0, shockSeq: 0, topSeq: 0, topPrev: new Map(), highlight: null, idx: null, idxKey: '', colCache: null, arcsInit: false, selftestDone: false,
+  recompGen: null, frameSeq: 0, shockSeq: 0, topSeq: 0, topPrev: new Map(), highlight: null, idx: null, idxKey: '', colCache: null, arcsInit: false, selftestDone: false,
 };
 const $ = (id) => document.getElementById(id);
 const MID = [247, 247, 247], POS = [178, 24, 43], NEG = [33, 102, 172];
@@ -109,7 +109,7 @@ function render() {
   const hs = parseFloat($('hscale').value);
   const vmax = shock ? S.shockVmax : S.baseVmax;
   const scale = 0.25 * span(L) / vmax * hs, clip = 0.4 * span(L);
-  const nodes = f.nodes.map((n) => {
+  const nodes = f.placed.map((n) => {
     const col = n[3] % L.cols, row = Math.floor(n[3] / L.cols), s = sample(z, meta, L, col, row);
     const zt = heightOf(s.v, scale, clip);
     return { i: n[0], ticker: n[1], sector: n[2], x: s.x, y: s.y, zt, v: s.v, h: n[6], hd: n[7], pi: n[8], score: n[9], group: n[10], mr: n[11], pulse: n[12] };
@@ -242,7 +242,7 @@ function clusterLine(o) {
   if (!f) return '';
   if (!S.groupSizes || S.groupSizes.frame !== f) {
     const m = new Map();
-    f.nodes.forEach((n) => m.set(n[10], (m.get(n[10]) || 0) + 1));
+    f.placed.forEach((n) => m.set(n[10], (m.get(n[10]) || 0) + 1));
     S.groupSizes = { frame: f, m };
   }
   const k = S.groupSizes.m.get(o.group) || 0;
@@ -389,11 +389,13 @@ async function loadFrame(t) {
   const [f, z] = await Promise.all([getJSON(`/api/frame${q}`), getFloat32(`/api/frame/grid${q}`)]);
   if (seq !== S.frameSeq) return false;
   if (S.shock) clearShock();
+  // Nodes with cell < 0 (ETF/Fund while hidden) keep their exact pi in f.nodes but are not on the surface.
+  f.placed = f.nodes.filter((n) => n[3] >= 0);
   S.frame = f; S.raster = z;
   // Base colour/height scale: P90 of |z| over the occupied vertices (stock cells). Under value = pi the stocks at
   // the teleport floor (all tied) are left out, so the floor plain does not set the scale.
   const floorTie = S.status && S.status.value === 'pi';
-  S.baseVmax = p90abs(f.nodes.filter((n) => !(floorTie && n[13])).map((n) => sample(z, f.raster, f.lattice, n[3] % f.lattice.cols, Math.floor(n[3] / f.lattice.cols)).v));
+  S.baseVmax = p90abs(f.placed.filter((n) => !(floorTie && n[13])).map((n) => sample(z, f.raster, f.lattice, n[3] % f.lattice.cols, Math.floor(n[3] / f.lattice.cols)).v));
   showStatus();
   if (!S.deck) {
     initDeck(f.lattice);
@@ -420,12 +422,16 @@ async function refreshTimes() {
   updateShockEnabled();
 }
 
+// True while a show_etf change POSTed by this page has not been loaded yet.
+function recomputing() { return S.recompGen !== null && (S.loadedGen === null || S.loadedGen < S.recompGen); }
+
 // "MarketRank · replay 1d · N stocks · <date>": no parameter dump.
 function showStatus() {
   const st = S.status;
   if (!st) return;
   const parts = ['MarketRank', st.label];
   if (st.error) parts.push(`error: ${st.error}`);
+  else if (recomputing()) parts.push('recomputing…');
   else if (!st.ready || !S.frame) parts.push(`computing ${st.computed}/${st.total}`);
   else {
     const funds = S.frame.nodes.reduce((k, n) => k + (n[2] === 'ETF/Fund' ? 1 : 0), 0);
@@ -447,7 +453,7 @@ async function applyShock() {
   // Height and colour scale: P90 of |Δh| over active, non-shocked stocks (the shocked stock saturates).
   // (The receiver and loser lists from the server already exclude the shocked stocks.)
   const L = S.frame.lattice, shocked = new Set(tickers);
-  S.shockVmax = p90abs(S.frame.nodes.filter((n) => !shocked.has(n[1]))
+  S.shockVmax = p90abs(S.frame.placed.filter((n) => !shocked.has(n[1]))
     .map((n) => sample(z, r.raster, L, n[3] % L.cols, Math.floor(n[3] / L.cols)).v));
   S.shockRaster = z; S.shock = r;
   const fmt = (x) => `${x.ticker.padEnd(6)} ${x.dh >= 0 ? '+' : ''}${x.dh.toFixed(4)}`;
@@ -459,6 +465,7 @@ async function applyShock() {
 
 async function onStatus(st) {
   S.status = st;
+  if (typeof st.show_etf === 'boolean') $('showEtf').checked = st.show_etf;
   showStatus();
   if (!st.ready) return;
   // Reload on a new generation, or (when following the latest bar) when new bars have been computed.
@@ -471,6 +478,7 @@ async function onStatus(st) {
     if (!(await loadFrame(S.times[Number($('scrub').value)]))) return;
   }
   S.loadedKey = key; S.loadedGen = st.generation;
+  showStatus();
   if (S.selftest && !S.selftestDone) {
     S.selftestDone = true;
     // Optional ?shock=TICKER:SIZE exercises the shock view in the self-test (TICKER '*' = first active node).
@@ -485,6 +493,7 @@ async function onStatus(st) {
       if (!$('topRows').querySelector('.toprow')) fail(new Error('top table did not render'));
       // The product UI is fixed: no model or landscape knobs may come back.
       else if (document.querySelector('#panel select, #apply, #top button')) fail(new Error('a removed control is present'));
+      else if (S.frame.nodes.some((n) => n[2] === 'ETF/Fund' && (n[3] >= 0) !== S.status.show_etf)) fail(new Error('ETF placement does not match show_etf'));
       else document.title = `marketrank-ok:${S.frame.nodes.length}`;
     }, 1500);
   }
@@ -503,6 +512,14 @@ async function playTick() {
   if (S.playing) setTimeout(playTick, 700);
 }
 
+// Placement-affecting: the server re-lays out under a new generation; the status stream then reloads the frame.
+async function setShowEtf(on) {
+  const r = await getJSON('/api/params', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ show_etf: on }) });
+  S.recompGen = r.generation;
+  showStatus();
+  return r.generation;
+}
+
 function wire() {
   // Scrubbing exits shock mode (as Reset does): the shock belongs to the latest bar only.
   $('scrub').addEventListener('input', () => { $('follow').checked = false; clearShock(); render(); $('shockApply').disabled = true; loadFrame(S.times[Number($('scrub').value)]).catch(fail); });
@@ -515,6 +532,7 @@ function wire() {
   $('arcs').addEventListener('input', () => { setArcsLabel(); render(); });
   $('shockSize').addEventListener('input', () => { $('shockSizeLabel').textContent = `${$('shockSize').value}%`; });
   $('shockApply').addEventListener('click', () => { applyShock().catch((e) => { $('shockOut').textContent = String(e.message || e); }); });
+  $('showEtf').addEventListener('change', () => { setShowEtf($('showEtf').checked).catch(fail); });
   $('shockReset').addEventListener('click', () => { clearShock(); render(); });
 }
 
@@ -529,6 +547,15 @@ function fail(e) {
     if (typeof deck === 'undefined') throw new Error('deck.gl failed to load');
     wire();
     setArcsLabel();
+    if (S.selftest && Q.has('show_etf')) { // ?selftest=1&show_etf=0|1: set the checkbox state before the first load
+      const want = Q.get('show_etf') === '1';
+      if ((await getJSON('/api/status')).show_etf !== want) await setShowEtf(want);
+      for (let k = 0; k < 600; ++k) {
+        const st = await getJSON('/api/status');
+        if (st.ready && st.show_etf === want) break;
+        await new Promise((res) => setTimeout(res, 50));
+      }
+    }
     await onStatus(await getJSON('/api/status'));
     // Headless self-test: an open SSE stream is a pending request that stalls Chrome's virtual clock
     // (--virtual-time-budget never expires), so the self-test renders from the initial status only.
