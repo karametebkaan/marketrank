@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <limits>
+#include <random>
 
 #include "graph/flux_builder.hpp"
 
@@ -63,4 +64,50 @@ TEST_CASE("rolling correlation tracks co-movement") {
   CHECK(fb.correlation(0, 0) == doctest::Approx(1.0));
   CHECK(fb.correlation(0, 1) == doctest::Approx(-1.0).epsilon(1e-6));
   CHECK(std::abs(fb.correlation(0, 2)) < 0.6);
+}
+
+TEST_CASE("rolling correlation matches brute-force Pearson over the window") {
+  const std::size_t n = 4;
+  const int W = 10;
+  FluxParams p;
+  p.corr_window = W;
+  p.lambda = 1.0;
+  FluxBuilder fb(n, p);
+  std::mt19937 rng(12345);
+  std::normal_distribution<double> nd(0.0, 0.01);
+  std::vector<double> dv(n, 1.0);
+  std::vector<std::vector<double>> hist;
+  for (int step = 1; step <= 35; ++step) {
+    std::vector<double> r(n);
+    for (auto& v : r) v = nd(rng);
+    r[3] = 0.7 * r[0] + nd(rng);
+    hist.push_back(r);
+    fb.step(r, dv);
+    if (step == W - 3 || step == W || step == W + 1 || step == 2 * W + 3 || step == 35) {
+      const std::size_t m = std::min<std::size_t>(hist.size(), W);
+      const std::size_t start = hist.size() - m;
+      for (std::size_t i = 0; i < n; ++i) {
+        for (std::size_t j = 0; j < n; ++j) {
+          if (i == j) continue;
+          double mi = 0, mj = 0;
+          for (std::size_t t = start; t < hist.size(); ++t) {
+            mi += hist[t][i];
+            mj += hist[t][j];
+          }
+          mi /= m;
+          mj /= m;
+          double sij = 0, sii = 0, sjj = 0;
+          for (std::size_t t = start; t < hist.size(); ++t) {
+            const double a = hist[t][i] - mi, b = hist[t][j] - mj;
+            sij += a * b;
+            sii += a * a;
+            sjj += b * b;
+          }
+          const double expected = sij / std::sqrt(sii * sjj);
+          INFO("step " << step << " i " << i << " j " << j);
+          CHECK(fb.correlation(i, j) == doctest::Approx(expected).epsilon(1e-9));
+        }
+      }
+    }
+  }
 }
