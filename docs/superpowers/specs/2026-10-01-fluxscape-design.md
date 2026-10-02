@@ -28,11 +28,19 @@ The steady state is rendered as a 3D topological landscape (hills = money accumu
 
 ## 3. Universe
 
-- `data/universe/sp500.csv` — `ticker,name,sector` for S&P 500 constituents. Bundled list is compiled from memory and may be stale; it is a plain editable CSV.
-- **Portfolio extras:** any held ticker that is a single stock not in the CSV (e.g. **NVO**, Novo Nordisk ADR) is added as an extra graph node with sector `"Extra"`.
-- **Index funds (look-through):** `data/universe/funds.csv` declares fund tickers and the universe they track (`VOO,sp500`). A fund is **not** a graph node. Its hotness is the weight-averaged hotness of its constituents, using trailing 20-bar average dollar volume as the weight proxy (Alpaca does not provide market cap). Fund prices are still fetched for valuation and P&L.
+Two universe sources, selected by `--universe sp500|snapshot` (default: the latest snapshot if one exists, otherwise sp500):
 
-N ≈ 500–505 graph nodes.
+- **sp500:** `data/universe/sp500.csv` (`ticker,name,sector`, refreshed from Wikipedia by `scripts/fetch_sp500.py`).
+- **snapshot (liquidity-ranked top N, default N = 10000):** built in alpaca mode with `--universe-size N`:
+  1. Fetch all assets from Alpaca's trading API `GET /v2/assets?status=active&asset_class=us_equity`.
+  2. Keep assets that are `tradable` and listed on NYSE, NASDAQ, ARCA, NYSEARCA, AMEX or BATS.
+  3. Drop warrants, units and rights by name (case-insensitive `warrant`, word `unit(s)`, word `right(s)`), and ETF/ETN-like products by name (`ETF`, `ETN`, `iShares`, `SPDR`, `ProShares`, `Direxion`, word `Fund`, word `Index`). S&P 500 constituents always pass, and `data/universe/exclude.csv` / `include.csv` (one ticker per line) override the rules.
+  4. Rank by the median daily dollar volume (v·vwap) over the last 20 trading days and keep the top N.
+  5. Write `data/universe/universe_<YYYY-MM-DD>.csv` (`ticker,name,sector,exchange,median_dollar_volume`); a snapshot younger than 7 days is reused. Sector comes from sp500.csv where known, otherwise `Unclassified`.
+- **Portfolio extras:** any held single stock not in the universe (e.g. **NVO**) is added as an extra node with sector `"Extra"`.
+- **Index funds (look-through):** `data/universe/funds.csv` declares fund tickers and what they track (`VOO,sp500`). A fund is **not** a graph node; its hotness is the weight-averaged hotness of its constituents, weighted by trailing 20-bar median dollar volume (Alpaca does not provide market cap). Fund prices are still fetched for valuation and P&L.
+
+N ranges from ~505 (sp500) to ~10,000 (snapshot). Every per-bar data structure is O(N·k) or O(N·W); none is O(N²).
 
 ## 4. Market data
 
@@ -41,6 +49,8 @@ N ≈ 500–505 graph nodes.
 - Auth headers `APCA-API-KEY-ID` / `APCA-API-SECRET-KEY` read from `.env` (gitignored) or environment.
 - Default `feed=sip` with `end ≤ now − 16 min` (the free plan allows consolidated SIP history only beyond the 15-minute delay). `feed=iex` is configurable but discouraged: IEX volume is a small share of the market and distorts flux.
 - HTTP 429 / 5xx: exponential backoff (0.5 s → 30 s, jittered), max 6 retries; then the affected symbols are marked **stale** for that frame.
+- Client-side rate limit: at most 180 requests/minute (a minimum interval of 334 ms between requests), under Alpaca's 200/min, so a 10,000-ticker sync is never throttled.
+- Assets come from the trading API host (`paper-api.alpaca.markets` by default, overridable with `APCA_TRADING_HOST`), with the same credentials.
 
 ### 4.2 Timeframes
 | UI timeframe | Source | Notes |
@@ -61,28 +71,43 @@ US Eastern time handling uses an explicit DST rule (2nd Sunday of March → 1st 
 
 ## 5. Flux graph model
 
-For each bar *t* and stock *i* with close C, previous close C⁻ and volume V:
+Each of the switches A–E below is a `CoreParams` field. Strategy versions (§8.4) record them, so they can be compared side by side. `CoreParams::legacy()` gives the milestone-1 behaviour (dollar pressure, no lift, no inbound pruning, no retention, uniform reference).
 
-- **Return** `r_i = C/C⁻ − 1`; **dollar volume** `D_i = V · VWAP` (fallback C).
-- **Pressure** `p_i = r_i · D_i`. `p_i < 0` → net selling (source); `p_i > 0` → net buying (sink).
-- **Per-bar flux** for source *i*, sink *j*:
-  `f_ij(t) = |p_i| · (p_j · a_ij) / Σ_{k∈sinks} (p_k · a_ik)`
-  with **affinity** `a_ij = 1 + λ · max(0, ρ_ij)`, ρ the rolling Pearson correlation of returns over the last W bars. Each source distributes exactly its own outflow, so Σ_j f_ij = |p_i| (conservation). λ = 0 gives the pure heartbeat model.
-- **Accumulation:** dense N×N matrix `F ← δ·F + f(t)`, δ = 2^(−1/halflife). Dense storage is cheap at N = 500 (≈2 MB).
-- **Pruning:** keep the top-k outgoing edges per row (default k = 20) → CSR sparse matrix. k = N keeps the full matrix.
-- **Transition matrix:** `P = rownorm(F_pruned)`. A row with zero outflow (pure accumulator) gets a self-loop of weight 1.
-- **Damping / teleport:** `P' = α·P + (1−α)·(1/N)·𝟙` (default α = 0.85), guaranteeing a unique stationary distribution.
-- **Steady state:** power iteration `π ← π·P'`, warm-started from the previous frame, until ‖Δπ‖₁ < 1e-10 or 1000 iterations (residual reported if not converged).
-- **Hotness:** `h_i = N·π_i − 1` (0 = neutral, > 0 hill, < 0 valley).
-- Stocks with missing/stale data in the current bar contribute `p_i = 0`; stocks with no data for the whole window are excluded from the frame.
+For each bar *t* and stock *i* with return `r_i = C/C⁻ − 1`, volume V and VWAP:
+
+- **(A) Pressure** (`pressure`, default `relative`):
+  - `dollar`: `p_i = r_i · V_i · VWAP_i`
+  - `sqrt`: `p_i = r_i · √(V_i · VWAP_i)`
+  - `relative`: `p_i = r_i · V_i / ADV_i`, where ADV_i is the median volume of the previous 20 bars (not including this one); p = 0 until a stock has history. This removes the size bias: a stock's pressure reflects how unusual its participation is, not how big it is.
+  - `p_i < 0` → net selling (source); `p_i > 0` → net buying (sink). Missing data gives p = 0.
+- **Affinity:** `a_ij = 1 + λ·ρ_ij`, λ ∈ [0, 1], where ρ is the Pearson correlation of returns over the last W = 60 bars. It is computed as a dot product of unit-length centered return vectors u_i, so no N×N matrix is stored. (Milestone 1 used `1 + λ·max(0, ρ)`; the linear form keeps the normalizer exact in O(N·W).)
+- **Per-bar flux** for source *i*, sink *j*: `f_ij = |p_i| · p_j · a_ij / D_i` with `D_i = Σ_sinks p_k a_ik = P + λ·u_i·g`, where `P = Σ p_k` and `g = Σ p_k u_k`. Each source distributes exactly its own outflow. Exact row totals `out_i = |p_i|` and column totals `in_j = p_j·(Σ_i a_i + λ·u_j·Σ_i a_i u_i)` (with `a_i = |p_i| / D_i`) are computed in O(N·W).
+- **Sparse edges:** each source stores edges only to its top M = 64 sinks by `p_j·a_ij`, chosen from the C = 256 sinks with the largest p_j, with their exact shares. The row and column totals above remain exact.
+- **Accumulators:** for each of slow (half-life 20 bars), fast (3) and long-run (120, only when `h_ref = longrun`), per-row sorted edge lists plus decayed `out`/`in` vectors: `F ← 2^(−1/halflife)·F + f`. Each row is capped at 256 edges by weight.
+- **(B) Lift** (`lift`, default `excess`): relative to the gravity baseline `E_ij = out_i · in_j / total`, the edge weight is `w_ij = max(0, F_ij − E_ij)` (`excess`), `max(0, F_ij/E_ij − 1)` (`ratio`), or `F_ij` (`off`). This keeps only the structure beyond "big flows meet big flows".
+- **(C) Two-sided pruning:** keep the union of each row's top `k_out` = 20 edges and each column's top `k_in` = 10 edges, by w. Ties go to the lower index.
+- **(E) Retention** (`retention` ρ_r, default 1.0): row i gives itself the mass `s_i = ρ_r·in_i / (ρ_r·in_i + out_i)` and splits `1 − s_i` over its kept edges in proportion to w. Net buyers therefore hold mass and net sellers pass it on, which makes valleys mean "draining". A row with no kept edges is a self-loop of 1. Inactive nodes (no data in the panel) get no edges in or out.
+- **Damping / teleport:** `P' = α·P + (1−α)·(1/N_active)·𝟙` (α = 0.85), solved on the active sub-index.
+- **Steady state:** power iteration `π ← π·P'`, warm-started, until ‖Δπ‖₁ < 1e-10 or 1000 iterations.
+- **(D) Hotness reference** (`h_ref`, default `uniform`): `h_i = π_i / π_ref,i − 1` with
+  - `uniform`: `π_ref = 1/N_active`, so `h = N_active·π − 1`
+  - `size`: π_ref ∝ the trailing median dollar volume, so h reads as "hot relative to its size"
+  - `longrun`: π_ref is the steady state of the long-run (120-bar) accumulator, so h reads as "hot relative to its own normal"
+- The defaults are confirmed or changed using the evaluation harness (§5.2).
 
 ### 5.1 Forecast (no fitted model)
-π_t is by construction stationary for P'_t, so propagating it through the same matrix is a no-op (π·P'^k = π). The forecast therefore contrasts two time scales of the same flux:
-- **Slow accumulator** F_slow (half-life 20 bars) → P'_slow → π_t, the equilibrium "landscape".
-- **Fast accumulator** F_fast (half-life 3 bars) → P'_fast, the most recent flux pattern.
-- Propagation: `π^(k) = π_t · P'_fast^k` for k ∈ {1, 4, 8} bars — "where the newest flux carries the equilibrium mass next".
+π_t is stationary for P'_slow by construction, so the forecast contrasts two time scales:
+- Propagation: `π^(k) = π_t · P'_fast^k` for k ∈ {1, 4, 8} bars, where P'_fast is built from the fast accumulator with the same B/C/E settings.
 - Drift: `d_i = π_t,i − π_{t−1},i`.
-- **Forecast score** used by the optimizer: `s_i = N·(π^(k)_i − π_t,i) + β·N·d_i` (β default 0.5), where k is the horizon's step count.
+- **Forecast score:** `s_i = N_active·(π^(k)_i − π_t,i) + β·N_active·d_i` (β = 0.5).
+
+### 5.2 Evaluation harness
+`fluxscape --mode replay --eval [--eval-bars B]` runs the pipeline over the cached history (the last B bars, default 120, after a warm-up) for this grid of configurations: legacy; legacy + each of A, B, C, D (size and longrun), E on its own; and all on (the current defaults). Per configuration it prints:
+- **floor share:** the fraction of active nodes whose π is within 1e-6 relative of the teleport floor (1−α)/N_active
+- **Gini:** the Gini coefficient of π
+- **sector coherence:** the share of off-diagonal raw edge weight between nodes of the same known sector
+- **IC:** the mean Spearman correlation between each bar's +1 forecast score and the next bar's return, and its t-statistic; **IC(h):** the same for hotness h, which is where the D settings show up
+- the mean frame time in ms
 
 ## 6. Geometry — layout, lattice, landscape
 
@@ -90,6 +115,8 @@ For each bar *t* and stock *i* with close C, previous close C⁻ and volume V:
 2. **Lattice snap:** lattice n×m with n·m ≥ N, near-square (500 → 23×22). Stocks are assigned to lattice points by the **Hungarian algorithm**, minimizing total squared distance from normalized layout positions. **Hysteresis:** the new assignment is adopted only if its cost improves on the previous assignment (re-evaluated against new positions) by more than τ (default 5%); otherwise cells are kept. Empty lattice points take IDW values from their neighbors.
 3. **IDW landscape:** values h at lattice points interpolated onto a fine raster (subdivision s, default 4 → ~90×90) with `z(x) = Σ w_i h_i / Σ w_i`, `w_i = 1/d_i^q` (power q default 2), restricted to a search radius R (default 3 lattice cells; nearest-only fallback if no point in radius). Exact at nodes; bounded by [min h, max h].
 4. **Raw-layout toggle:** IDW over the un-snapped layout positions, for comparison.
+
+Scaling note (N ≈ 10,000): the layout must use Barnes–Hut (O(N log N)) instead of O(N²) forces, and lattice snapping must replace the O(N³) Hungarian algorithm with a scalable assignment, such as recursive coordinate bisection followed by local swap refinement. Milestone 2 decides the method.
 
 Graph adjacency ≠ geometric adjacency: the layout approximates flux proximity in 2D, so strong edges may still span the map. Flux edges are therefore drawable as arcs over the terrain.
 
@@ -228,12 +255,20 @@ Unit (doctest):
 - Session calendar: DST transitions; 30Min → session-hour aggregation; holidays.
 - Alpaca: parsing and paging from recorded JSON fixtures.
 
+Milestone 1.5 additions:
+- ReturnWindow correlation equals brute-force Pearson, including after ring wraps.
+- Sparse flux: with C = M = N it equals the dense formula; Σ in = Σ out; the column totals are exact even when edges are truncated.
+- Lift: a rank-one (gravity-only) flux gives no edges; a planted above-gravity edge survives. `k_in` keeps a node's inbound edges even when no row selects them. Retention gives P_ii = in/(in+out).
+- Evaluation metrics (Gini, Spearman, floor share, sector coherence) are checked against hand-computed values. On a heavy-tailed synthetic market the defaults have a lower floor share than legacy.
+- Benchmark (skipped by default): a 10,000-node synthetic daily frame takes under 1 s in Release.
+
 Integration:
 - A synthetic market with a planted rotation (sector A → sector B) makes sector B the top hill, places it in a contiguous lattice patch, and makes the daily strategy book rotate into B and beat the baseline in that synthetic run.
 - End-to-end server smoke test: start in synthetic mode, fetch frame JSON, grid and books.
 
 ## 12. Implementation milestones
 
+1.5. **Model A–E + 10K scale (CLI):** sparse flux, pressure modes, lift, two-sided pruning, retention, hotness references, Alpaca assets universe with liquidity ranking and rate limiting, heavy-tailed synthetic market, evaluation harness, 10,000-node benchmark. Status: replaces the milestone-1 dense flux builder.
 1. **Core model (CLI):** universe, synthetic market, Alpaca client and cache, flux → solver → forecast; CLI prints top hills and valleys.
 2. **Geometry + server + UI:** layout, lattice, IDW, REST/SSE, deck.gl landscape and left-panel controls.
 3. **Optimizer + ledger:** ADMM, shadow books, strategy versions, backtest, catch-up, performance panel.
