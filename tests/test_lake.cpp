@@ -158,3 +158,18 @@ TEST_CASE("an unreadable Parquet file is quarantined and the rest of the timefra
   CHECK(lake.coverage(Timeframe::Hour, {"AAPL"}).at("AAPL") == d0);  // other timeframes untouched
   CHECK(lake.read(Timeframe::Hour, {"AAPL"}, d0, d0 + 86400)["AAPL"].size() == 1);
 }
+
+TEST_CASE("complete marks only move later and persist across reopen") {
+  auto dir = test::temp_dir("lake_complete");
+  {
+    Lake lake(dir);
+    lake.write(Timeframe::Day, {}, {}, {{"AAPL", 900}});
+    lake.write(Timeframe::Day, {}, {}, {{"AAPL", 500}, {"NVO", 700}});
+  }
+  Lake lake(dir);
+  auto c = lake.complete(Timeframe::Day, {"AAPL", "NVO", "MSFT"});
+  CHECK(c.at("AAPL") == 900);
+  CHECK(c.at("NVO") == 700);
+  CHECK_FALSE(c.count("MSFT"));
+  CHECK(lake.complete(Timeframe::Hour, {"AAPL"}).empty());
+}

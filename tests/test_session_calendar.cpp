@@ -53,3 +53,9 @@ TEST_CASE("30Min bars aggregate into session-aligned hours") {
   CHECK(out[2].t == utc_seconds(2026, 9, 30, 19, 30));
   CHECK(out[2].c == 20.5);
 }
+
+TEST_CASE("session_close is 16:00 ET on the bar's ET date") {
+  CHECK(session_close(utc_seconds(2026, 9, 2, 4)) == utc_seconds(2026, 9, 2, 20));   // EDT
+  CHECK(session_close(utc_seconds(2026, 12, 2, 5)) == utc_seconds(2026, 12, 2, 21));  // EST
+  CHECK(session_close(utc_seconds(2026, 9, 2, 14, 30)) == utc_seconds(2026, 9, 2, 20));
+}

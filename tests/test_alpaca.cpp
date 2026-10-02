@@ -341,6 +341,7 @@ TEST_CASE("a re-adjusted overlap bar triggers a full-window refetch") {
   BarStore store(test::temp_dir("readjust"));
   const TimePoint t0 = utc_seconds(2026, 9, 1, 4), t1 = utc_seconds(2026, 9, 2, 4);
   store.merge("AAPL", Timeframe::Day, {{t0, 100, 100, 100, 100, 1, 100}, {t1, 110, 110, 110, 110, 1, 110}});
+  store.set_complete_through("AAPL", Timeframe::Day, t1);  // t1 was stored after its session closed
   std::vector<std::string> paths;
   AlpacaClient client(test_config(), [&](const std::string& path) -> HttpResponse {
     paths.push_back(path);
@@ -365,6 +366,7 @@ TEST_CASE("an unchanged overlap bar does not refetch history") {
   BarStore store(test::temp_dir("noreadjust"));
   const TimePoint t1 = utc_seconds(2026, 9, 2, 4);
   store.merge("AAPL", Timeframe::Day, {{utc_seconds(2026, 9, 1, 4), 100, 100, 100, 100, 1, 100}, {t1, 110, 110, 110, 110, 1, 110}});
+  store.set_complete_through("AAPL", Timeframe::Day, t1);
   int calls = 0;
   AlpacaClient client(test_config(), [&](const std::string&) -> HttpResponse {
     ++calls;
@@ -387,4 +389,50 @@ TEST_CASE("fetch_bars with a callback hands bars to it and does not accumulate t
   CHECK(r.stale.empty());
   CHECK(seen["AAPL"] == 2);
   CHECK(seen["NVO"] == 1);
+}
+
+TEST_CASE("only a bar that was complete when stored is checked for re-adjustment") {
+  BarStore store(test::temp_dir("readjust_partial"));
+  const TimePoint start = utc_seconds(2026, 9, 1), t0 = utc_seconds(2026, 9, 1, 4), t1 = utc_seconds(2026, 9, 2, 4);
+  auto bars = [](std::initializer_list<std::pair<const char*, double>> v) {
+    std::string s = R"({"bars":{"AAPL":[)";
+    bool first = true;
+    for (const auto& [t, c] : v) {
+      const std::string cs = std::to_string(c);
+      s += std::string(first ? "" : ",") + R"({"t":")" + t + R"(","o":)" + cs + R"(,"h":)" + cs + R"(,"l":)" + cs +
+           R"(,"c":)" + cs + R"(,"v":2,"vw":)" + cs + "}";
+      first = false;
+    }
+    return s + "]}}";
+  };
+  std::string full = bars({{"2026-09-01T04:00:00Z", 100}, {"2026-09-02T04:00:00Z", 110}});
+  std::string tail;
+  std::vector<std::string> paths;
+  AlpacaClient client(test_config(), [&](const std::string& path) -> HttpResponse {
+    paths.push_back(path);
+    return {200, path.find("start=2026-09-01T00:00:00Z") != std::string::npos ? full : tail};
+  });
+  auto sync = [&](TimePoint end) {
+    paths.clear();
+    sync_bars(client, store, {"AAPL"}, Timeframe::Day, start, end);
+    return paths.size();
+  };
+  // 1. First sync at 10:00 ET on 09-02: t0 is complete, t1 is a partial session bar.
+  CHECK(sync(utc_seconds(2026, 9, 2, 14)) == 1);
+  CHECK(store.complete_through("AAPL", Timeframe::Day).value() == t0);
+  // 2. Intraday re-sync: the partial t1 changed, which is not a re-adjustment.
+  tail = bars({{"2026-09-02T04:00:00Z", 112}});
+  CHECK(sync(utc_seconds(2026, 9, 2, 15)) == 1);
+  CHECK(store.bars("AAPL", Timeframe::Day).back().c == 112);
+  // 3. After the close: t1 is final now, but the stored copy was partial, so still no refetch.
+  tail = bars({{"2026-09-02T04:00:00Z", 115}});
+  CHECK(sync(utc_seconds(2026, 9, 3, 1)) == 1);
+  CHECK(store.complete_through("AAPL", Timeframe::Day).value() == t1);
+  // 4. A changed complete bar (2:1 split) still refetches the full window.
+  tail = bars({{"2026-09-02T04:00:00Z", 57.5}});
+  full = bars({{"2026-09-01T04:00:00Z", 50}, {"2026-09-02T04:00:00Z", 57.5}});
+  CHECK(sync(utc_seconds(2026, 9, 4)) == 2);
+  REQUIRE(paths.size() == 2);
+  CHECK(paths[1].find("start=2026-09-01T00:00:00Z") != std::string::npos);
+  CHECK(store.bars("AAPL", Timeframe::Day).front().c == 50);
 }

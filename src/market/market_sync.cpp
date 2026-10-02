@@ -20,6 +20,16 @@ TimePoint backfill_tolerance(Timeframe tf) {
   return 5 * 86400;
 }
 
+// When a bar's session (1d) or bucket (intraday; a week for 1w) has closed.
+TimePoint bar_end(Timeframe tf, TimePoint t) {
+  switch (tf) {
+    case Timeframe::Hour: return t + 3600;
+    case Timeframe::Day: return session_close(t);
+    case Timeframe::Week: return t + 7 * 86400;
+  }
+  return session_close(t);
+}
+
 void fetch_into(AlpacaClient& client, BarStore& store, const std::vector<std::string>& group,
                 Timeframe tf, TimePoint from, TimePoint to, std::set<std::string>& stale,
                 const std::set<std::string>& cover, std::set<std::string>* readjusted = nullptr) {
@@ -32,10 +42,13 @@ void fetch_into(AlpacaClient& client, BarStore& store, const std::vector<std::st
         for (const auto& [ticker, raw] : batch_bars) {
           const std::vector<Bar> bars = tf == Timeframe::Hour ? aggregate_session_hours(raw) : raw;
           if (readjusted) {
-            // The inclusive tail re-fetches the last cached bar. A changed close means Alpaca
-            // re-adjusted the history (split or dividend), so the cached bars are on an old basis.
+            // The inclusive tail re-fetches the last cached bar. If that bar was complete when it was
+            // stored, a changed close means Alpaca re-adjusted the history (split or dividend), so the
+            // cached bars are on an old basis. A bar stored before its session closed may change
+            // legitimately and is not compared.
             const auto& old = store.bars(ticker, tf);
-            if (!old.empty() && old.back().t == from) {
+            const auto done = store.complete_through(ticker, tf);
+            if (!old.empty() && old.back().t == from && done && *done >= from) {
               const double c_old = old.back().c;
               for (const Bar& b : bars) {
                 if (b.t != from) continue;
@@ -49,6 +62,12 @@ void fetch_into(AlpacaClient& client, BarStore& store, const std::vector<std::st
           }
           store.merge(ticker, tf, bars);
           store.save(ticker, tf);
+          // Record the latest bar whose session or bucket had closed by this fetch's end.
+          for (auto it = bars.rbegin(); it != bars.rend(); ++it)
+            if (bar_end(tf, it->t) <= to) {
+              store.set_complete_through(ticker, tf, it->t);
+              break;
+            }
         }
         for (const auto& t : batch_symbols)
           if (cover.count(t)) store.set_covered_from(t, tf, from);

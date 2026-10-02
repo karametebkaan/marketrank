@@ -17,6 +17,10 @@ struct EtTime {
 
 EtTime to_eastern(TimePoint utc);
 
+// 16:00 ET (as UTC) on the ET date of utc: the regular session close. Early closes are not
+// modelled, so this is never earlier than the real close.
+TimePoint session_close(TimePoint utc);
+
 // Session hours 09:30-10:30 ... 14:30-15:30 and 15:30-16:00 ET (7 buckets).
 std::vector<Bar> aggregate_session_hours(const std::vector<Bar>& bars30m);
 

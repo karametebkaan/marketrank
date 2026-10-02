@@ -191,6 +191,9 @@ struct Lake::Impl {
       q("INSERT INTO coverage SELECT ticker, tf, min(covered_from) FROM pending_cov GROUP BY ticker, tf "
         "ON CONFLICT DO UPDATE SET covered_from = least(covered_from, excluded.covered_from)");
       q("DELETE FROM pending_cov");
+      q("INSERT INTO complete SELECT ticker, tf, max(t) FROM pending_complete GROUP BY ticker, tf "
+        "ON CONFLICT DO UPDATE SET t = greatest(t, excluded.t)");
+      q("DELETE FROM pending_complete");
       q("COMMIT");
     } catch (...) {
       con.Query("ROLLBACK");
@@ -214,6 +217,8 @@ Lake::Lake(fs::path root) {
   I.q("CREATE TABLE IF NOT EXISTS pending(ticker VARCHAR, t BIGINT, o DOUBLE, h DOUBLE, l DOUBLE, "
       "c DOUBLE, v DOUBLE, vw DOUBLE, seq BIGINT, tf VARCHAR, year INTEGER, month INTEGER)");
   I.q("CREATE TABLE IF NOT EXISTS pending_cov(ticker VARCHAR, tf VARCHAR, covered_from BIGINT)");
+  I.q("CREATE TABLE IF NOT EXISTS complete(ticker VARCHAR, tf VARCHAR, t BIGINT, PRIMARY KEY (ticker, tf))");
+  I.q("CREATE TABLE IF NOT EXISTS pending_complete(ticker VARCHAR, tf VARCHAR, t BIGINT)");
   I.q("CREATE TEMP TABLE IF NOT EXISTS want(ticker VARCHAR)");
   fs::remove_all(I.root / "_staging");
   I.publish();  // republish anything a crash left in pending
@@ -224,8 +229,9 @@ Lake::~Lake() = default;
 const fs::path& Lake::root() const { return impl_->root; }
 
 void Lake::write(Timeframe tf, const std::vector<LakeRow>& rows,
-                 const std::vector<std::pair<std::string, TimePoint>>& coverage) {
-  if (rows.empty() && coverage.empty()) return;
+                 const std::vector<std::pair<std::string, TimePoint>>& coverage,
+                 const std::vector<std::pair<std::string, TimePoint>>& complete) {
+  if (rows.empty() && coverage.empty() && complete.empty()) return;
   auto& I = *impl_;
   const int64_t seq =
       I.q("UPDATE meta SET value = value + 1 WHERE key = 'seq' RETURNING value")->GetValue(0, 0).GetValue<int64_t>();
@@ -263,6 +269,17 @@ void Lake::write(Timeframe tf, const std::vector<LakeRow>& rows,
       app.Append<duckdb::string_t>(duckdb::string_t(ticker.data(), static_cast<uint32_t>(ticker.size())));
       app.Append<duckdb::string_t>(duckdb::string_t(tfs.data(), static_cast<uint32_t>(tfs.size())));
       app.Append<int64_t>(from);
+      app.EndRow();
+    }
+    app.Close();
+  }
+  {
+    duckdb::Appender app(I.con, "pending_complete");
+    for (const auto& [ticker, t] : complete) {
+      app.BeginRow();
+      app.Append<duckdb::string_t>(duckdb::string_t(ticker.data(), static_cast<uint32_t>(ticker.size())));
+      app.Append<duckdb::string_t>(duckdb::string_t(tfs.data(), static_cast<uint32_t>(tfs.size())));
+      app.Append<int64_t>(t);
       app.EndRow();
     }
     app.Close();
@@ -328,6 +345,18 @@ std::map<std::string, TimePoint> Lake::coverage(Timeframe tf, const std::vector<
   if (tickers.empty()) return out;
   I.set_want(tickers);
   auto r = I.q("SELECT ticker, covered_from FROM coverage WHERE tf = " + sql_str(std::string(to_string(tf))) +
+               " AND ticker IN (SELECT ticker FROM want)");
+  for (std::size_t i = 0; i < r->RowCount(); ++i)
+    out[r->GetValue(0, i).ToString()] = r->GetValue(1, i).GetValue<int64_t>();
+  return out;
+}
+
+std::map<std::string, TimePoint> Lake::complete(Timeframe tf, const std::vector<std::string>& tickers) {
+  std::map<std::string, TimePoint> out;
+  auto& I = *impl_;
+  if (tickers.empty()) return out;
+  I.set_want(tickers);
+  auto r = I.q("SELECT ticker, t FROM complete WHERE tf = " + sql_str(std::string(to_string(tf))) +
                " AND ticker IN (SELECT ticker FROM want)");
   for (std::size_t i = 0; i < r->RowCount(); ++i)
     out[r->GetValue(0, i).ToString()] = r->GetValue(1, i).GetValue<int64_t>();

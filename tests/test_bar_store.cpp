@@ -189,3 +189,18 @@ TEST_CASE("load_range does not roll back newer unsaved or unflushed bars") {
   CHECK(b[1].c == 6);
   CHECK(b[2].c == 3);  // lake-only bar is loaded
 }
+
+TEST_CASE("complete_through only moves later and persists through the lake") {
+  auto dir = test::temp_dir("bars_complete");
+  {
+    BarStore s(dir);
+    CHECK_FALSE(s.complete_through("A", Timeframe::Day).has_value());
+    s.set_complete_through("A", Timeframe::Day, 300);
+    s.set_complete_through("A", Timeframe::Day, 200);  // never moves earlier
+    CHECK(s.complete_through("A", Timeframe::Day).value() == 300);
+    s.flush();
+  }
+  BarStore s2(dir);
+  s2.load_all({"A"}, Timeframe::Day);
+  CHECK(s2.complete_through("A", Timeframe::Day).value() == 300);
+}

@@ -28,6 +28,10 @@ class BarStore {
   // Earliest start ever requested; only moves earlier; persisted after that flush's bars.
   std::optional<TimePoint> covered_from(const std::string& ticker, Timeframe tf) const;
   void set_covered_from(const std::string& ticker, Timeframe tf, TimePoint t);
+  // Latest bar time that was stored after its session or bucket had closed; only moves later;
+  // persisted with the same flush as the bars.
+  std::optional<TimePoint> complete_through(const std::string& ticker, Timeframe tf) const;
+  void set_complete_through(const std::string& ticker, Timeframe tf, TimePoint t);
   void save(const std::string& ticker, Timeframe tf);  // mark queued bars for the next flush
   void flush();                                        // persist everything saved so far
   void load_range(const std::vector<std::string>& tickers, Timeframe tf, TimePoint start, TimePoint end);
@@ -44,6 +48,8 @@ class BarStore {
   std::map<Key, std::vector<Bar>> queued_;    // merged, not yet saved
   std::map<Key, std::vector<Bar>> to_write_;  // saved, awaiting flush
   std::map<Key, TimePoint> cov_to_write_;
+  std::map<Key, TimePoint> complete_;
+  std::map<Key, TimePoint> complete_to_write_;
 };
 
 }  // namespace fx

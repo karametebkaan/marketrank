@@ -65,13 +65,14 @@ US Eastern time handling uses an explicit DST rule (2nd Sunday of March → 1st 
 - **Engine:** embedded DuckDB (prebuilt `libduckdb` v1.5.6, called from C++ as plain SQL through `duckdb::Connection::Query` and `duckdb::Appender`). No extensions; Parquet support is built in.
 - **Layout** (`data/lake/`):
   - `bars/tf=<1h|1d|1w>/year=<Y>/month=<M>/part-<uuid>.parquet`, with columns `ticker, t, o, h, l, c, v, vw, seq` (lossless DOUBLE values).
-  - `catalog.duckdb` with small native tables: `meta` (seq counter), `coverage(ticker, tf, covered_from)`, and `pending` / `pending_cov` (write-ahead buffers).
+  - `catalog.duckdb` with small native tables: `meta` (seq counter), `coverage(ticker, tf, covered_from)`, `complete(ticker, tf, t)` (the latest bar stored after its session or bucket had closed; only moves later), and `pending` / `pending_cov` / `pending_complete` (write-ahead buffers).
   - `_staging/` for in-flight writes.
   - Partition values come from the UTC bar time. The layout is the data layout Iceberg uses, so a later catalog registration needs no rewrite. Full Iceberg was evaluated and deferred: in DuckDB 1.5.6, writes need a REST catalog server, and snapshot expiry needs a separate tool.
 - **Writes:** each flush is one batch with a new `seq`. Rows go to `pending` through the Appender, then `COPY ... TO _staging/<id> (FORMAT parquet, PARTITION_BY (tf, year, month))`, then the files are renamed into `bars/` (atomic on the same filesystem). After that, `pending` is cleared and coverage is applied, so coverage never runs ahead of the data. On open, leftover staging is deleted and leftover `pending` rows are republished.
 - **Upserts:** a re-fetched bar is written again with a higher seq. Every read keeps the newest version: `QUALIFY row_number() OVER (PARTITION BY ticker, t ORDER BY seq DESC) = 1`.
 - **Reads:** a windowed `read_parquet(..., hive_partitioning=true)` filtered on year, t and the requested tickers, with partition pruning. The working set and the panel are bounded by the lookback window.
 - **Single writer:** DuckDB's lock on `catalog.duckdb` stops a second process from opening the lake.
+- **Adjustment check:** the tail fetch is inclusive, so it re-fetches the last stored bar. That bar is compared only if it was complete when stored, meaning its session (1d: the session calendar's 16:00 ET close) or bucket (intraday: bar start + timeframe; 1w: start + 7 days) had closed by the fetch end of the sync that stored it. This is tracked by `complete`. If the re-fetched close differs from the stored close by more than 1e-6 relative, the history was re-adjusted (split or dividend), and the ticker's full `[start, end]` window is fetched again; the higher seq wins. A partial bar (stored before its close) can change legitimately and is never compared. If no complete stored bar overlaps the fetch, the check is skipped.
 - **Commit granularity:** `sync_bars` commits after every 100-symbol fetch batch, so an interrupted sync loses at most one batch.
 - **Maintenance** (after every alpaca sync, and via `--maintain`):
   - **Compaction:** a partition with more than 8 files is rewritten into one deduplicated file.

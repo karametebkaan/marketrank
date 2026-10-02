@@ -33,12 +33,16 @@ class Lake {
   Lake(const Lake&) = delete;
   Lake& operator=(const Lake&) = delete;
 
-  // One write batch (new seq). Data becomes visible atomically per file; coverage is applied after.
+  // One write batch (new seq). Data becomes visible atomically per file; coverage and complete marks
+  // are applied after. complete: per ticker, the latest bar time stored after its session or bucket
+  // had closed (only moves later).
   void write(Timeframe tf, const std::vector<LakeRow>& rows,
-             const std::vector<std::pair<std::string, TimePoint>>& coverage);
+             const std::vector<std::pair<std::string, TimePoint>>& coverage,
+             const std::vector<std::pair<std::string, TimePoint>>& complete = {});
   std::map<std::string, std::vector<Bar>> read(Timeframe tf, const std::vector<std::string>& tickers,
                                                TimePoint start, TimePoint end);
   std::map<std::string, TimePoint> coverage(Timeframe tf, const std::vector<std::string>& tickers);
+  std::map<std::string, TimePoint> complete(Timeframe tf, const std::vector<std::string>& tickers);
   std::size_t compact(Timeframe tf, std::size_t max_files);
   std::size_t apply_retention(const RetentionPolicy& policy, TimePoint now);
   std::size_t file_count(Timeframe tf) const;

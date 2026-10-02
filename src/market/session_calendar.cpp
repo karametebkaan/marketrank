@@ -31,6 +31,12 @@ EtTime to_eastern(TimePoint utc) {
           static_cast<int>(secs % 3600 / 60), weekday_from_days(days)};
 }
 
+TimePoint session_close(TimePoint utc) {
+  const Civil d = to_eastern(utc).date;
+  const TimePoint edt = utc_seconds(d.y, d.m, d.d, 20);  // 16:00 EDT
+  return is_us_dst(edt) ? edt : edt + 3600;               // else 16:00 EST
+}
+
 std::vector<Bar> aggregate_session_hours(const std::vector<Bar>& bars30m) {
   std::vector<Bar> out;
   std::int64_t cur_day = 0;

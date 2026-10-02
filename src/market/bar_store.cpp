@@ -71,6 +71,20 @@ void BarStore::set_covered_from(const std::string& ticker, Timeframe tf, TimePoi
   if (!inserted) w->second = std::min(w->second, t);
 }
 
+std::optional<TimePoint> BarStore::complete_through(const std::string& ticker, Timeframe tf) const {
+  auto it = complete_.find({ticker, tf});
+  if (it == complete_.end()) return std::nullopt;
+  return it->second;
+}
+
+void BarStore::set_complete_through(const std::string& ticker, Timeframe tf, TimePoint t) {
+  const Key key{ticker, tf};
+  auto it = complete_.find(key);
+  if (it != complete_.end() && it->second >= t) return;
+  complete_[key] = t;
+  complete_to_write_[key] = t;
+}
+
 void BarStore::save(const std::string& ticker, Timeframe tf) {
   const Key key{ticker, tf};
   auto it = queued_.find(key);
@@ -81,19 +95,22 @@ void BarStore::save(const std::string& ticker, Timeframe tf) {
 }
 
 void BarStore::flush() {
-  if (to_write_.empty() && cov_to_write_.empty()) return;
+  if (to_write_.empty() && cov_to_write_.empty() && complete_to_write_.empty()) return;
   for (Timeframe tf : {Timeframe::Hour, Timeframe::Day, Timeframe::Week}) {
     std::vector<LakeRow> rows;
-    std::vector<std::pair<std::string, TimePoint>> cov;
+    std::vector<std::pair<std::string, TimePoint>> cov, done;
     for (const auto& [key, bars] : to_write_)
       if (key.second == tf)
         for (const Bar& b : bars) rows.push_back({key.first, b});
     for (const auto& [key, t] : cov_to_write_)
       if (key.second == tf) cov.emplace_back(key.first, t);
-    if (!rows.empty() || !cov.empty()) lake().write(tf, rows, cov);
+    for (const auto& [key, t] : complete_to_write_)
+      if (key.second == tf) done.emplace_back(key.first, t);
+    if (!rows.empty() || !cov.empty() || !done.empty()) lake().write(tf, rows, cov, done);
   }
   to_write_.clear();
   cov_to_write_.clear();
+  complete_to_write_.clear();
 }
 
 void BarStore::load_range(const std::vector<std::string>& tickers, Timeframe tf, TimePoint start,
@@ -114,6 +131,10 @@ void BarStore::load_range(const std::vector<std::string>& tickers, Timeframe tf,
     for (const auto& [ticker, t] : lake().coverage(tf, tickers)) {
       auto it = covered_.find({ticker, tf});
       if (it == covered_.end() || t < it->second) covered_[{ticker, tf}] = t;
+    }
+    for (const auto& [ticker, t] : lake().complete(tf, tickers)) {
+      auto it = complete_.find({ticker, tf});
+      if (it == complete_.end() || t > it->second) complete_[{ticker, tf}] = t;
     }
   } catch (const std::exception& e) {
     // Contract 4: unreadable data never aborts a load; the caller sees missing series.
