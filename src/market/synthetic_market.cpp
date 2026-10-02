@@ -15,7 +15,7 @@ std::vector<Security> generate_synthetic(const SyntheticConfig& cfg, BarStore& s
   std::vector<Security> secs;
   for (int s = 0; s < cfg.sectors; ++s) {
     for (int k = 0; k < cfg.per_sector; ++k) {
-      char ticker[16];
+      char ticker[32];
       std::snprintf(ticker, sizeof ticker, "S%d_%02d", s, k);
       secs.push_back({ticker, ticker, "Sector" + std::to_string(s)});
     }
