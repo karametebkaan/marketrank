@@ -561,34 +561,40 @@ The flows of Section~\ref{Section:flows} are inferred from bars. SEC Form 13F~\c
 \end{itemize}
 Thirty-nine quarters, 2016Q4--2026Q2, have a previous quarter and enough warm-up. Each has 4,313--9,006 managers, 3.08M--3.71M observed edges and \$0.91T--\$3.37T of paired flow.
 
-\paragraph{Nulls} A lift is the metric minus a null. We use three nulls:
+\paragraph{Nulls} A lift is the metric minus a null. We use four nulls:
 \begin{itemize}
 \item the \emph{temporal placebo}, the same configuration's estimate of another quarter ($q-4$, else $q+1$). It cancels the density and size effects of each configuration;
-\item the \emph{gravity null} $\mathrm{out}\,\mathrm{in}^\top/\text{total}$, built from the estimate's own marginals. It measures structure beyond the marginals;
+\item the \emph{dense gravity null} $\mathrm{out}\,\mathrm{in}^\top/\text{total}$, built from the estimate's own marginals over every pair with margins;
+\item the \emph{support-matched gravity null}: the same product masked to the estimate's own nonzero pairs, with each row rescaled to the estimate's row sum. It has the estimate's density and out-margins and differs only in how each row is split. The edge metrics count missing pairs as 0, so a denser null gains from density alone; this null measures the estimate's pairing beyond its marginals with that effect removed. Per quarter, the share of the $n(n-1)$ pairs that are nonzero is 0.77--0.93 in the observed matrix, 0.20--0.28 in the estimate (0.80M--1.14M edges) and 0.33--0.41 in the dense gravity null;
 \item 100 random relabellings of the estimate (\emph{perm}).
 \end{itemize}
 
 \paragraph{Results} Table~\ref{Table:13f} reports the base preset ($\lambda=1$, dollar pressure).
 \begin{itemize}
 \item \textbf{Permutation null.} Every metric clears it by a wide margin.
-\item \textbf{Gravity null.} On the edge metrics the estimate is \emph{below} the gravity null built from its own marginals. For the base preset this holds in 39 of 39 quarters on both edge Spearman metrics and in 38 of 39 on row cosine; for the other five configurations, in 39 of 39 on all three. Discarding the correlation-tilted pairing and keeping only the estimated inflow and outflow totals agrees better with 13F than the full estimate does.
+\item \textbf{Gravity nulls.} The estimate is \emph{below} the dense gravity null on every edge metric: in 39 of 39 quarters on both edge Spearman metrics and 38 of 39 on row cosine for the base preset. Part of that gap is density. On all pairs the lift is $-0.065$ against the dense null but only $-0.004\pm0.001$ against the support-matched null. With density and row sums held fixed, the estimate remains below the support-matched null:
+\begin{itemize}
+\item observed top-5000 $-0.020\pm0.008$, all pairs $-0.004\pm0.001$, row cosine $-0.047\pm0.019$;
+\item negative in 39, 39 and 38 of 39 quarters for the base preset, and in 39 of 39 for the other five configurations (except one quarter of row cosine at $\lambda=1$, $\sqrt{V}$).
+\end{itemize}
+On $\pi$ the support-matched lift is $-0.000\pm0.002$ (positive in 11 of 39 quarters).
 \item \textbf{Placebo.} The lift over the placebo is small but mostly positive. The estimate for the right quarter beats another quarter's estimate by 0.01--0.04 on the edge metrics and 0.045 on $\pi$. The lift is positive in 24--36 of 39 quarters, depending on the metric.
 \end{itemize}
 
 \begin{table*}[t]
 \centering
-\caption{Estimated vs observed (13F) quarterly flows, base preset, mean $\pm$ sd over 39 quarters (2016Q4--2026Q2). Lift = estimate $-$ null. The last column counts the quarters with a positive placebo lift.}
+\caption{Estimated vs observed (13F) quarterly flows, base preset, mean $\pm$ sd over 39 quarters (2016Q4--2026Q2). Lift = estimate $-$ null. Dense gravity: the estimate's marginal product over all pairs; support-matched: the same product on the estimate's own nonzero pairs, rows rescaled to its row sums. The last column counts the quarters with a positive placebo / support-matched lift.}
 \label{Table:13f}
-\small\setlength{\tabcolsep}{5pt}
-\begin{tabular}{lccccc}
+\footnotesize\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lcccccc}
 \toprule
-metric & estimate & lift vs placebo & lift vs gravity & lift vs perm & $>0$ \\
+metric & estimate & lift vs placebo & lift vs dense gravity & lift vs supp.\ gravity & lift vs perm & $>0$ \\
 \midrule
-edge $\rho$, obs.\ top-5000 & $0.162\pm0.059$ & $+0.036\pm0.032$ & $-0.024\pm0.008$ & $+0.163\pm0.058$ & 34 \\
-edge $\rho$, all pairs & $0.357\pm0.019$ & $+0.015\pm0.022$ & $-0.065\pm0.010$ & $+0.358\pm0.019$ & 28 \\
-row cosine & $0.182\pm0.043$ & $+0.010\pm0.041$ & $-0.050\pm0.020$ & $+0.152\pm0.042$ & 24 \\
-$\pi$ Spearman & $0.613\pm0.031$ & $+0.045\pm0.031$ & $+0.001\pm0.002$ & $+0.613\pm0.031$ & 36 \\
-$\pi$ top-50 overlap & $0.432\pm0.064$ & $+0.048\pm0.062$ & $+0.016\pm0.025$ & $+0.406\pm0.063$ & 27 \\
+edge $\rho$, obs.\ top-5000 & $0.162\pm0.059$ & $+0.036\pm0.032$ & $-0.024\pm0.008$ & $-0.020\pm0.008$ & $+0.163\pm0.058$ & 34 / 0 \\
+edge $\rho$, all pairs & $0.357\pm0.019$ & $+0.015\pm0.022$ & $-0.065\pm0.010$ & $-0.004\pm0.001$ & $+0.358\pm0.019$ & 28 / 0 \\
+row cosine & $0.182\pm0.043$ & $+0.010\pm0.041$ & $-0.050\pm0.020$ & $-0.047\pm0.019$ & $+0.152\pm0.042$ & 24 / 1 \\
+$\pi$ Spearman & $0.613\pm0.031$ & $+0.045\pm0.031$ & $+0.001\pm0.002$ & $-0.000\pm0.002$ & $+0.613\pm0.031$ & 36 / 11 \\
+$\pi$ top-50 overlap & $0.432\pm0.064$ & $+0.048\pm0.062$ & $+0.016\pm0.025$ & $+0.011\pm0.023$ & $+0.406\pm0.063$ & 27 / 18 \\
 \bottomrule
 \end{tabular}
 \end{table*}
@@ -613,13 +619,13 @@ The 13F data therefore give no reason to change $\lambda$ or the pressure of the
 
 \paragraph{Limits}
 \begin{itemize}
-\item \textbf{Close to rank-1 by construction.} Proportional pairing makes $T_q$ a sum of per-manager rank-1 matrices. In practice that sum is close to rank-1: a product of marginals alone matches it better than the estimate does. Agreement on edges is therefore largely agreement on the marginals, and the comparison cannot reward pairing structure that 13F's own proportional pairing does not contain.
+\item \textbf{Close to rank-1 by construction.} Proportional pairing makes $T_q$ a sum of per-manager rank-1 matrices. In practice that sum is close to rank-1: a product of marginals alone matches it better than the estimate does, even on the estimate's own support. Agreement on edges is therefore largely agreement on the marginals, and the comparison cannot reward pairing structure that 13F's own proportional pairing does not contain.
 \item \textbf{What 13F leaves out.} The filings are quarterly, long-only, institutional and filed with a 45-day lag. They omit shorts, retail, options and intra-quarter round trips. Fund flows appear as unpaired cash, which in several quarters exceeds the paired flow.
 \item \textbf{Prices and survivorship.} Trade prices are unknown, so $d$ uses the quarter's mean close. The universe is today's, which lowers coverage in early years.
 \item \textbf{Cleaning heuristics.} The unit repair and the $100\times$ position filter are heuristics against a per-CUSIP consensus.
 \end{itemize}
 
-\paragraph{Reading} Measured against observed institutional pairing, the bar-level estimate carries information about \emph{which} stocks send and receive money, and a little about \emph{when}. The placebo lift is small but mostly positive. It carries no information about \emph{who pairs with whom} beyond the marginals: the gravity lift is negative on every edge metric, in all 39 quarters except one quarter of row cosine under the base preset. Even its marginal information is weaker than plain dollar volume.
+\paragraph{Reading} Measured against observed institutional pairing, the bar-level estimate carries information about \emph{which} stocks send and receive money, and a little about \emph{when}. The placebo lift is small but mostly positive. It carries no information about \emph{who pairs with whom} beyond the marginals. On its own support it is no better than its own marginals, and slightly worse: the support-matched gravity lift is negative on every edge metric, in all 39 quarters except one quarter of row cosine. The size of that deficit is small on all pairs ($-0.004$) and larger where the observed flows are largest ($-0.020$ on the observed top-5000). Even its marginal information is weaker than plain dollar volume.
 
 %% ------------------------------------------------------------------
 \section{Limitations and future work}

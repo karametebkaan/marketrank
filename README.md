@@ -157,22 +157,29 @@ python3 scripts/openfigi_map.py --data data --min-value 1e7     # CUSIP -> ticke
 - **Quarters compared.** 39, 2016Q4-2026Q2. 2016Q1-Q3 lack a previous quarter or warm-up.
 - **Observed flows per quarter.** 4,313-9,006 managers and 3.08M-3.71M observed edges. Paired flow runs from
   $0.91T to $3.37T per quarter.
-- **Grid.** 6 configurations (λ ∈ {0, 0.5, 1} × pressure ∈ {dollar, sqrt}). The run took 64 min on a busy
-  machine (23.5 min when idle) and peaked at 7 GB.
+- **Grid.** 6 configurations (λ ∈ {0, 0.5, 1} × pressure ∈ {dollar, sqrt}). The run took 19 min 20 s and
+  peaked at 6.9 GB.
 
 **Agreement.** The table below is for the base preset (λ = 1, dollar pressure). Values are mean ± sd over 39
 quarters. Lift = estimate − null:
 - the **placebo** is the same configuration's estimate of another quarter (q−4, else q+1);
-- **gravity** is out·inᵀ/total built from the estimate's own marginals;
+- **dense gravity** is out·inᵀ/total built from the estimate's own marginals, over every pair with margins;
+- **support-matched gravity** is the same product masked to the estimate's own nonzero pairs, with each row
+  rescaled to the estimate's row sum. It has the estimate's density and out-margins and differs only in how
+  each row is split. The edge metrics count missing pairs as 0, so the denser dense null gains from density
+  alone; the support-matched lift removes that effect;
 - **perm** is 100 random relabellings.
 
-| metric | estimate | lift vs placebo | lift vs gravity | lift vs perm | quarters with placebo lift > 0 |
-|---|---|---|---|---|---|
-| edge Spearman, observed top-5000 | 0.162 ± 0.059 | +0.036 ± 0.032 | −0.024 ± 0.008 | +0.163 ± 0.058 | 34/39 |
-| edge Spearman, all pairs | 0.357 ± 0.019 | +0.015 ± 0.022 | −0.065 ± 0.010 | +0.358 ± 0.019 | 28/39 |
-| row cosine | 0.182 ± 0.043 | +0.010 ± 0.041 | −0.050 ± 0.020 | +0.152 ± 0.042 | 24/39 |
-| π Spearman | 0.613 ± 0.031 | +0.045 ± 0.031 | +0.001 ± 0.002 | +0.613 ± 0.031 | 36/39 |
-| π top-50 overlap | 0.432 ± 0.064 | +0.048 ± 0.062 | +0.016 ± 0.025 | +0.406 ± 0.063 | 27/39 |
+Densities as a share of the n(n−1) pairs per quarter: observed 0.77-0.93, estimate 0.20-0.28 (0.80M-1.14M
+edges), dense gravity 0.33-0.41.
+
+| metric | estimate | lift vs placebo | lift vs dense gravity | lift vs support-matched gravity | lift vs perm | placebo / support-matched lift > 0 |
+|---|---|---|---|---|---|---|
+| edge Spearman, observed top-5000 | 0.162 ± 0.059 | +0.036 ± 0.032 | −0.024 ± 0.008 | −0.020 ± 0.008 | +0.163 ± 0.058 | 34 / 0 of 39 |
+| edge Spearman, all pairs | 0.357 ± 0.019 | +0.015 ± 0.022 | −0.065 ± 0.010 | −0.004 ± 0.001 | +0.358 ± 0.019 | 28 / 0 |
+| row cosine | 0.182 ± 0.043 | +0.010 ± 0.041 | −0.050 ± 0.020 | −0.047 ± 0.019 | +0.152 ± 0.042 | 24 / 1 |
+| π Spearman | 0.613 ± 0.031 | +0.045 ± 0.031 | +0.001 ± 0.002 | −0.000 ± 0.002 | +0.613 ± 0.031 | 36 / 11 |
+| π top-50 overlap | 0.432 ± 0.064 | +0.048 ± 0.062 | +0.016 ± 0.025 | +0.011 ± 0.023 | +0.406 ± 0.063 | 27 / 18 |
 
 **Size baselines for π.**
 - Observed π vs quarter ADV: Spearman **0.896 ± 0.015**.
@@ -215,14 +222,21 @@ drive the spikes:
   too large, e.g. a $594B SPY row; these are now dropped rather than rewritten.
 
 **What this means.**
-- **Beyond the marginals, nothing.** Every primary metric clears the permutation null by a wide margin, but
-  almost all of that is size and the marginals. The estimate's own rank-1 gravity null (its marginals, with its
-  pairing structure discarded) agrees with 13F **better** than the estimate itself:
-  - for the base preset, in 39 of 39 quarters on both edge Spearman metrics and 38 of 39 on row cosine;
-  - for the other five configurations, in 39 of 39 on all three.
+- **No better than its own marginals on its own support; slightly worse.** Every primary metric clears the
+  permutation null by a wide margin, but almost all of that is size and the marginals.
+  - **Dense null.** Against the dense gravity null the estimate loses in 39/39 quarters on both edge Spearman
+    metrics and 38/39 on row cosine (base). Much of that is density: on all pairs, the lift goes from −0.065
+    (dense) to −0.004 (support-matched).
+  - **Support-matched null.** With the same support and row sums, splitting each row by column marginals still
+    agrees with 13F better than the estimate's correlation-tilted split:
+    - for the base preset: −0.020 on the observed top-5000, −0.004 on all pairs, −0.047 on row cosine;
+      negative in 39/39, 39/39 and 38/39 quarters;
+    - for the other five configurations: negative in 39/39 quarters on all three edge metrics, except one quarter
+      of row cosine for λ = 1 sqrt.
+  - **π.** The support-matched lift is −0.000 ± 0.002 (positive in 11/39 quarters).
 
-  Measured against observed institutional pairing, the correlation-tilted pairing adds nothing beyond the
-  marginals, and on these metrics it subtracts a little.
+  Measured against observed institutional pairing, the pairing beyond the marginals carries no information. It
+  is consistently, if slightly, worse than the marginals on the estimate's own support.
 - **A small timing signal.** The temporal placebo lift is small but mostly positive: 0.01-0.05, positive in
   24-36 of 39 quarters. So the estimate for the right quarter carries a little quarter-specific information that
   another quarter's estimate lacks.
@@ -233,12 +247,15 @@ drive the spikes:
   shorts, retail, options and intra-quarter round trips. Fund inflows and outflows show up as unpaired cash, not
   pairs: unpaired dollars are often as large as the paired ones.
 - **Close to rank-1 by construction.** Proportional pairing makes the observed T_q a sum of per-manager rank-1
-  matrices, out_m in_mᵀ / Σin_m. That sum is close to rank-1 in practice: a product of marginals alone (the
-  gravity null) matches it better than the estimate does. Agreement on edges is therefore largely agreement on
-  the marginals. The gravity lift is the honest measure of structure, and it is negative. The comparison cannot
+  matrices, out_m in_mᵀ / Σin_m. That sum is close to rank-1 in practice: a product of marginals alone matches
+  it better than the estimate does, even on the estimate's own support. Agreement on edges is therefore largely
+  agreement on the marginals. The support-matched gravity lift is the honest measure of structure, and it is
+  negative. The comparison cannot
   reward pairing structure that 13F's proportional pairing does not itself contain.
 - **Trade prices.** They are unknown, so d uses the quarter's mean close.
-- **Survivorship.** The universe is today's, which lowers coverage in early years.
+- **Survivorship.** The universe is today's, which lowers coverage in early years. The CUSIP -> ticker map has no
+  time dimension: OpenFIGI returns a CUSIP's current ticker. A CUSIP whose ticker changed, or a ticker later
+  reused by another issuer, is priced from the lake series of today's holder of that ticker.
 - **Data cleaning.** The unit repair and the 100x position filter are heuristics against a per-CUSIP
   consensus.
 
