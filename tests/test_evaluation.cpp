@@ -188,3 +188,30 @@ TEST_CASE("a dense unpruned graph has less structure gain than the defaults") {
   INFO("dense structure gain " << dense.structure_gain << ", defaults " << defaults.structure_gain);
   CHECK(dense.structure_gain < defaults.structure_gain);
 }
+
+TEST_CASE("open-to-open IC pairs score at t with open(t+2)/open(t+1) - 1") {
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  Panel p;
+  p.times = {0, 1, 2, 3};
+  p.tickers = {"A", "B", "C", "D"};
+  const std::size_t N = 4, T = 4;
+  p.open.assign(T * N, 100.0);
+  // open[t+2]/open[t+1] - 1 at t = 1 is 0.04, 0.01, 0.03, 0.02 for A..D
+  const double r[4] = {0.04, 0.01, 0.03, 0.02};
+  for (std::size_t i = 0; i < N; ++i) p.open[p.idx(3, i)] = 100.0 * (1 + r[i]);
+  p.open[p.idx(0, 0)] = nan;  // irrelevant bars stay out of the pairing
+  Frame f;
+  f.active = {true, true, true, true};
+  Forecast fc;
+  fc.score = {4, 1, 3, 2};  // exactly the ranks of r
+  f.forecasts.push_back(fc);
+  f.h = {0.4, 0.1, 0.3, 0.2};
+  CHECK(oo_ic_for_frame(p, f, 1, false) == doctest::Approx(1.0));
+  CHECK(oo_ic_for_frame(p, f, 1, true) == doctest::Approx(1.0));
+  f.forecasts[0].score = {1, 4, 2, 3};  // reversed ranks
+  f.h = {0.1, 0.4, 0.2, 0.3};
+  CHECK(oo_ic_for_frame(p, f, 1, false) == doctest::Approx(-1.0));
+  CHECK(oo_ic_for_frame(p, f, 1, true) == doctest::Approx(-1.0));
+  CHECK(std::isnan(oo_ic_for_frame(p, f, 2, false)));  // t + 2 >= T
+  CHECK(std::isnan(oo_ic_for_frame(p, f, 3, true)));
+}

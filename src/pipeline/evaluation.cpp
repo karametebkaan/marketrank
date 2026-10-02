@@ -131,6 +131,23 @@ double sector_coherence(const Frame& f, const std::vector<Security>& nodes) {
   return total > 0 ? same / total : 0.0;
 }
 
+double oo_ic_for_frame(const Panel& panel, const Frame& f, std::size_t t, bool use_h,
+                       std::size_t score_horizon) {
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  if (t + 2 >= panel.T() || f.active.size() != panel.N()) return nan;
+  std::vector<double> x, r;
+  for (std::size_t i = 0; i < panel.N(); ++i) {
+    const double o1 = panel.open[panel.idx(t + 1, i)], o2 = panel.open[panel.idx(t + 2, i)];
+    const double v = use_h ? f.h[i] : f.forecasts.at(score_horizon).score[i];
+    if (!f.active[i] || !std::isfinite(o1) || !std::isfinite(o2) || !(o1 > 0) ||
+        !std::isfinite(v))
+      continue;
+    x.push_back(v);
+    r.push_back(o2 / o1 - 1.0);
+  }
+  return spearman(x, r);
+}
+
 EvalMetrics evaluate(const Panel& panel, const std::vector<Security>& nodes,
                      const CoreParams& params, std::size_t eval_bars) {
   const std::size_t T = panel.T(), N = panel.N();
@@ -145,7 +162,7 @@ EvalMetrics evaluate(const Panel& panel, const std::vector<Security>& nodes,
 
   CorePipeline pipe(N, params);
   EvalMetrics m;
-  std::vector<double> ics, ics_h;
+  std::vector<double> ics, ics_h, ics_oo, ics_h_oo;
   std::size_t frames = 0, sg_frames = 0;
   double ms = 0;
   // IC uses the one-bar-ahead forecast when the horizons include k = 1, else the first one.
@@ -186,6 +203,10 @@ EvalMetrics evaluate(const Panel& panel, const std::vector<Security>& nodes,
       if (std::isfinite(ic)) ics.push_back(ic);
       if (std::isfinite(ich)) ics_h.push_back(ich);
     }
+    if (const double v = oo_ic_for_frame(panel, f, t, false, fc); std::isfinite(v))
+      ics_oo.push_back(v);
+    if (const double v = oo_ic_for_frame(panel, f, t, true, fc); std::isfinite(v))
+      ics_h_oo.push_back(v);
   }
   if (frames > 0) {
     const double fr = static_cast<double>(frames);
@@ -197,6 +218,8 @@ EvalMetrics evaluate(const Panel& panel, const std::vector<Security>& nodes,
   if (sg_frames > 0) m.structure_gain /= static_cast<double>(sg_frames);
   summarize(ics, m.ic_mean, m.ic_t);
   summarize(ics_h, m.ic_h_mean, m.ic_h_t);
+  summarize(ics_oo, m.ic_oo_mean, m.ic_oo_t);
+  summarize(ics_h_oo, m.ic_h_oo_mean, m.ic_h_oo_t);
   m.ic_samples = ics.size();
   return m;
 }

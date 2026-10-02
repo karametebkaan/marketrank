@@ -123,7 +123,7 @@ For each bar *t* and stock *i* with return `r_i = C/C⁻ − 1`, volume V and VW
 - **Gini:** the Gini coefficient of π
 - **sector coherence:** the share of off-diagonal raw edge weight between nodes of the same known sector
 - **structure gain:** 1 − Spearman(π, inflow share). Near 0 means the chain has collapsed to plain influx (for example a dense, unpruned graph); higher means the pruned multi-hop structure is shaping π.
-- **IC:** the mean Spearman correlation between each bar's +1 forecast score and the next bar's return, and its t-statistic; **IC(h):** the same for hotness h, which is where the D settings show up
+- **IC:** the mean Spearman correlation between each bar's +1 forecast score and the next bar's return, and its t-statistic; **IC(h):** the same for hotness h, which is where the D settings show up, plus open-to-open variants (decide at close t, fill at open t+1, exit at open t+2), which match the shadow-ledger fill model and are immune to closing bid-ask bounce.
 - the mean frame time in ms
 
 ### 5.3 Shock mode (counterfactual)
