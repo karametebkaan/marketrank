@@ -276,7 +276,27 @@ with 12 iterations and $\lambda=0.6$. Tall neighbours pull a pixel toward them, 
 Raw $\pi$ is dominated by size, since the largest names carry the largest flows. The landscape height under the \MR\ preset is therefore $\log(\pi_i/s_i)$, where $s_i$ is stock $i$'s size share (its trailing median dollar volume over the sum over active stocks). A hill attracts more money than its size predicts, a valley less, and 0 is exactly as predicted; stocks without a size get no height. The value also drives the spiral ordering and the mountain/crater rule, so it decides placement as well as relief. The \emph{ranking} is always $\pi$ itself.
 
 \subsection{Gouraud-shaded mesh}
-Each lattice quad is split into two triangles with a fixed index buffer, so per frame only the vertex heights change. Vertex colours come from a diverging map symmetric around 0 (red for inflow, blue for outflow), scaled robustly by the 90th percentile of $|z|$ and soft-clipped by $\tanh$, and each triangle is Gouraud-shaded~\cite{gouraud} with relief lighting. The strongest flux arcs and the user's portfolio are drawn on top. Each holding gets a \emph{directed depth arrow} from the smoothed surface to its exact, unsmoothed value: green and pointing up when the exact value lies above the surface, red and pointing down when it lies below.
+Each lattice quad is split into two triangles with a fixed index buffer, so per frame only the vertex heights change. Vertex colours come from a diverging map symmetric around 0 (red for inflow, blue for outflow), scaled robustly by the 90th percentile of $|z|$ and soft-clipped by $\tanh$, and each triangle is Gouraud-shaded~\cite{gouraud} with relief lighting. The strongest flux arcs and the user's portfolio are drawn on top. Each holding gets a \emph{directed depth arrow} from the smoothed surface to its exact, unsmoothed value: green and pointing up when the exact value lies above the surface, red and pointing down when it lies below. Table~\ref{Table:holdings} gives the values for the example portfolio on 2026-10-01. The arrow shows how much the smoothing moved each holding, which is why the exact table, not the surface, is authoritative.
+
+\begin{table}[t]
+\centering
+\caption{Portfolio holdings on 2026-10-01: exact $\log(\pi/s)$, the smoothed surface at the holding's cell, and $\Delta$ = exact $-$ surface (Figure~\ref{Figure:landscape}).}
+\label{Table:holdings}
+\small
+\begin{tabular}{lrrr}
+\toprule
+Ticker & Exact & Surface & $\Delta$\\
+\midrule
+AAPL & $+0.573$ & $+0.806$ & $-0.234$\\
+VOO & $-3.893$ & $-2.890$ & $-1.003$\\
+NVDA & $+0.414$ & $+0.450$ & $-0.036$\\
+LLY & $+0.597$ & $+0.859$ & $-0.263$\\
+NVO & $-1.194$ & $-1.222$ & $+0.028$\\
+NKE & $-0.698$ & $-0.837$ & $+0.139$\\
+F & $-1.159$ & $-1.213$ & $+0.054$\\
+\bottomrule
+\end{tabular}
+\end{table}
 
 \paragraph{A fixed interface} The web interface has no model or landscape options. Its settings are fixed defaults: the \MR\ preset, height $\log(\pi/s)$, flux-community territories, the CVT smoother (12 iterations, $\lambda=0.6$) and subdivision 1. The exact sorted $\pi$ table is the truth; the surface is for the eye and the trend. Developer options remain on the command line and the HTTP API.
 
@@ -348,11 +368,10 @@ ETFs are deliberately kept in the universe and in the graph, uncapped and unfilt
 
 \begin{figure*}[t]
 \centering
-\includegraphics[width=0.92\textwidth,keepaspectratio]{figs/fluxscape-cvt.png}
-\caption{\FS\ on real data, 2026-10-01, 6,188 active stocks, \MR\ preset, flux-community territories, IDW (power 2, radius 3, subdivision 1) and the CVT smoother (12 iterations, $\lambda=0.6$). Height here is $\log(\pi_i N)$. The table at the top right is the exact top 10 by $\pi N$ with sparklines of recent history; green rings are portfolio holdings. This screenshot predates the heartbeat redefinition: its pulse column shows $\Delta\log\pi$.}
+\includegraphics[width=0.92\textwidth,keepaspectratio]{figs/fluxscape-final.png}
+\caption{\FS\ on the real 2026-10-01 bar: 6,188 active names (3,939 stocks and 2,249 ETF/funds), \MR\ preset. The surface is laid out in flux-community territories; its height is $\pi$ relative to size, $\log(\pi/s)$, CVT-smoothed, Gouraud-shaded on a red/blue diverging scale at P90 $\pm2.55$. Holdings carry directed depth arrows from the smoothed surface to their exact value: AAPL, LLY and VOO point down in red because their exact value lies below the surface, while NVDA, NVO, NKE and F get small neutral markers ($|\Delta|$ under 2\% of the span; Table~\ref{Table:holdings}). Labels are decluttered. The top-10 panel is the truth table: exact $\pi N$ with the heartbeat $\Delta\log(\pi N)$; the surface is for the trend. The lower-left plateau is a territory in which 87\% of the names are tied at the teleport floor, so their tiny size share makes $\log(\pi/s)$ high (Section~\ref{Section:limits}).}
 \label{Figure:landscape}
 \end{figure*}
-% TODO(fig-final): replace figs/fluxscape-cvt.png with the screenshot of the final UI (controller will supply it).
 
 \paragraph{Contrast with hotness} The engine's earlier ``money-flow'' preset reads a different quantity, hotness relative to size, $h_i=\pi_i/\pi^{\mathrm{ref}}_i-1$ with $\pi^{\mathrm{ref}}$ proportional to trailing median dollar volume, on a chain in which net buyers retain part of their inflow. Its top 10 on the same data are TNON, KOD, DFNS, NFEGP, SOAR, BNAI, WETO, LHSW, AGEN and GRML: all small names. Dividing by size rewards any stock whose flow is large relative to a small denominator, so a single volume spike in an illiquid name outranks steady flow in a mega-cap. The ratio is informative, but as a primary ranking it is dominated by noise in the smallest names, which is why \MR\ ranks by $\pi$ and uses size only for the landscape height.
 
