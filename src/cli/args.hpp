@@ -7,6 +7,7 @@
 
 #include "core/types.hpp"
 #include "pipeline/core_pipeline.hpp"
+#include "walkforward/universe.hpp"
 
 namespace mr {
 
@@ -41,6 +42,17 @@ struct CliArgs {
   RankBy rank_by = RankBy::Pi;
   std::string preset = "marketrank";  // the preset the model parameters started from: marketrank | money-flow | legacy | defaults
   CoreParams params = CoreParams::market_rank();
+  // Walk-forward evaluation (--walkforward, replay only); the rest of WalkForwardParams keeps its defaults.
+  bool walkforward = false;
+  Rebalance wf_rebalance = Rebalance::Weekly;
+  std::size_t wf_warmup = 252;   // warm-up bars before the first rebalance
+  std::size_t wf_top_n = 0;      // 0 = every eligible name; 500 = the large-cap sub-universe
+  double wf_cost_bps = 10;
+  double wf_tilt = 0.20;
+  std::size_t wf_k = 10;
+  std::filesystem::path wf_out;  // empty = <data>/walkforward
+  std::string wf_run_id;         // empty = <UTC timestamp>-<params hash>
+  std::string wf_largecap_run;   // sibling large-cap run id for gate c5
 };
 
 // Time range of bars to load and analyse: everything for synthetic (fixed historical dates),

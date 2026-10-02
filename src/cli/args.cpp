@@ -117,6 +117,16 @@ CliArgs parse_cli(const std::vector<std::string>& args) {
       if (a.export_slice == 0) throw std::invalid_argument("--export-slice needs N >= 1");
     } else if (flag == "--slice-out") a.slice_out = value();
     else if (flag == "--shock") a.shocks.push_back(to_shock(flag, value()));
+    else if (flag == "--walkforward") a.walkforward = true;
+    else if (flag == "--wf-rebalance") a.wf_rebalance = parse_rebalance(value());
+    else if (flag == "--wf-warmup") a.wf_warmup = to_size(flag, value());
+    else if (flag == "--wf-top-n") a.wf_top_n = to_size(flag, value());
+    else if (flag == "--wf-cost-bps") a.wf_cost_bps = to_double(flag, value());
+    else if (flag == "--wf-tilt") a.wf_tilt = to_double(flag, value());
+    else if (flag == "--wf-k") a.wf_k = to_size(flag, value());
+    else if (flag == "--wf-out") a.wf_out = value();
+    else if (flag == "--wf-run-id") a.wf_run_id = value();
+    else if (flag == "--wf-largecap-run") a.wf_largecap_run = value();
     else if (flag == "--help" || flag == "-h") a.help = true;
     else throw std::invalid_argument("unknown flag " + flag);
   }
@@ -124,6 +134,10 @@ CliArgs parse_cli(const std::vector<std::string>& args) {
     throw std::invalid_argument("--mode must be synthetic, replay or alpaca");
   if (a.refetch_full && a.mode != "alpaca") throw std::invalid_argument("--refetch-full needs --mode alpaca");
   if (a.export_slice > 0 && a.mode != "replay") throw std::invalid_argument("--export-slice needs --mode replay");
+  if (a.walkforward && a.mode != "replay") throw std::invalid_argument("--walkforward needs --mode replay");
+  if (!(a.wf_cost_bps >= 0 && std::isfinite(a.wf_cost_bps))) throw std::invalid_argument("--wf-cost-bps must be >= 0");
+  if (!(a.wf_tilt >= 0 && a.wf_tilt <= 1)) throw std::invalid_argument("--wf-tilt must be in [0, 1]");
+  if (a.wf_k == 0) throw std::invalid_argument("--wf-k must be >= 1");
   if (a.lookback_days < 0)
     a.lookback_days = a.tf == Timeframe::Hour ? 60 : a.tf == Timeframe::Day ? 365 : 5 * 365;
   a.params.validate();
@@ -159,7 +173,14 @@ std::string cli_usage() {
          "                                   data/sectors/sec_sic.csv; needs SEC_USER_AGENT in .env, no Alpaca keys;\n"
          "                                   uses the newest snapshot (--universe-size is ignored); run it on its own, then rank/eval)\n"
          "                 [--refetch-full]   (alpaca: one-time refetch of every ticker's full stored history,\n"
-         "                                   replacing old-basis bars; failed tickers stay untouched)\n";
+         "                                   replacing old-basis bars; failed tickers stay untouched)\n"
+         "                 [--walkforward]   (replay: causal walk-forward evaluation of the signals and the gated\n"
+         "                                   blend against the base portfolio; writes a report and exits; use\n"
+         "                                   --lookback-days for the history length, 252 bars are warm-up)\n"
+         "                   [--wf-rebalance weekly|monthly (weekly)] [--wf-top-n N (0 = all; 500 = large caps)]\n"
+         "                   [--wf-cost-bps X (10)] [--wf-tilt X (0.2)] [--wf-k N (10)] [--wf-warmup N (252)]\n"
+         "                   [--wf-out DIR (<data>/walkforward)] [--wf-run-id ID (<UTC time>-<params hash>)]\n"
+         "                   [--wf-largecap-run ID]   (sibling --wf-top-n 500 run in the same --wf-out: gate c5)\n";
 }
 
 std::string describe(const CoreParams& p) {

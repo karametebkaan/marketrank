@@ -140,6 +140,30 @@ sector is filled in the order S&P GICS, SEC SIC, then `ETF/Fund` (name heuristic
 Advisory and experimental. The flux is inferred from price and volume co-movement,
 not observed order flow.
 
+## Walk-forward
+
+```bash
+./build/marketrank --mode replay --walkforward --lookback-days 3650          # weekly, all eligible names, 10 bps
+./build/marketrank --mode replay --walkforward --lookback-days 3650 --wf-top-n 500 --wf-run-id lc500
+./build/marketrank --mode replay --walkforward --lookback-days 3650 --wf-largecap-run lc500  # gate c5 from lc500
+./build/marketrank --mode replay --walkforward --wf-rebalance monthly --wf-cost-bps 25        # sensitivity runs
+python3 scripts/render_equity.py data/walkforward/<run_id>                   # equity.csv -> equity.svg
+```
+
+One causal pass of the MarketRank pipeline over the replay panel (252 bars of warm-up). At every
+rebalance date (weekly by default, the last bar of each week; `--wf-rebalance monthly` for month ends)
+it stores the cross-sectional z-score of eight signals over the eligible names (trailing median dollar
+volume of at least $50M, optionally the top `--wf-top-n`). The gated blend learns signal weights on
+past periods only, with a one-period embargo. Each strategy tilts `--wf-tilt` (0.2) of the base
+portfolio (`data/portfolio.json`) toward its top `--wf-k` (10) names. Trades happen at the next open
+and pay `--wf-cost-bps` per side. Results go to `data/walkforward/<run_id>/` (or `--wf-out DIR`):
+
+- `report.md` holds the IC table (signal by horizon 1, 2, 5 and 20 bars) and the Perf of each strategy
+  against buy-and-hold of the base. It also has the blend weights and the decision gate.
+- `results.json`, `equity.csv` and `trades.csv` hold the full data.
+
+Every run appends its strategies to `registry.csv`, and the deflated Sharpe counts every row there as a trial.
+
 ## Landscape UI (Fluxscape)
 
 ```bash

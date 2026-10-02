@@ -35,6 +35,8 @@
 #include "server/http_server.hpp"
 #include "storage/csv_migration.hpp"
 #include "storage/lake.hpp"
+#include "walkforward/report.hpp"
+#include "walkforward/walkforward.hpp"
 
 namespace {
 namespace fs = std::filesystem;
@@ -326,6 +328,52 @@ int run_rank(const mr::CliArgs& args, const mr::Panel& panel, const mr::Universe
   return 0;
 }
 
+// --walkforward: the base mix is data/portfolio.json (the spec's mix if it has no holdings); holdings missing
+// from the panel are dropped with a warning (their weight stays in cash).
+int run_walkforward_cli(const mr::CliArgs& args, const mr::Panel& panel,
+                        const std::optional<mr::PortfolioSpec>& portfolio) {
+  mr::WalkForwardParams p;
+  p.core = args.params;
+  p.rebalance = args.wf_rebalance;
+  p.warmup_bars = args.wf_warmup;
+  p.top_n = args.wf_top_n;
+  p.bt.cost_bps = args.wf_cost_bps;
+  p.bt.tilt = args.wf_tilt;
+  p.bt.k = args.wf_k;
+  p.largecap_run = args.wf_largecap_run;
+  std::vector<mr::BaseWeight> base;
+  if (portfolio)
+    for (const auto& h : portfolio->holdings) base.push_back({h.ticker, h.weight});
+  if (base.empty()) base = mr::default_base_mix();
+  for (const auto& b : base) {
+    if (std::find(panel.tickers.begin(), panel.tickers.end(), b.ticker) != panel.tickers.end())
+      p.bt.base.push_back(b);
+    else
+      std::cerr << "warning: base holding " << b.ticker << " is not in the panel; its " << b.weight * 100
+                << "% stays in cash\n";
+  }
+  const std::string hash = mr::params_hash(p);
+  std::string run_id = args.wf_run_id;
+  if (run_id.empty()) {
+    std::string ts = mr::format_rfc3339(now_utc());
+    ts.erase(std::remove_if(ts.begin(), ts.end(), [](char c) { return c == '-' || c == ':'; }), ts.end());
+    run_id = ts + "-" + hash;
+  }
+  const fs::path out = args.wf_out.empty() ? args.data / "walkforward" : args.wf_out;
+  if (!p.largecap_run.empty() && !fs::exists(out / p.largecap_run / "results.json"))  // fail before the long pass
+    throw std::runtime_error("--wf-largecap-run: no " + (out / p.largecap_run / "results.json").string());
+  std::printf("walk-forward %s: nodes=%zu bars=%zu threads=%d\nparams: %s\n", run_id.c_str(), panel.N(), panel.T(),
+              omp_get_max_threads(), mr::describe(p).c_str());
+  std::fflush(stdout);
+  const auto t0 = std::chrono::steady_clock::now();
+  const mr::WalkForwardResult r = mr::run_walkforward(panel, p);
+  const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+  const fs::path dir = mr::write_report(r, p, panel, out, run_id);
+  std::printf("%zu rebalances, %zu curves in %.1f s -> %s\n", r.dates.size(), r.curves.size(), secs,
+              (dir / "report.md").string().c_str());
+  return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -399,6 +447,7 @@ int main(int argc, char** argv) {
       panel = mr::build_panel(store, universe.node_tickers(), args.tf, window_start, end);
     }
     if (panel.T() < 2) throw std::runtime_error("not enough cached bars; run with --mode alpaca first");
+    if (args.walkforward) return run_walkforward_cli(args, panel, portfolio);
     if (args.serve) {
       if (!mr::is_loopback_host(args.host))
         std::cerr << "warning: --host " << args.host
