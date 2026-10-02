@@ -352,8 +352,10 @@ int run_walkforward_cli(const mr::CliArgs& args, const mr::Panel& panel,
     run_id = ts + "-" + hash;
   }
   const fs::path out = args.wf_out.empty() ? args.data / "walkforward" : args.wf_out;
-  if (!p.largecap_run.empty() && !fs::exists(out / p.largecap_run / "results.json"))  // fail before the long pass
+  // Fail before the long pass (write_report repeats the registry check under its lock).
+  if (!p.largecap_run.empty() && !fs::exists(out / p.largecap_run / "results.json"))
     throw std::runtime_error("--wf-largecap-run: no " + (out / p.largecap_run / "results.json").string());
+  mr::check_registry_conflict(out, run_id, hash);
   std::printf("walk-forward %s: nodes=%zu bars=%zu threads=%d\nparams: %s\n", run_id.c_str(), panel.N(), panel.T(),
               omp_get_max_threads(), mr::describe(p).c_str());
   std::fflush(stdout);
@@ -385,6 +387,12 @@ int main(int argc, char** argv) {
       return 0;
     }
     if (args.sync_sectors) return run_sync_sectors(args);
+    if (!args.wf_rereport.empty()) {
+      const fs::path out = args.wf_out.empty() ? args.data / "walkforward" : args.wf_out;
+      const fs::path dir = mr::rereport(out, args.wf_rereport);
+      std::printf("re-rendered %s\n", (dir / "report.md").string().c_str());
+      return 0;
+    }
     if (args.maintain) {
       mr::BarStore lake_store(args.data / "lake");
       maintain_lake(lake_store, args.data, args.lookback_days, args.tf);

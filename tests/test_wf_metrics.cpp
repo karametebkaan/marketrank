@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 #include <cmath>
+#include <random>
 #include <vector>
 #include "core/time.hpp"
 #include "walkforward/metrics.hpp"
@@ -77,6 +78,7 @@ TEST_CASE("deflated sharpe") {
 
 TEST_CASE("decision gate") {
   Perf p;
+  p.ir_daily = 0.05;
   p.ann_excess = 0.02; p.excess_ci95 = {0.005, 0.03}; p.year_hit_rate = 0.7; p.max_drawdown = 0.30;
   GateResult g = decision_gate(p, 0.28, 0.97, true);
   CHECK(g.pass);
@@ -139,8 +141,86 @@ TEST_CASE("constant series: CI and degenerate sd") {
 
 TEST_CASE("gate reason for undefined DSR") {
   Perf p;
+  p.ir_daily = 0.05;
   p.ann_excess = 0.02; p.excess_ci95 = {0.005, 0.03}; p.year_hit_rate = 0.7; p.max_drawdown = 0.2;
   GateResult g = decision_gate(p, 0.28, std::nan(""), true);
   CHECK(!g.c3);
-  CHECK(g.reason.find("c3: deflated Sharpe undefined (non-positive variance term)") != std::string::npos);
+  CHECK(g.reason.find("c3: deflated IR undefined (non-positive variance term)") != std::string::npos);
+}
+
+namespace {
+// Strategy returns = benchmark returns + e, exactly (up to the value round trip).
+EquityCurve add_excess(TimePoint t0, const std::vector<double>& rb, const std::vector<double>& e) {
+  std::vector<double> rs(rb.size());
+  for (std::size_t i = 0; i < rb.size(); ++i) rs[i] = rb[i] + e[i];
+  return make_curve(t0, rs);
+}
+}  // namespace
+
+TEST_CASE("ir_daily and the excess moments are analytic on strategy = bench + known excess") {
+  const TimePoint t0 = utc_seconds(2020, 1, 1);
+  const std::size_t T = 1000;  // 250 blocks of e = {0.002, 0, 0, 0}
+  std::vector<double> rb(T), e(T);
+  for (std::size_t i = 0; i < T; ++i) {
+    rb[i] = 0.01 * std::sin(0.37 * static_cast<double>(i));
+    e[i] = i % 4 == 0 ? 0.002 : 0.0;
+  }
+  const Perf p = performance(add_excess(t0, rb, e), make_curve(t0, rb));
+  const double mean = 0.0005, ss = 250 * 3e-6;  // per block: 0.0015^2 + 3 * 0.0005^2
+  CHECK(p.T == T);
+  CHECK(p.ir_daily == doctest::Approx(mean / std::sqrt(ss / (T - 1))).epsilon(1e-8));
+  CHECK(p.ir == doctest::Approx(p.ir_daily * std::sqrt(252.0)).epsilon(1e-12));
+  CHECK(p.skew_e == doctest::Approx(2.0 / std::sqrt(3.0)).epsilon(1e-6));  // population moments
+  CHECK(p.kurt_e == doctest::Approx(7.0 / 3.0).epsilon(1e-6));
+  // The total-return moments are a different series.
+  CHECK(std::abs(p.skew - p.skew_e) > 0.1);
+}
+
+TEST_CASE("c3 deflates the excess: 0.8 x bench minus a drift has a high total DSR but fails c3") {
+  const TimePoint t0 = utc_seconds(2016, 1, 1);
+  const std::size_t T = 2520;
+  std::mt19937_64 g(42);
+  std::normal_distribution<double> nd(0.001, 0.01);
+  std::vector<double> rb(T), rs(T);
+  for (std::size_t i = 0; i < T; ++i) {
+    rb[i] = nd(g);
+    rs[i] = 0.8 * rb[i] - 0.0002;
+  }
+  const Perf p = performance(make_curve(t0, rs), make_curve(t0, rb));
+  CHECK(p.ann_excess < 0);
+  CHECK(dsr_total(p, 0.0, 1) > 0.95);   // the old c3 would have passed
+  CHECK(dsr_excess(p, 0.0, 1) < 0.05);  // the excess has a negative IR
+  Perf good = p;
+  good.ann_excess = 0.02; good.excess_ci95 = {0.01, 0.03}; good.year_hit_rate = 0.7; good.max_drawdown = 0.1;
+  const GateResult gr = decision_gate(good, 0.2, dsr_excess(p, 0.0, 1), true);
+  CHECK_FALSE(gr.c3);
+  CHECK(gr.reason.find("c3: deflated IR") != std::string::npos);
+}
+
+TEST_CASE("constant excess: ir_daily is NaN and c3 fails as undefined") {
+  const TimePoint t0 = utc_seconds(2020, 1, 1);
+  std::vector<double> rb(300), e(300, 0.0001);
+  for (std::size_t i = 0; i < rb.size(); ++i) rb[i] = 0.01 * std::cos(0.5 * static_cast<double>(i));
+  Perf p = performance(add_excess(t0, rb, e), make_curve(t0, rb));
+  CHECK(std::isnan(p.ir_daily));
+  CHECK(std::isnan(p.ir));
+  CHECK(std::isnan(p.skew_e));
+  CHECK(std::isnan(p.kurt_e));
+  CHECK(std::isnan(dsr_excess(p, 0.0001, 10)));
+  p.ann_excess = 0.02; p.excess_ci95 = {0.01, 0.03}; p.year_hit_rate = 0.7; p.max_drawdown = 0.1;
+  const GateResult g = decision_gate(p, 0.2, 0.99, true);  // even a "good" number cannot rescue an undefined IR
+  CHECK_FALSE(g.c3);
+  CHECK_FALSE(g.pass);
+  CHECK(g.reason.find("c3: deflated IR undefined") != std::string::npos);
+}
+
+TEST_CASE("no common days: sharpe_daily and ir_daily are NaN, not 0") {
+  const Perf p = performance(EquityCurve{}, EquityCurve{});
+  CHECK(p.T == 0);
+  CHECK(std::isnan(p.sharpe_daily));
+  CHECK(std::isnan(p.ir_daily));
+  CHECK(std::isnan(p.sharpe));
+  CHECK(std::isnan(p.ir));
+  CHECK(std::isnan(dsr_total(p, 0.0, 1)));
+  CHECK(std::isnan(dsr_excess(p, 0.0, 1)));
 }

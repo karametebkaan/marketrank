@@ -26,6 +26,17 @@ double mean_of(const std::vector<double>& x) {
   for (double v : x) s += v;
   return s / static_cast<double>(x.size());
 }
+// Population skew and raw kurtosis of x around mean m; left NaN when the sd is ~0.
+void moments(const std::vector<double>& x, double m, double& skew, double& kurt) {
+  double m2 = 0, m3 = 0, m4 = 0;
+  for (double v : x) {
+    const double dv = v - m;
+    m2 += dv * dv; m3 += dv * dv * dv; m4 += dv * dv * dv * dv;
+  }
+  const double n = static_cast<double>(x.size());
+  m2 /= n; m3 /= n; m4 /= n;
+  if (!sd_zero(std::sqrt(m2), m)) { skew = m3 / std::pow(m2, 1.5); kurt = m4 / (m2 * m2); }
+}
 }  // namespace
 
 Perf performance(const EquityCurve& s, const EquityCurve& bench) {
@@ -54,6 +65,7 @@ Perf performance(const EquityCurve& s, const EquityCurve& bench) {
     ++i; ++j;
   }
   const std::size_t T = r.size();
+  p.T = T;
   if (T == 0) return p;
   std::vector<double> e(T);
   for (std::size_t d = 0; d < T; ++d) e[d] = r[d] - rb[d];
@@ -67,7 +79,8 @@ Perf performance(const EquityCurve& s, const EquityCurve& bench) {
 
   const double me = mean_of(e), sde = sample_sd(e, me);
   p.ann_excess = me * kDays;
-  p.ir = sd_zero(sde, me) ? std::nan("") : me / sde * std::sqrt(kDays);
+  p.ir_daily = sd_zero(sde, me) ? std::nan("") : me / sde;
+  p.ir = p.ir_daily * std::sqrt(kDays);
   CI ci = block_bootstrap_mean_ci(std::span<const double>(e), 21, 2000, 11, 0.95);
   p.excess_ci95 = {ci.lo * kDays, ci.hi * kDays};
 
@@ -87,16 +100,20 @@ Perf performance(const EquityCurve& s, const EquityCurve& bench) {
   }
   p.year_hit_rate = p.years ? static_cast<double>(hits) / static_cast<double>(p.years) : 0.0;
 
-  // Population skew and raw kurtosis of daily strategy returns.
-  double m2 = 0, m3 = 0, m4 = 0;
-  for (double v : r) {
-    const double dv = v - m;
-    m2 += dv * dv; m3 += dv * dv * dv; m4 += dv * dv * dv * dv;
-  }
-  const double n = static_cast<double>(T);
-  m2 /= n; m3 /= n; m4 /= n;
-  if (!sd_zero(std::sqrt(m2), m)) { p.skew = m3 / std::pow(m2, 1.5); p.kurt = m4 / (m2 * m2); }
+  // Population skew and raw kurtosis of the daily strategy returns and of the daily excess.
+  moments(r, m, p.skew, p.kurt);
+  moments(e, me, p.skew_e, p.kurt_e);
   return p;
+}
+
+double dsr_excess(const Perf& p, double trial_ir_var, std::size_t n_ir_trials) {
+  if (!std::isfinite(p.ir_daily)) return std::nan("");
+  return deflated_sharpe(p.ir_daily, p.T, p.skew_e, p.kurt_e, trial_ir_var, std::max<std::size_t>(n_ir_trials, 1));
+}
+
+double dsr_total(const Perf& p, double trial_sr_var, std::size_t n_trials) {
+  if (!std::isfinite(p.sharpe_daily)) return std::nan("");
+  return deflated_sharpe(p.sharpe_daily, p.T, p.skew, p.kurt, trial_sr_var, std::max<std::size_t>(n_trials, 1));
 }
 
 double deflated_sharpe(double sr, std::size_t T, double skew, double kurt, double trial_sr_var, std::size_t n_trials) {
@@ -113,11 +130,11 @@ double deflated_sharpe(double sr, std::size_t T, double skew, double kurt, doubl
   return norm_cdf((sr - srstar) * std::sqrt(static_cast<double>(T - 1)) / std::sqrt(den2));
 }
 
-GateResult decision_gate(const Perf& p, double base_max_dd, double dsr, bool largecap_ok) {
+GateResult decision_gate(const Perf& p, double base_max_dd, double dsr, bool largecap_ok) {  // dsr = dsr_excess
   GateResult g{};
   g.c1 = p.ann_excess > 0 && p.excess_ci95.lo > 0;
   g.c2 = p.year_hit_rate >= 0.6;
-  g.c3 = dsr > 0.95;
+  g.c3 = std::isfinite(p.ir_daily) && dsr > 0.95;
   g.c4 = p.max_drawdown <= base_max_dd + 0.05;
   g.c5 = largecap_ok;
   g.pass = g.c1 && g.c2 && g.c3 && g.c4 && g.c5;
@@ -129,8 +146,10 @@ GateResult decision_gate(const Perf& p, double base_max_dd, double dsr, bool lar
   add(g.c1, "c1: excess return not significantly > 0 (ann_excess=" + std::to_string(p.ann_excess) +
                 ", ci95.lo=" + std::to_string(p.excess_ci95.lo) + ")");
   add(g.c2, "c2: year hit rate " + std::to_string(p.year_hit_rate) + " < 0.6");
-  add(g.c3, std::isnan(dsr) ? std::string("c3: deflated Sharpe undefined (non-positive variance term)")
-                            : "c3: deflated Sharpe " + std::to_string(dsr) + " <= 0.95");
+  add(g.c3, !std::isfinite(p.ir_daily)
+                ? std::string("c3: deflated IR undefined (the excess over buy-and-hold has zero variance or no days)")
+            : std::isnan(dsr) ? std::string("c3: deflated IR undefined (non-positive variance term)")
+                              : "c3: deflated IR (excess vs buy-and-hold) " + std::to_string(dsr) + " <= 0.95");
   add(g.c4, "c4: max drawdown " + std::to_string(p.max_drawdown) + " > base " + std::to_string(base_max_dd) + " + 0.05");
   add(g.c5, "c5: large-cap sub-universe check failed");
   return g;

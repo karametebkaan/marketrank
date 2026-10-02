@@ -149,6 +149,7 @@ CliArgs parse_cli(const std::vector<std::string>& args) {
     else if (flag == "--wf-run-id") a.wf_run_id = value();
     else if (flag == "--wf-largecap-run") a.wf_largecap_run = value();
     else if (flag == "--wf-blend") a.wf_blend = to_blend(flag, value());
+    else if (flag == "--wf-rereport") a.wf_rereport = value();
     else if (flag == "--help" || flag == "-h") a.help = true;
     else throw std::invalid_argument("unknown flag " + flag);
   }
@@ -159,7 +160,9 @@ CliArgs parse_cli(const std::vector<std::string>& args) {
   if (a.walkforward && a.mode != "replay") throw std::invalid_argument("--walkforward needs --mode replay");
   if (a.walkforward && (a.serve || a.export_slice > 0 || !a.shocks.empty() || a.eval))
     throw std::invalid_argument("--walkforward cannot be combined with --serve, --export-slice, --shock or --eval");
-  if (wf_flag && !a.walkforward) a.warnings.push_back("--wf-* flags have no effect without --walkforward");
+  if (wf_flag && !a.walkforward && a.wf_rereport.empty())
+    a.warnings.push_back("--wf-* flags have no effect without --walkforward");
+  if (!a.wf_rereport.empty()) check_run_id(a.wf_rereport, "--wf-rereport");
   if (!a.wf_run_id.empty()) check_run_id(a.wf_run_id, "--wf-run-id");
   if (!a.wf_largecap_run.empty()) check_run_id(a.wf_largecap_run, "--wf-largecap-run");
   if (!(a.wf_cost_bps >= 0 && std::isfinite(a.wf_cost_bps))) throw std::invalid_argument("--wf-cost-bps must be >= 0");
@@ -223,7 +226,9 @@ std::string cli_usage() {
          "                   [--wf-out DIR (<data>/walkforward)] [--wf-run-id ID (<UTC time>-<params hash>)]\n"
          "                   [--wf-largecap-run ID]   (sibling --wf-top-n 500 run in the same --wf-out: gate c5)\n"
          "                   [--wf-blend TRAIN/EMBARGO/GATE/MIN]   (blend windows in rebalance periods; default\n"
-         "                                   156/1/104/52 weekly, 36/1/24/12 monthly)\n";
+         "                                   156/1/104/52 weekly, 36/1/24/12 monthly)\n"
+         "                 [--wf-rereport ID [--wf-out DIR]]   (dev: regenerate results.json and report.md of a\n"
+         "                                   stored run from its equity.csv; no lake, no pass)\n";
 }
 
 std::string describe(const CoreParams& p) {

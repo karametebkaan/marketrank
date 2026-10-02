@@ -6,9 +6,12 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <regex>
 #include <set>
 #include <string>
 #include <vector>
+
+#include <nlohmann/json.hpp>
 
 #include "cli/args.hpp"
 #include "core/time.hpp"
@@ -209,7 +212,7 @@ TEST_CASE("walkforward: write_report creates the files and registry grows per st
     std::ifstream in(out / "registry.csv");
     std::string header;
     std::getline(in, header);
-    CHECK(header == "run_id,strategy,params_hash,cost_bps,top_n,sharpe_daily,T,ann_excess");
+    CHECK(header == "run_id,strategy,params_hash,cost_bps,top_n,sharpe_daily,T,ann_excess,ir_daily");
   }
   write_report(r, p, panel, out, "run2");
   CHECK(count_lines(out / "registry.csv") == 1 + 2 * strategies);
@@ -218,6 +221,27 @@ TEST_CASE("walkforward: write_report creates the files and registry grows per st
   CHECK(text.find("pending") != std::string::npos);  // no large-cap sibling run
   CHECK(text.find("pi_rel_size") != std::string::npos);
   CHECK(params_hash(p).size() == 8);
+  // c3 is the deflated IR of the excess; DSR(total) is informational only.
+  CHECK(text.find("| c3: deflated IR (excess vs buy-and-hold) > 0.95 |") != std::string::npos);
+  CHECK(text.find("DSR(total), informational") != std::string::npos);
+  CHECK(text.find("DSR_excess") != std::string::npos);
+  // Positive years are counts ("8 of 10"), not shares ("0.80 of 10").
+  CHECK_FALSE(std::regex_search(text, std::regex("[0-9]\\.[0-9]+ of [0-9]")));
+  CHECK(std::regex_search(text, std::regex("\\| [0-9]+ of [0-9]+ \\|")));
+  std::ifstream js(dir1 / "results.json");
+  const auto j = nlohmann::json::parse(js);
+  for (const auto& s : j.at("strategies")) {
+    CHECK(s.contains("ir_daily"));
+    CHECK(s.contains("dsr_excess"));
+    CHECK(s.contains("dsr"));
+    CHECK(s.contains("skew_e"));
+    CHECK(s.contains("kurt_e"));
+  }
+  CHECK(j.at("registry").contains("n_ir_trials"));
+  CHECK(j.at("registry").contains("trial_ir_var"));
+  // Registry rows carry ir_daily (9th column) and count as IR trials.
+  const RegistryStats st = registry_stats(out / "registry.csv");
+  CHECK(st.n_ir_trials == 2 * strategies);
 }
 
 TEST_CASE("cli: --walkforward and --wf-* flags") {
@@ -314,7 +338,57 @@ TEST_CASE("registry_stats: finite sharpe rows only, sample variance") {
   const RegistryStats st = registry_stats(path);
   CHECK(st.n_trials == 3);
   CHECK(st.trial_sr_var == doctest::Approx(0.0004).epsilon(1e-12));  // values .01 .03 .05: mean .03, ss 8e-4 / 2
+  CHECK(st.n_ir_trials == 0);  // 8-column rows carry no IR
   CHECK(registry_stats(dir / "missing.csv").n_trials == 0);
+}
+
+TEST_CASE("registry_stats: mixed 8- and 9-column rows - only rows with a finite ir_daily are IR trials") {
+  const auto dir = test::temp_dir("wf_regstats_ir");
+  const auto path = test::write_file(dir / "registry.csv",
+                                     "run_id,strategy,params_hash,cost_bps,top_n,sharpe_daily,T,ann_excess,ir_daily\n"
+                                     "r1,blend,aaaaaaaa,10,0,0.01,100,0.1\n"          // old row: Sharpe trial only
+                                     "r1,sig:score,aaaaaaaa,10,0,0.03,100,0.1,-0.02\n"
+                                     "r1,sig:pulse1,aaaaaaaa,10,0,0.07,100,0.1,nan\n"  // Sharpe yes, IR no
+                                     "r2,blend,bbbbbbbb,10,0,nan,100,0.1,0.04\n"       // IR yes, Sharpe no
+                                     "r2,sig:score,bbbbbbbb,10,0,0.05,100,0.1,0.01\n");
+  const RegistryStats st = registry_stats(path);
+  CHECK(st.n_trials == 4);
+  CHECK(st.n_ir_trials == 3);
+  // IR values -0.02, 0.04, 0.01: mean 0.01, ss 0.0009 + 0.0009 + 0 = 0.0018, / 2
+  CHECK(st.trial_ir_var == doctest::Approx(0.0009).epsilon(1e-12));
+}
+
+TEST_CASE("check_registry_conflict: read-only pre-pass check of the run id") {
+  const auto dir = test::temp_dir("wf_precheck");
+  CHECK_NOTHROW(check_registry_conflict(dir, "a", "aaaaaaaa"));  // no registry yet
+  test::write_file(dir / "registry.csv",
+                   "run_id,strategy,params_hash,cost_bps,top_n,sharpe_daily,T,ann_excess,ir_daily\n"
+                   "a,blend,aaaaaaaa,10,0,0.01,100,0.1,0.02\n");
+  CHECK_NOTHROW(check_registry_conflict(dir, "a", "aaaaaaaa"));  // same params: rows will be replaced
+  CHECK_NOTHROW(check_registry_conflict(dir, "b", "bbbbbbbb"));
+  CHECK_THROWS_AS(check_registry_conflict(dir, "a", "bbbbbbbb"), std::invalid_argument);
+  CHECK_FALSE(std::filesystem::exists(dir / "registry.csv.lock"));  // read-only: no lock file, no rewrite
+}
+
+TEST_CASE("rereport: regenerating results.json and report.md from the stored files reproduces them") {
+  const Panel& panel = shared_panel();
+  const WalkForwardParams p = wf_params(Rebalance::Weekly);
+  const WalkForwardResult r = run_walkforward(panel, p);
+  const auto out = test::temp_dir("wf_rereport");
+  const auto dir = write_report(r, p, panel, out, "rr");
+  auto slurp = [](const std::filesystem::path& f) {
+    std::ifstream in(f);
+    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  };
+  const std::string json0 = slurp(dir / "results.json"), md0 = slurp(dir / "report.md"),
+                    reg0 = slurp(out / "registry.csv"), eq0 = slurp(dir / "equity.csv");
+  std::filesystem::remove(dir / "report.md");
+  CHECK(rereport(out, "rr") == dir);
+  CHECK(slurp(dir / "results.json") == json0);
+  CHECK(slurp(dir / "report.md") == md0);
+  CHECK(slurp(out / "registry.csv") == reg0);  // same rows replaced in place
+  CHECK(slurp(dir / "equity.csv") == eq0);      // stored curves are inputs, never rewritten
+  CHECK_THROWS(rereport(out, "missing"));
 }
 
 TEST_CASE("walkforward_params: blend windows follow the rebalance calendar unless overridden") {
@@ -362,5 +436,8 @@ TEST_CASE("cli: walk-forward flag validation") {
   CHECK_THROWS_AS(parse_cli({"--mode", "replay", "--walkforward", "--wf-largecap-run", ".."}), std::invalid_argument);
   CHECK_THROWS_AS(parse_cli({"--mode", "replay", "--walkforward", "--wf-run-id", "a,b"}), std::invalid_argument);
   CHECK_NOTHROW(check_run_id("2026-10-02T1200Z-abcd1234", "run id"));
+  CHECK(parse_cli({"--wf-rereport", "weekly-10bps", "--wf-out", "x"}).wf_rereport == "weekly-10bps");
+  CHECK(parse_cli({"--wf-rereport", "weekly-10bps"}).warnings.empty());
+  CHECK_THROWS_AS(parse_cli({"--wf-rereport", "a/b"}), std::invalid_argument);
   CHECK_THROWS_AS(check_run_id("", "run id"), std::invalid_argument);
 }

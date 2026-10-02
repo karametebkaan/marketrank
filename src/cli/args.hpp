@@ -54,6 +54,7 @@ struct CliArgs {
   std::filesystem::path wf_out;  // empty = <data>/walkforward
   std::string wf_run_id;         // empty = <UTC timestamp>-<params hash>
   std::string wf_largecap_run;   // sibling large-cap run id for gate c5
+  std::string wf_rereport;       // dev: regenerate results.json/report.md of this stored run (no lake, no pass)
   std::optional<BlendParams> wf_blend;  // --wf-blend TRAIN/EMBARGO/GATE/MIN; default blend_defaults(wf_rebalance)
   std::vector<std::string> warnings;    // non-fatal problems found while parsing (main prints them)
 };
