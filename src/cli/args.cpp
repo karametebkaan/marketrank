@@ -79,6 +79,7 @@ CliArgs parse_cli(const std::vector<std::string>& args) {
       if (i + 1 < args.size() && args[i + 1].rfind("--", 0) != 0) a.migrate_from = args[++i];
     } else if (flag == "--maintain") a.maintain = true;
     else if (flag == "--refetch-full") a.refetch_full = true;
+    else if (flag == "--sync-sectors") a.sync_sectors = true;
     else if (flag == "--legacy" || flag == "--money-flow") continue;
     else if (flag == "--pressure") a.params.pressure = parse_pressure_mode(value());
     else if (flag == "--lift") a.params.transition.lift = parse_lift_mode(value());
@@ -122,6 +123,9 @@ std::string cli_usage() {
          "                 [--vol-scale] [--vol-window N]\n"
          "                 [--shock TICKER:SIZE ...]   (extra SIZE% return at normal volume on the last bar)\n"
          "                 [--migrate-cache [DIR]] [--maintain]\n"
+         "                 [--sync-sectors]   (fetch SEC EDGAR SIC sectors for the universe snapshot into\n"
+         "                                   data/sectors/sec_sic.csv; needs SEC_USER_AGENT in .env, no Alpaca keys;\n"
+         "                                   honours --universe/--universe-size; run it on its own, then rank/eval)\n"
          "                 [--refetch-full]   (alpaca: one-time refetch of every ticker's full stored history,\n"
          "                                   replacing old-basis bars; failed tickers stay untouched)\n";
 }

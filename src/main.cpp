@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <iostream>
+#include <map>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -16,6 +17,7 @@
 #include "market/asset_universe.hpp"
 #include "market/market_sync.hpp"
 #include "market/panel.hpp"
+#include "market/sec_sectors.hpp"
 #include "market/synthetic_market.hpp"
 #include "market/universe.hpp"
 #include "pipeline/core_pipeline.hpp"
@@ -68,6 +70,54 @@ void maintain_lake(fx::BarStore& store, const fs::path& data, int lookback_days,
   const auto removed = store.lake().apply_retention(policy, now_utc());
   std::cerr << "compacted " << compacted << " partitions, removed " << removed
             << " expired partitions\n";
+}
+
+fs::path sec_cache_path(const fs::path& data) { return data / "sectors" / "sec_sic.csv"; }
+
+// Spec: S&P GICS sector, then SEC SIC sector, then ETF/Fund, then Unclassified; filled at load time.
+void fill_sectors(fx::Universe& universe, const fs::path& data) {
+  fx::apply_sector_fill(universe, fx::load_sec_cache(sec_cache_path(data)));
+}
+
+std::map<std::string, std::size_t> sector_counts(const fx::Universe& u) {
+  std::map<std::string, std::size_t> out;
+  for (const auto& s : u.nodes()) ++out[s.sector];
+  return out;
+}
+
+double unclassified_pct(const fx::Universe& u) {
+  if (u.nodes().empty()) return 0;
+  std::size_t n = 0;
+  for (const auto& s : u.nodes())
+    if (s.sector == fx::kSectorUnclassified || s.sector.empty()) ++n;
+  return 100.0 * static_cast<double>(n) / static_cast<double>(u.nodes().size());
+}
+
+// Resolves the universe as rank does (replay path), fetches SIC for every ticker, prints coverage.
+int run_sync_sectors(const fx::CliArgs& args) {
+  const fs::path dir = args.data / "universe";
+  std::optional<fs::path> snapshot;
+  if (args.universe != fx::UniverseSource::Sp500) snapshot = fx::latest_snapshot(dir);
+  if (!snapshot && args.universe == fx::UniverseSource::Snapshot)
+    throw std::runtime_error("no universe snapshot; run --mode alpaca first");
+  fx::Universe universe =
+      snapshot ? fx::load_snapshot(*snapshot, dir / "funds.csv") : sp500_universe(args.data);
+  const double before = unclassified_pct(universe);
+  fx::load_dotenv(".env");
+  fx::SecSyncOptions opt;
+  opt.now = now_utc();
+  const auto tickers = universe.node_tickers();
+  std::cerr << "syncing SEC SIC codes for " << tickers.size() << " tickers"
+            << (snapshot ? " from " + snapshot->string() : std::string(" (sp500)")) << "...\n";
+  const auto stats = fx::sync_sec_sectors(tickers, sec_cache_path(args.data), fx::make_sec_client, opt);
+  fill_sectors(universe, args.data);
+  std::printf("sec sync: %zu fetched, %zu fresh in cache, %zu without CIK, %zu failed (retried next run)\n",
+              stats.fetched, stats.fresh, stats.no_cik, stats.failed);
+  std::printf("%-26s %7s\n", "sector", "count");
+  for (const auto& [sector, n] : sector_counts(universe)) std::printf("%-26s %7zu\n", sector.c_str(), n);
+  std::printf("unclassified: %.1f%% before, %.1f%% after (%zu tickers)\n", before,
+              unclassified_pct(universe), universe.nodes().size());
+  return 0;
 }
 
 fs::path ensure_snapshot(const fx::CliArgs& args, const fx::AlpacaConfig& cfg,
@@ -257,6 +307,7 @@ int main(int argc, char** argv) {
                 << (args.data / "lake").string() << "\n";
       return 0;
     }
+    if (args.sync_sectors) return run_sync_sectors(args);
     if (args.maintain) {
       fx::BarStore lake_store(args.data / "lake");
       maintain_lake(lake_store, args.data, args.lookback_days, args.tf);
@@ -291,6 +342,7 @@ int main(int argc, char** argv) {
       }
       universe = snapshot ? fx::load_snapshot(*snapshot, dir / "funds.csv")
                           : sp500_universe(args.data);
+      fill_sectors(universe, args.data);
       universe.add_extras(*portfolio);
       store.load_range(universe.price_tickers(), args.tf, window_start, end);
       if (client) {

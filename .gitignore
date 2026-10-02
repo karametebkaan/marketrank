@@ -3,3 +3,4 @@ build/
 data/cache/
 data/universe/universe_*.csv
 data/lake/
+data/sectors/

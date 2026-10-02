@@ -141,3 +141,12 @@ TEST_CASE("--refetch-full is a sync-only flag") {
   CHECK_THROWS_AS(parse_cli({"--refetch-full"}), std::invalid_argument);
   CHECK(cli_usage().find("--refetch-full") != std::string::npos);
 }
+
+TEST_CASE("--sync-sectors parses and is documented") {
+  CHECK_FALSE(parse_cli({}).sync_sectors);
+  const CliArgs a = parse_cli({"--sync-sectors", "--universe", "snapshot", "--universe-size", "10000"});
+  CHECK(a.sync_sectors);
+  CHECK(a.universe == UniverseSource::Snapshot);
+  CHECK(a.universe_size == 10000);
+  CHECK(cli_usage().find("--sync-sectors") != std::string::npos);
+}

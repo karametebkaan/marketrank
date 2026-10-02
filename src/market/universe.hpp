@@ -40,6 +40,7 @@ class Universe {
   void add_extras(const PortfolioSpec& portfolio);
 
   const std::vector<Security>& nodes() const { return nodes_; }
+  void set_sector(std::size_t i, std::string sector) { nodes_.at(i).sector = std::move(sector); }
   const std::vector<Fund>& funds() const { return funds_; }
   std::optional<std::size_t> index_of(std::string_view ticker) const;
   bool is_fund(std::string_view ticker) const;
