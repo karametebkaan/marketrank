@@ -1,32 +1,34 @@
-# Fluxscape
+# MarketRank
+
+MarketRank ranks stocks by the stationary distribution of a Markov chain over stock-to-stock money flows, à la PageRank; Fluxscape is its 3D landscape view.
 
 Models the market as a flux graph (money leaving net-sold stocks for net-bought ones),
 solves its Markov steady state like PageRank, and ranks the hottest and coldest stocks.
-Design: `docs/superpowers/specs/2026-10-01-fluxscape-design.md`.
+Design: `docs/superpowers/specs/2026-10-01-marketrank-design.md`.
 
 ## Build and test
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
-./build/fluxtests
+./build/marketrank_tests
 ```
 
 ## Run
 
 ```bash
-./build/fluxscape --mode synthetic                          # no keys needed
+./build/marketrank --mode synthetic                          # no keys needed
 cp .env.example .env                                        # add Alpaca keys
-./build/fluxscape --mode alpaca --universe-size 10000       # build/reuse 10K liquidity snapshot, sync, solve
-./build/fluxscape --mode replay                             # cached data, latest snapshot (or --universe sp500)
-./build/fluxscape --mode replay --eval --eval-bars 120      # compare A-E settings (floor, Gini, coherence, IC)
-./build/fluxscape --mode replay --legacy                    # milestone-1 behaviour
-./build/fluxscape --mode replay --shock NVDA:-10 --top 8       # counterfactual: add an extra -10% return to NVDA at the last bar, see who absorbs it
-./build/fluxscape --help                                    # all switches (--pressure, --lift, --k-in, ...)
-./build/fluxscape --migrate-cache                           # one-time: import the old data/cache CSVs into data/lake
-./build/fluxscape --maintain                                # compact partitions and apply data/lake/retention.json
-./build/fluxscape --mode alpaca --refetch-full             # one-time: refetch every ticker's full stored history (repairs old split/dividend bases)
-./build/fluxscape --sync-sectors --universe snapshot  # fill sectors from SEC EDGAR SIC codes (run on its own)
+./build/marketrank --mode alpaca --universe-size 10000       # build/reuse 10K liquidity snapshot, sync, solve
+./build/marketrank --mode replay                             # cached data, latest snapshot (or --universe sp500)
+./build/marketrank --mode replay --eval --eval-bars 120      # compare A-E settings (floor, Gini, coherence, IC)
+./build/marketrank --mode replay --legacy                    # milestone-1 behaviour
+./build/marketrank --mode replay --shock NVDA:-10 --top 8       # counterfactual: add an extra -10% return to NVDA at the last bar, see who absorbs it
+./build/marketrank --help                                    # all switches (--pressure, --lift, --k-in, ...)
+./build/marketrank --migrate-cache                           # one-time: import the old data/cache CSVs into data/lake
+./build/marketrank --maintain                                # compact partitions and apply data/lake/retention.json
+./build/marketrank --mode alpaca --refetch-full             # one-time: refetch every ticker's full stored history (repairs old split/dividend bases)
+./build/marketrank --sync-sectors --universe snapshot  # fill sectors from SEC EDGAR SIC codes (run on its own)
 python3 scripts/fetch_sp500.py                              # refresh the S&P 500 list
 ```
 
@@ -44,11 +46,11 @@ SEC SIC, then `ETF/Fund` (name heuristic and `funds.csv`), then `Unclassified`; 
 Advisory and experimental. The flux is inferred from price and volume co-movement,
 not observed order flow.
 
-## Landscape UI
+## Landscape UI (Fluxscape)
 
 ```bash
-./build/fluxscape --serve --mode replay            # http://127.0.0.1:8765 (money-flow preset)
-./build/fluxscape --serve --mode synthetic --port 9000
+./build/marketrank --serve --mode replay            # http://127.0.0.1:8765 (money-flow preset)
+./build/marketrank --serve --mode synthetic --port 9000
 scripts/ui_smoke.sh                                # headless-Chrome smoke test + screenshot
 ```
 

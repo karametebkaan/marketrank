@@ -10,7 +10,7 @@
 #include "core/types.hpp"
 #include "storage/lake.hpp"
 
-namespace fx {
+namespace mr {
 
 // In-memory bar series with upsert semantics, persisted to a Lake (spec 4.3). Merge-only use
 // (synthetic markets, tests) never opens the lake.
@@ -52,4 +52,4 @@ class BarStore {
   std::map<Key, TimePoint> complete_to_write_;
 };
 
-}  // namespace fx
+}  // namespace mr

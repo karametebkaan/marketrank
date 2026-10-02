@@ -2,7 +2,7 @@
 
 #include "geom/lattice.hpp"
 
-using namespace fx;
+using namespace mr;
 
 TEST_CASE("lattice size is near-square and fits all active nodes") {
   CHECK(lattice_size(0).cells() == 0);

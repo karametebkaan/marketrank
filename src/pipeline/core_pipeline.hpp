@@ -13,7 +13,7 @@
 #include "graph/transition.hpp"
 #include "market/panel.hpp"
 
-namespace fx {
+namespace mr {
 
 struct CoreParams {
   PressureMode pressure = PressureMode::Sqrt;  // (A)
@@ -84,4 +84,4 @@ class CorePipeline {
 
 Frame run_panel_last(const Panel& panel, const CoreParams& params);
 
-}  // namespace fx
+}  // namespace mr

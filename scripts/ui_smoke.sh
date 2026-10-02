@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Headless-Chrome smoke test of the landscape UI. Usage: scripts/ui_smoke.sh [extra fluxscape args...]
+# Headless-Chrome smoke test of the landscape UI. Usage: scripts/ui_smoke.sh [extra marketrank args...]
 # Env: PORT (default: a random free port), OUT (screenshot PNG), CHROME, LOG, MODE (default synthetic),
 #      WAIT_TICKS, SHOCK=TICKER:SIZE (also exercise the shock view; TICKER '*' = first active stock).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 PORT=${PORT:-$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')}
-OUT=${OUT:-/tmp/fluxscape_ui.png}
+OUT=${OUT:-/tmp/marketrank_ui.png}
 CHROME=${CHROME:-google-chrome}
-LOG=${LOG:-/tmp/fluxscape_serve.log}
-PROFILE=$(mktemp -d /tmp/fluxscape_chrome.XXXXXX)
-./build/fluxscape --serve --port "$PORT" --mode "${MODE:-synthetic}" --web web "$@" >"$LOG" 2>&1 &
+LOG=${LOG:-/tmp/marketrank_serve.log}
+PROFILE=$(mktemp -d /tmp/marketrank_chrome.XXXXXX)
+./build/marketrank --serve --port "$PORT" --mode "${MODE:-synthetic}" --web web "$@" >"$LOG" 2>&1 &
 PID=$!
 cleanup() {
   kill "$PID" 2>/dev/null || true
@@ -37,4 +37,4 @@ timeout 120 "$CHROME" "${FLAGS[@]}" --screenshot="$OUT" "$URL" >/dev/null 2>&1 |
 TITLE=$(timeout 120 "$CHROME" "${FLAGS[@]}" --dump-dom "$URL" 2>/dev/null | grep -o '<title>[^<]*</title>' || true)
 echo "title: $TITLE"
 echo "screenshot: $OUT"
-echo "$TITLE" | grep -q 'fluxscape-ok'
+echo "$TITLE" | grep -q 'marketrank-ok'

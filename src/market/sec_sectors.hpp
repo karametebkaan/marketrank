@@ -13,7 +13,7 @@
 #include "market/alpaca_client.hpp"
 #include "market/universe.hpp"
 
-namespace fx {
+namespace mr {
 
 inline constexpr const char* kSectorEtfFund = "ETF/Fund";
 inline constexpr const char* kSectorUnclassified = "Unclassified";
@@ -105,4 +105,4 @@ std::string resolve_sector(const Security& s, bool known_fund, const SecCache& c
 // Applies resolve_sector to every node still unclassified. Returns how many changed.
 std::size_t apply_sector_fill(Universe& universe, const SecCache& cache);
 
-}  // namespace fx
+}  // namespace mr

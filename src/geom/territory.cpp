@@ -9,7 +9,7 @@
 #include <set>
 #include <stdexcept>
 
-namespace fx {
+namespace mr {
 
 namespace {
 
@@ -208,4 +208,4 @@ TerritoryLayout territory_layout(const std::vector<bool>& active, const std::vec
   return out;
 }
 
-}  // namespace fx
+}  // namespace mr

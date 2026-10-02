@@ -6,7 +6,7 @@
 #include "market/panel.hpp"
 #include "test_util.hpp"
 
-using namespace fx;
+using namespace mr;
 
 TEST_CASE("merge keeps bars sorted, unique, newest wins") {
   BarStore s(test::temp_dir("bars_merge"));

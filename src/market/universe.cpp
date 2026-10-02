@@ -7,7 +7,7 @@
 
 #include "core/csv.hpp"
 
-namespace fx {
+namespace mr {
 
 PortfolioSpec load_portfolio(const std::filesystem::path& path) {
   std::ifstream in(path);
@@ -94,4 +94,4 @@ std::vector<std::string> Universe::price_tickers() const {
   return out;
 }
 
-}  // namespace fx
+}  // namespace mr

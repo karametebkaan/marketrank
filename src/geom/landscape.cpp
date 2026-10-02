@@ -8,7 +8,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace fx {
+namespace mr {
 
 HeightMode parse_height_mode(std::string_view s) {
   if (s == "signed-log") return HeightMode::SignedLog;
@@ -174,4 +174,4 @@ LandscapeFrame LandscapeBuilder::build(const Frame& f) {
   return lf;
 }
 
-}  // namespace fx
+}  // namespace mr

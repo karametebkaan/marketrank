@@ -9,7 +9,7 @@
 #include "market/asset_universe.hpp"
 #include "test_util.hpp"
 
-using namespace fx;
+using namespace mr;
 
 TEST_CASE("parse_assets reads symbols, names, exchanges and tradable flags") {
   auto a = parse_assets(R"([

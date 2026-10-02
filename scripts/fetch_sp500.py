@@ -42,7 +42,7 @@ class ConstituentsParser(HTMLParser):
 
 
 def main(out_path):
-    req = urllib.request.Request(URL, headers={"User-Agent": "fluxscape/0.1 (universe refresh)"})
+    req = urllib.request.Request(URL, headers={"User-Agent": "marketrank/0.1 (universe refresh)"})
     html = urllib.request.urlopen(req, timeout=30).read().decode("utf-8")
     parser = ConstituentsParser()
     parser.feed(html)

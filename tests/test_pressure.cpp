@@ -7,7 +7,7 @@
 
 #include "graph/pressure.hpp"
 
-using namespace fx;
+using namespace mr;
 
 TEST_CASE("dollar and sqrt pressure") {
   PressureModel d(2, PressureMode::Dollar), s(2, PressureMode::Sqrt);

@@ -6,7 +6,7 @@
 #include "graph/csr.hpp"
 #include "graph/sparse_flux.hpp"
 
-namespace fx {
+namespace mr {
 
 enum class LiftMode { Off, Excess, Ratio };
 
@@ -25,4 +25,4 @@ struct TransitionParams {
 Csr build_transition(const FluxAccumulator& acc, const TransitionParams& params,
                      const std::vector<bool>& active = {});
 
-}  // namespace fx
+}  // namespace mr

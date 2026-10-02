@@ -9,7 +9,7 @@
 
 #include "graph/return_window.hpp"
 
-using namespace fx;
+using namespace mr;
 
 namespace {
 double pearson(const std::vector<std::vector<double>>& hist, std::size_t i, std::size_t j,

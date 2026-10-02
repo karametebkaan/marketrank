@@ -386,7 +386,7 @@ async function onStatus(st) {
     }
     setTimeout(() => {
       if (!$('topRows').querySelector('.toprow')) fail(new Error('top table did not render'));
-      else document.title = `fluxscape-ok:${S.frame.nodes.length}`;
+      else document.title = `marketrank-ok:${S.frame.nodes.length}`;
     }, 1500);
   }
 }
@@ -435,7 +435,7 @@ function wire() {
 function fail(e) {
   console.error(e);
   $('status').textContent = `error: ${e.message || e}`;
-  if (S.selftest) document.title = `fluxscape-error:${e.message || e}`;
+  if (S.selftest) document.title = `marketrank-error:${e.message || e}`;
 }
 
 (async function main() {

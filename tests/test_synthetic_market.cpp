@@ -4,7 +4,7 @@
 #include "market/synthetic_market.hpp"
 #include "test_util.hpp"
 
-using namespace fx;
+using namespace mr;
 
 TEST_CASE("synthetic market is deterministic and well formed") {
   SyntheticConfig cfg;

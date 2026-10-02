@@ -36,3 +36,4 @@ html, body { height: 100%; margin: 0; font: 13px/1.4 system-ui, -apple-system, S
 .list { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
 .pos { color: #b2182b; } .neg { color: #2166ac; }
 @media (max-width: 700px) { #app { grid-template-columns: 1fr; grid-template-rows: auto 60vh; } #panel { border-right: 0; border-bottom: 1px solid var(--line); } }
+#panel h1 .view { font-size: 12px; font-weight: normal; opacity: 0.7; }

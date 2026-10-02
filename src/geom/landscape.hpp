@@ -11,7 +11,7 @@
 #include "geom/territory.hpp"
 #include "pipeline/core_pipeline.hpp"
 
-namespace fx {
+namespace mr {
 
 enum class HeightMode { SignedLog, Linear };
 HeightMode parse_height_mode(std::string_view s);  // "signed-log" | "linear"
@@ -95,4 +95,4 @@ class LandscapeBuilder {
   CommunityTracker tracker_;
 };
 
-}  // namespace fx
+}  // namespace mr

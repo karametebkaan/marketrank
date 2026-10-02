@@ -4,7 +4,7 @@
 
 #include "core/csv.hpp"
 
-namespace fx {
+namespace mr {
 
 std::size_t migrate_csv_cache(const std::filesystem::path& csv_root, BarStore& store) {
   namespace fs = std::filesystem;
@@ -52,4 +52,4 @@ std::size_t migrate_csv_cache(const std::filesystem::path& csv_root, BarStore& s
   return imported;
 }
 
-}  // namespace fx
+}  // namespace mr

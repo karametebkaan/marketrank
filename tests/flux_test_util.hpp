@@ -6,7 +6,7 @@
 #include "graph/sparse_flux.hpp"
 #include "graph/transition.hpp"
 
-namespace fx::test {
+namespace mr::test {
 
 // Accumulator holding exactly the dense n x n matrix F: out = row sums, in = column sums.
 inline FluxAccumulator acc_from_dense(const std::vector<double>& F, std::size_t n) {
@@ -37,4 +37,4 @@ inline TransitionParams legacy_tp(std::size_t k) {
   return tp;
 }
 
-}  // namespace fx::test
+}  // namespace mr::test

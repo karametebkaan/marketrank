@@ -5,7 +5,7 @@
 
 #include "geom/lattice.hpp"
 
-namespace fx {
+namespace mr {
 
 struct IdwParams {
   int subdivision = 4;
@@ -28,4 +28,4 @@ Raster idw_raster(const std::vector<std::int32_t>& cell, const std::vector<doubl
 // identity. zmin/zmax are recomputed. Deterministic for any thread count. Throws on negative/non-finite sigma.
 Raster smooth_raster(const Raster& r, double sigma_cells, int subdivision);
 
-}  // namespace fx
+}  // namespace mr

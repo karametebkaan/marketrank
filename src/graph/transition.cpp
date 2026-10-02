@@ -4,7 +4,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace fx {
+namespace mr {
 
 LiftMode parse_lift_mode(std::string_view s) {
   if (s == "off") return LiftMode::Off;
@@ -140,4 +140,4 @@ Csr build_transition(const FluxAccumulator& acc, const TransitionParams& params,
   return P;
 }
 
-}  // namespace fx
+}  // namespace mr

@@ -3,7 +3,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace fx {
+namespace mr {
 
 std::string_view to_string(Timeframe tf) {
   switch (tf) {
@@ -30,4 +30,4 @@ TimePoint timeframe_seconds(Timeframe tf) {
   return 0;
 }
 
-}  // namespace fx
+}  // namespace mr

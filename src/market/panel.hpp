@@ -6,7 +6,7 @@
 #include "core/types.hpp"
 #include "market/bar_store.hpp"
 
-namespace fx {
+namespace mr {
 
 struct Panel {
   std::vector<TimePoint> times;
@@ -22,4 +22,4 @@ Panel build_panel(const BarStore& store, const std::vector<std::string>& tickers
                   TimePoint start = std::numeric_limits<TimePoint>::min(),
                   TimePoint end = std::numeric_limits<TimePoint>::max());
 
-}  // namespace fx
+}  // namespace mr

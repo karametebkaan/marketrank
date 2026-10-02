@@ -5,7 +5,7 @@
 #include <limits>
 #include <set>
 
-namespace fx {
+namespace mr {
 
 BarStore::BarStore(std::filesystem::path lake_root) : root_(std::move(lake_root)) {}
 
@@ -146,4 +146,4 @@ void BarStore::load_all(const std::vector<std::string>& tickers, Timeframe tf) {
   load_range(tickers, tf, std::numeric_limits<TimePoint>::min(), std::numeric_limits<TimePoint>::max());
 }
 
-}  // namespace fx
+}  // namespace mr

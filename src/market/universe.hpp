@@ -6,7 +6,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace fx {
+namespace mr {
 
 struct Security {
   std::string ticker, name, sector;
@@ -54,4 +54,4 @@ class Universe {
   std::unordered_map<std::string, std::size_t> index_;
 };
 
-}  // namespace fx
+}  // namespace mr

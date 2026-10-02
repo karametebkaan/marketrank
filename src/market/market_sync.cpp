@@ -8,7 +8,7 @@
 
 #include "market/session_calendar.hpp"
 
-namespace fx {
+namespace mr {
 namespace {
 
 TimePoint backfill_tolerance(Timeframe tf) {
@@ -163,4 +163,4 @@ std::vector<std::string> sync_bars(AlpacaClient& client, BarStore& store,
   return {stale.begin(), stale.end()};
 }
 
-}  // namespace fx
+}  // namespace mr

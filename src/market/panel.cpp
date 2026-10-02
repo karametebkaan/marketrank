@@ -4,7 +4,7 @@
 #include <limits>
 #include <unordered_map>
 
-namespace fx {
+namespace mr {
 
 Panel build_panel(const BarStore& store, const std::vector<std::string>& tickers, Timeframe tf,
                   TimePoint start, TimePoint end) {
@@ -42,4 +42,4 @@ Panel build_panel(const BarStore& store, const std::vector<std::string>& tickers
   return p;
 }
 
-}  // namespace fx
+}  // namespace mr

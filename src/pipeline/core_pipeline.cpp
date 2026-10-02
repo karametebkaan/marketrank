@@ -7,7 +7,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace fx {
+namespace mr {
 
 namespace {
 
@@ -297,4 +297,4 @@ Frame run_panel_last(const Panel& panel, const CoreParams& params) {
   return last;
 }
 
-}  // namespace fx
+}  // namespace mr

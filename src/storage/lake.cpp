@@ -18,7 +18,7 @@
 #include "core/time.hpp"
 #include "duckdb.hpp"
 
-namespace fx {
+namespace mr {
 namespace fs = std::filesystem;
 
 namespace {
@@ -455,4 +455,4 @@ std::size_t Lake::file_count(Timeframe tf) const {
   return parquet_files(impl_->root / "bars" / tf_dir_name(tf)).size();
 }
 
-}  // namespace fx
+}  // namespace mr

@@ -18,7 +18,7 @@
 #include "core/csv.hpp"
 #include "core/time.hpp"
 
-namespace fx {
+namespace mr {
 namespace {
 
 struct SicRange {
@@ -418,4 +418,4 @@ std::size_t apply_sector_fill(Universe& universe, const SecCache& cache) {
   return changed;
 }
 
-}  // namespace fx
+}  // namespace mr

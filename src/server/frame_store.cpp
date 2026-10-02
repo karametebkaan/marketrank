@@ -8,7 +8,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace fx {
+namespace mr {
 
 namespace {
 // Sector ids in ascending sector-string order, so they are stable for a given universe.
@@ -276,4 +276,4 @@ LandscapeParams FrameStore::landscape_params() const {
   return land_;
 }
 
-}  // namespace fx
+}  // namespace mr

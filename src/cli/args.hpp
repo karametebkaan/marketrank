@@ -8,7 +8,7 @@
 #include "core/types.hpp"
 #include "pipeline/core_pipeline.hpp"
 
-namespace fx {
+namespace mr {
 
 enum class UniverseSource { Auto, Sp500, Snapshot };
 
@@ -46,4 +46,4 @@ CliArgs parse_cli(const std::vector<std::string>& args);
 std::string cli_usage();
 std::string describe(const CoreParams& p);
 
-}  // namespace fx
+}  // namespace mr

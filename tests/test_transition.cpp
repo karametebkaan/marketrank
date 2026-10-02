@@ -6,7 +6,7 @@
 #include "flux_test_util.hpp"
 #include "graph/transition.hpp"
 
-using namespace fx;
+using namespace mr;
 
 namespace {
 void check_stochastic(const Csr& P) {

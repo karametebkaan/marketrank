@@ -9,7 +9,7 @@
 #include "graph/return_window.hpp"
 #include "graph/sparse_flux.hpp"
 
-using namespace fx;
+using namespace mr;
 
 namespace {
 std::vector<double> dense_flux(const std::vector<double>& p, const std::vector<double>& u,

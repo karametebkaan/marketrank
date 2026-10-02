@@ -4,7 +4,7 @@
 #include <span>
 #include <vector>
 
-namespace fx {
+namespace mr {
 
 struct WEdge {
   std::uint32_t j;
@@ -52,4 +52,4 @@ class FluxAccumulator {
   std::vector<double> ref_;  // per row: max edge weight when the row was last reinforced
 };
 
-}  // namespace fx
+}  // namespace mr

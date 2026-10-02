@@ -4,7 +4,7 @@
 #include "market/universe.hpp"
 #include "test_util.hpp"
 
-using namespace fx;
+using namespace mr;
 
 TEST_CASE("parse_csv handles quotes, escaped quotes, CRLF and blank lines") {
   auto rows = parse_csv("a,b,c\r\n\"x, y\",\"say \"\"hi\"\"\",z\n\nlast,,\n");
@@ -68,12 +68,12 @@ TEST_CASE("price_tickers deduplicates funds that are also nodes") {
 }
 
 TEST_CASE("bundled data files are consistent") {
-  Universe u = Universe::load(FLUX_SOURCE_DIR "/data/universe/sp500.csv",
-                              FLUX_SOURCE_DIR "/data/universe/funds.csv");
+  Universe u = Universe::load(MR_SOURCE_DIR "/data/universe/sp500.csv",
+                              MR_SOURCE_DIR "/data/universe/funds.csv");
   CHECK(u.nodes().size() >= 490);
   CHECK(u.nodes().size() <= 510);
   CHECK(u.index_of("AAPL").has_value());
-  PortfolioSpec p = load_portfolio(FLUX_SOURCE_DIR "/data/portfolio.json");
+  PortfolioSpec p = load_portfolio(MR_SOURCE_DIR "/data/portfolio.json");
   u.add_extras(p);
   CHECK(u.index_of("NVO").has_value());
   CHECK(u.is_fund("VOO"));

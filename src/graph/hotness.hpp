@@ -3,7 +3,7 @@
 #include <string_view>
 #include <vector>
 
-namespace fx {
+namespace mr {
 
 enum class HotRef { Uniform, Size, LongRun, NetFlow };  // (D)
 
@@ -17,4 +17,4 @@ std::vector<double> relative_hotness(std::span<const double> pi, std::span<const
 // (active) nodes; bounded in (-1, 1). Non-finite inputs count as 0; a 0/0 node gets h = 0.
 std::vector<double> net_flow_hotness(std::span<const double> in, std::span<const double> out);
 
-}  // namespace fx
+}  // namespace mr

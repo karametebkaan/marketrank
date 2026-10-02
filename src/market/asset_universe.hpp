@@ -9,7 +9,7 @@
 #include "market/bar_store.hpp"
 #include "market/universe.hpp"
 
-namespace fx {
+namespace mr {
 
 struct AssetInfo {
   std::string symbol, name, exchange;
@@ -51,4 +51,4 @@ std::optional<std::filesystem::path> find_snapshot(const std::filesystem::path& 
 Universe load_snapshot(const std::filesystem::path& path, const std::filesystem::path& funds_csv);
 std::set<std::string> read_ticker_list(const std::filesystem::path& path);
 
-}  // namespace fx
+}  // namespace mr

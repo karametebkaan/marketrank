@@ -6,7 +6,7 @@
 #include "market/bar_store.hpp"
 #include "market/universe.hpp"
 
-namespace fx {
+namespace mr {
 
 struct SyntheticConfig {
   int sectors = 5;
@@ -24,4 +24,4 @@ struct SyntheticConfig {
 
 std::vector<Security> generate_synthetic(const SyntheticConfig& cfg, BarStore& store);
 
-}  // namespace fx
+}  // namespace mr

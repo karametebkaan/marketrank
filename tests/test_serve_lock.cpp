@@ -13,7 +13,7 @@
 #include "market/bar_store.hpp"
 #include "test_util.hpp"
 
-using namespace fx;
+using namespace mr;
 
 namespace {
 int free_port() {
@@ -70,7 +70,7 @@ TEST_CASE("serve mode releases the lake: a concurrent replay CLI succeeds") {
     store.flush();
   }
   const int port = free_port();
-  const std::string bin = FLUX_BINARY, d = dir.string(), p = std::to_string(port);
+  const std::string bin = MR_BINARY, d = dir.string(), p = std::to_string(port);
   const std::string common = " --mode replay --universe sp500 --data '" + d + "'";
   test::write_file(dir / "run.sh",
                    "'" + bin + "' --serve" + common + " --port " + p + " --web '" + d + "/web' >'" + d + "/serve.log' 2>&1 &\n"

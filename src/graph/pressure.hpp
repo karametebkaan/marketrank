@@ -4,7 +4,7 @@
 #include <string_view>
 #include <vector>
 
-namespace fx {
+namespace mr {
 
 enum class PressureMode { Dollar, Sqrt, Relative };
 
@@ -40,4 +40,4 @@ class PressureModel {
   std::vector<double> scale_;
 };
 
-}  // namespace fx
+}  // namespace mr

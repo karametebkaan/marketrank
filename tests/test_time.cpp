@@ -5,7 +5,7 @@
 #include "core/time.hpp"
 #include "core/types.hpp"
 
-using namespace fx;
+using namespace mr;
 
 TEST_CASE("civil date round trip and known values") {
   CHECK(days_from_civil(1970, 1, 1) == 0);

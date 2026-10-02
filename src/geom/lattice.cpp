@@ -2,7 +2,7 @@
 
 #include <cmath>
 
-namespace fx {
+namespace mr {
 
 LatticeSize lattice_size(std::size_t n) {
   if (n == 0) return {0, 0};
@@ -10,4 +10,4 @@ LatticeSize lattice_size(std::size_t n) {
   return {cols, (n + cols - 1) / cols};
 }
 
-}  // namespace fx
+}  // namespace mr

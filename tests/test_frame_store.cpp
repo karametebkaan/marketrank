@@ -13,7 +13,7 @@
 #include "server/frame_store.hpp"
 #include "test_util.hpp"
 
-using namespace fx;
+using namespace mr;
 using namespace std::chrono_literals;
 
 namespace {

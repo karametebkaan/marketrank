@@ -9,7 +9,7 @@
 
 #include "server/top_list.hpp"
 
-using namespace fx;
+using namespace mr;
 
 namespace {
 using FramePtr = std::shared_ptr<const LandscapeFrame>;

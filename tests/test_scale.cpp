@@ -12,7 +12,7 @@
 #include "pipeline/shock.hpp"
 #include "test_util.hpp"
 
-using namespace fx;
+using namespace mr;
 
 namespace {
 Panel synthetic_panel(int sectors, int per_sector, int bars, const std::string& tag) {

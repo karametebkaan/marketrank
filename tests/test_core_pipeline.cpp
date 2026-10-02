@@ -12,7 +12,7 @@
 #include "pipeline/core_pipeline.hpp"
 #include "test_util.hpp"
 
-using namespace fx;
+using namespace mr;
 
 namespace {
 // The small hand-built panels trade a few thousand dollars per bar; the $1M liquidity floor would

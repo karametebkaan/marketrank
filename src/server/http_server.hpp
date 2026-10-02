@@ -12,7 +12,7 @@
 #include "market/universe.hpp"
 #include "server/frame_store.hpp"
 
-namespace fx {
+namespace mr {
 
 // Whether `host` names the loopback interface (127.0.0.0/8, localhost or ::1).
 bool is_loopback_host(const std::string& host);
@@ -47,4 +47,4 @@ class FluxServer {
   std::uint64_t next_shock_id_ = 1;
 };
 
-}  // namespace fx
+}  // namespace mr

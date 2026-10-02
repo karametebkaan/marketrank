@@ -1,4 +1,4 @@
-# Fluxscape Milestone 1.5 — Model A–E and 10K Scale Implementation Plan
+# MarketRank Milestone 1.5 — Model A–E and 10K Scale Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -18,7 +18,7 @@
 
 **Tech Stack:** C++20, GCC 13, CMake 3.28, OpenMP (libgomp), nlohmann/json, cpp-httplib (OpenSSL), doctest.
 
-**Spec:** `docs/superpowers/specs/2026-10-01-fluxscape-design.md`. This plan implements §3, §4.1 (rate limit, assets), §5, §5.1, §5.2 and the "Milestone 1.5 additions" in §11.
+**Spec:** `docs/superpowers/specs/2026-10-01-marketrank-design.md`. This plan implements §3, §4.1 (rate limit, assets), §5, §5.1, §5.2 and the "Milestone 1.5 additions" in §11.
 
 ## Global Constraints
 

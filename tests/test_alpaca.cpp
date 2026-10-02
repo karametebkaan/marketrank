@@ -11,7 +11,7 @@
 #include "market/market_sync.hpp"
 #include "test_util.hpp"
 
-using namespace fx;
+using namespace mr;
 
 namespace {
 const char* kPage1 = R"({"bars":{"AAPL":[
@@ -173,23 +173,23 @@ TEST_CASE("sync_bars reports stale tickers and keeps the rest") {
 
 TEST_CASE("load_dotenv sets unset variables only") {
   auto dir = test::temp_dir("dotenv");
-  ::setenv("FLUX_TEST_KEEP", "original", 1);
-  ::unsetenv("FLUX_TEST_NEW");
+  ::setenv("MR_TEST_KEEP", "original", 1);
+  ::unsetenv("MR_TEST_NEW");
   auto path = test::write_file(dir / ".env",
-                               "# comment\nFLUX_TEST_NEW=\"hello\"\nFLUX_TEST_KEEP=changed\n");
+                               "# comment\nMR_TEST_NEW=\"hello\"\nMR_TEST_KEEP=changed\n");
   load_dotenv(path);
-  CHECK(std::string(std::getenv("FLUX_TEST_NEW")) == "hello");
-  CHECK(std::string(std::getenv("FLUX_TEST_KEEP")) == "original");
+  CHECK(std::string(std::getenv("MR_TEST_NEW")) == "hello");
+  CHECK(std::string(std::getenv("MR_TEST_KEEP")) == "original");
 }
 
 TEST_CASE("load_dotenv trims trailing whitespace before unquoting") {
-  for (const char* k : {"FLUX_TEST_TRIM", "FLUX_TEST_TAB", "FLUX_TEST_QUOTED"}) ::unsetenv(k);
+  for (const char* k : {"MR_TEST_TRIM", "MR_TEST_TAB", "MR_TEST_QUOTED"}) ::unsetenv(k);
   auto path = test::write_file(test::temp_dir("dotenv_trim") / ".env",
-                               "FLUX_TEST_TRIM=sip \nFLUX_TEST_TAB=iex\t\nFLUX_TEST_QUOTED=\"a b\" \n");
+                               "MR_TEST_TRIM=sip \nMR_TEST_TAB=iex\t\nMR_TEST_QUOTED=\"a b\" \n");
   load_dotenv(path);
-  CHECK(std::string(std::getenv("FLUX_TEST_TRIM")) == "sip");
-  CHECK(std::string(std::getenv("FLUX_TEST_TAB")) == "iex");
-  CHECK(std::string(std::getenv("FLUX_TEST_QUOTED")) == "a b");
+  CHECK(std::string(std::getenv("MR_TEST_TRIM")) == "sip");
+  CHECK(std::string(std::getenv("MR_TEST_TAB")) == "iex");
+  CHECK(std::string(std::getenv("MR_TEST_QUOTED")) == "a b");
 }
 
 TEST_CASE("sync_bars back-fills history before the first cached bar") {

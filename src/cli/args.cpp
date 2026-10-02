@@ -6,7 +6,7 @@
 #include <sstream>
 #include <stdexcept>
 
-namespace fx {
+namespace mr {
 namespace {
 
 std::size_t to_size(const std::string& flag, const std::string& v) {
@@ -122,7 +122,8 @@ std::pair<TimePoint, TimePoint> data_window(const CliArgs& args, TimePoint now) 
 }
 
 std::string cli_usage() {
-  return "usage: fluxscape [--mode synthetic|replay|alpaca] [--timeframe 1h|1d|1w]\n"
+  return "MarketRank - stock ranking by Markov steady state of money flows\n"
+         "usage: marketrank [--mode synthetic|replay|alpaca] [--timeframe 1h|1d|1w]\n"
          "                 [--lookback-days N] [--top N] [--data DIR] [--threads N]\n"
          "                 [--universe auto|sp500|snapshot] [--universe-size N] [--refresh-universe]\n"
          "                 [--eval] [--eval-bars N]\n"
@@ -151,4 +152,4 @@ std::string describe(const CoreParams& p) {
   return s.str();
 }
 
-}  // namespace fx
+}  // namespace mr

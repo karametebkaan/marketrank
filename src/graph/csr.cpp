@@ -1,6 +1,6 @@
 #include "graph/csr.hpp"
 
-namespace fx {
+namespace mr {
 
 std::vector<double> left_multiply(const Csr& P, std::span<const double> x) {
   std::vector<double> y(P.n, 0.0);
@@ -44,4 +44,4 @@ std::vector<double> left_multiply_transposed(const Csr& PT, std::span<const doub
   return y;
 }
 
-}  // namespace fx
+}  // namespace mr

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(fluxscape LANGUAGES CXX)
+project(marketrank LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -33,25 +33,25 @@ set_target_properties(duckdb PROPERTIES
   IMPORTED_LOCATION ${duckdb_bin_SOURCE_DIR}/libduckdb.so
   INTERFACE_INCLUDE_DIRECTORIES ${duckdb_bin_SOURCE_DIR})
 
-file(GLOB_RECURSE FLUXCORE_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/*.cpp)
-list(REMOVE_ITEM FLUXCORE_SOURCES ${CMAKE_SOURCE_DIR}/src/main.cpp)
-add_library(fluxcore STATIC ${FLUXCORE_SOURCES})
-target_include_directories(fluxcore PUBLIC ${CMAKE_SOURCE_DIR}/src)
-target_compile_definitions(fluxcore PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT)
-target_compile_options(fluxcore PRIVATE -Wall -Wextra -Wpedantic)
-target_link_libraries(fluxcore PUBLIC nlohmann_json::nlohmann_json httplib::httplib
+file(GLOB_RECURSE MR_CORE_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/*.cpp)
+list(REMOVE_ITEM MR_CORE_SOURCES ${CMAKE_SOURCE_DIR}/src/main.cpp)
+add_library(marketrank_core STATIC ${MR_CORE_SOURCES})
+target_include_directories(marketrank_core PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_compile_definitions(marketrank_core PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT)
+target_compile_options(marketrank_core PRIVATE -Wall -Wextra -Wpedantic)
+target_link_libraries(marketrank_core PUBLIC nlohmann_json::nlohmann_json httplib::httplib
                       OpenSSL::SSL OpenSSL::Crypto OpenMP::OpenMP_CXX duckdb)
 
-add_executable(fluxscape src/main.cpp)
-target_link_libraries(fluxscape PRIVATE fluxcore)
+add_executable(marketrank src/main.cpp)
+target_link_libraries(marketrank PRIVATE marketrank_core)
 
-file(GLOB FLUX_TEST_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/tests/*.cpp)
-add_executable(fluxtests ${FLUX_TEST_SOURCES})
-target_include_directories(fluxtests PRIVATE ${CMAKE_SOURCE_DIR}/tests)
-target_link_libraries(fluxtests PRIVATE fluxcore doctest::doctest)
-target_compile_definitions(fluxtests PRIVATE FLUX_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
-                           FLUX_BINARY="$<TARGET_FILE:fluxscape>")
-add_dependencies(fluxtests fluxscape)  # the serve-lock test runs the real binary
+file(GLOB MR_TEST_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/tests/*.cpp)
+add_executable(marketrank_tests ${MR_TEST_SOURCES})
+target_include_directories(marketrank_tests PRIVATE ${CMAKE_SOURCE_DIR}/tests)
+target_link_libraries(marketrank_tests PRIVATE marketrank_core doctest::doctest)
+target_compile_definitions(marketrank_tests PRIVATE MR_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+                           MR_BINARY="$<TARGET_FILE:marketrank>")
+add_dependencies(marketrank_tests marketrank)  # the serve-lock test runs the real binary
 
 enable_testing()
-add_test(NAME fluxtests COMMAND fluxtests)
+add_test(NAME marketrank_tests COMMAND marketrank_tests)

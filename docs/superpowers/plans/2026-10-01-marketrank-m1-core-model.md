@@ -1,4 +1,4 @@
-# Fluxscape Milestone 1 — Core Model (CLI) Implementation Plan
+# MarketRank Milestone 1 — Core Model (CLI) Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -8,7 +8,7 @@
 
 **Tech Stack:** C++20, GCC 13, CMake 3.28; FetchContent: nlohmann/json 3.11.3, cpp-httplib 0.18.1 (OpenSSL), doctest 2.4.11; Python 3 stdlib for the one universe-refresh script.
 
-**Spec:** `docs/superpowers/specs/2026-10-01-fluxscape-design.md` (this plan implements §3, §4.1–4.4, §5, §5.1 and the M1 tests in §11; holidays in §4.2 are deferred to Milestone 3, where the schedule needs them).
+**Spec:** `docs/superpowers/specs/2026-10-01-marketrank-design.md` (this plan implements §3, §4.1–4.4, §5, §5.1 and the M1 tests in §11; holidays in §4.2 are deferred to Milestone 3, where the schedule needs them).
 
 ## Global Constraints
 
@@ -3026,7 +3026,7 @@ int main(int argc, char** argv) {
 
 Models the market as a flux graph (money leaving net-sold stocks for net-bought ones),
 solves its Markov steady state like PageRank, and ranks the hottest and coldest stocks.
-Design: `docs/superpowers/specs/2026-10-01-fluxscape-design.md`.
+Design: `docs/superpowers/specs/2026-10-01-marketrank-design.md`.
 
 ## Build and test
 

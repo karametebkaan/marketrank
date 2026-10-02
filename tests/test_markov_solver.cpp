@@ -4,7 +4,7 @@
 #include "flux_test_util.hpp"
 #include "graph/markov_solver.hpp"
 
-using namespace fx;
+using namespace mr;
 
 namespace {
 // Builds a Csr directly from a dense row-stochastic matrix (k = n keeps all edges;

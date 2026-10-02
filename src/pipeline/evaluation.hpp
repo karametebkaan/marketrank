@@ -7,7 +7,7 @@
 #include "market/universe.hpp"
 #include "pipeline/core_pipeline.hpp"
 
-namespace fx {
+namespace mr {
 
 double gini(std::span<const double> x);
 double spearman(std::span<const double> a, std::span<const double> b);
@@ -43,4 +43,4 @@ struct EvalConfig {
 
 std::vector<EvalConfig> evaluation_grid();
 
-}  // namespace fx
+}  // namespace mr

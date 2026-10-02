@@ -10,7 +10,7 @@
 #include "pipeline/evaluation.hpp"
 #include "test_util.hpp"
 
-using namespace fx;
+using namespace mr;
 
 TEST_CASE("gini of equal and concentrated distributions") {
   CHECK(gini(std::vector<double>{1, 1, 1, 1}) == doctest::Approx(0.0));

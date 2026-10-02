@@ -4,7 +4,7 @@
 #include "storage/csv_migration.hpp"
 #include "test_util.hpp"
 
-using namespace fx;
+using namespace mr;
 
 TEST_CASE("migrate_csv_cache imports bars and .from coverage, skipping bad rows") {
   auto dir = test::temp_dir("migrate");

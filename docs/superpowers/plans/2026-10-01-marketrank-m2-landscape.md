@@ -1,4 +1,4 @@
-# Fluxscape Milestone 2 — deck.gl Landscape Implementation Plan
+# MarketRank Milestone 2 — deck.gl Landscape Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -19,7 +19,7 @@ The page renders the terrain, stocks, flux arcs and portfolio, has a left contro
 
 **Tech Stack:** C++20 (GCC 13), OpenMP, cpp-httplib, nlohmann/json, DuckDB lake (existing), doctest; deck.gl 9 (UMD); google-chrome headless (`/usr/bin/google-chrome`) for the smoke test.
 
-**Spec:** `docs/superpowers/specs/2026-10-01-fluxscape-design.md` §6 (geometry), §9.2b–9.4 (serve mode, API, UI), §5.3 (shocks).
+**Spec:** `docs/superpowers/specs/2026-10-01-marketrank-design.md` §6 (geometry), §9.2b–9.4 (serve mode, API, UI), §5.3 (shocks).
 
 ## Global Constraints
 

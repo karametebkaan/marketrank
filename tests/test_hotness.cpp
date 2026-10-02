@@ -6,7 +6,7 @@
 
 #include "graph/hotness.hpp"
 
-using namespace fx;
+using namespace mr;
 
 TEST_CASE("relative hotness against uniform, size and degenerate references") {
   std::vector<double> pi = {0.5, 0.25, 0.25};

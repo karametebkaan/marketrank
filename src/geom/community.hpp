@@ -5,7 +5,7 @@
 
 #include "graph/csr.hpp"
 
-namespace fx {
+namespace mr {
 
 struct CommunityResult {
   std::vector<std::int32_t> id;  // per node, -1 for inactive
@@ -84,4 +84,4 @@ class CommunityTracker {
   bool reclustered_ = false;
 };
 
-}  // namespace fx
+}  // namespace mr

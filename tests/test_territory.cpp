@@ -11,7 +11,7 @@
 
 #include "geom/territory.hpp"
 
-using namespace fx;
+using namespace mr;
 
 namespace {
 bool connected8(const std::vector<std::int32_t>& cells, std::size_t cols) {

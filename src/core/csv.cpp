@@ -4,7 +4,7 @@
 #include <sstream>
 #include <stdexcept>
 
-namespace fx {
+namespace mr {
 
 CsvRows parse_csv(std::string_view text) {
   CsvRows rows;
@@ -60,4 +60,4 @@ CsvRows read_csv_file(const std::filesystem::path& path) {
   return parse_csv(ss.str());
 }
 
-}  // namespace fx
+}  // namespace mr

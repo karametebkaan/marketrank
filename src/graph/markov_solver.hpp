@@ -4,7 +4,7 @@
 
 #include "graph/csr.hpp"
 
-namespace fx {
+namespace mr {
 
 struct SolveResult {
   std::vector<double> pi;
@@ -19,4 +19,4 @@ SolveResult stationary(const Csr& P, double alpha, std::span<const double> warm_
 std::vector<double> propagate(const Csr& P, double alpha, std::span<const double> pi, int k);
 std::vector<double> hotness(std::span<const double> pi);
 
-}  // namespace fx
+}  // namespace mr

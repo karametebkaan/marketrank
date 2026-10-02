@@ -38,43 +38,43 @@ namespace fs = std::filesystem;
 std::atomic<bool> g_signalled{false};  // lock-free atomic: safe to set from a signal handler
 extern "C" void on_signal(int) { g_signalled.store(true); }
 
-fx::TimePoint now_utc() {
+mr::TimePoint now_utc() {
   return std::chrono::duration_cast<std::chrono::seconds>(
              std::chrono::system_clock::now().time_since_epoch())
       .count();
 }
 
-std::string today_string() { return fx::format_rfc3339(now_utc()).substr(0, 10); }
+std::string today_string() { return mr::format_rfc3339(now_utc()).substr(0, 10); }
 
 std::int64_t days_since(const std::string& ymd) {
   const int y = std::stoi(ymd.substr(0, 4));
   const auto m = static_cast<unsigned>(std::stoi(ymd.substr(5, 2)));
   const auto d = static_cast<unsigned>(std::stoi(ymd.substr(8, 2)));
-  return fx::floor_div(now_utc(), 86400) - fx::days_from_civil(y, m, d);
+  return mr::floor_div(now_utc(), 86400) - mr::days_from_civil(y, m, d);
 }
 
-fx::Universe sp500_universe(const fs::path& data) {
-  return fx::Universe::load(data / "universe" / "sp500.csv", data / "universe" / "funds.csv");
+mr::Universe sp500_universe(const fs::path& data) {
+  return mr::Universe::load(data / "universe" / "sp500.csv", data / "universe" / "funds.csv");
 }
 
 // Compaction and retention, shared by --maintain and the post-sync pass. Retention never
 // reaches into the lookback window: a shorter keep_days is warned about and skipped.
-void maintain_lake(fx::BarStore& store, const fs::path& data, int lookback_days,
-                   fx::Timeframe lookback_tf) {
-  auto policy = fx::RetentionPolicy::load(data / "lake" / "retention.json");
+void maintain_lake(mr::BarStore& store, const fs::path& data, int lookback_days,
+                   mr::Timeframe lookback_tf) {
+  auto policy = mr::RetentionPolicy::load(data / "lake" / "retention.json");
   for (auto& [tf, keep] : policy.keep_days) {
     const int needed = tf == lookback_tf ? lookback_days
-                       : tf == fx::Timeframe::Hour ? 60
-                       : tf == fx::Timeframe::Day  ? 365
+                       : tf == mr::Timeframe::Hour ? 60
+                       : tf == mr::Timeframe::Day  ? 365
                                                    : 5 * 365;
     if (keep && *keep < needed) {
-      std::cerr << "warning: retention keeps " << *keep << " days of " << fx::to_string(tf)
+      std::cerr << "warning: retention keeps " << *keep << " days of " << mr::to_string(tf)
                 << " bars but the lookback is " << needed << "; skipping retention for it\n";
       keep = std::nullopt;
     }
   }
   std::size_t compacted = 0;
-  for (auto tf : {fx::Timeframe::Hour, fx::Timeframe::Day, fx::Timeframe::Week})
+  for (auto tf : {mr::Timeframe::Hour, mr::Timeframe::Day, mr::Timeframe::Week})
     compacted += store.lake().compact(tf, 8);
   const auto removed = store.lake().apply_retention(policy, now_utc());
   std::cerr << "compacted " << compacted << " partitions, removed " << removed
@@ -84,41 +84,41 @@ void maintain_lake(fx::BarStore& store, const fs::path& data, int lookback_days,
 fs::path sec_cache_path(const fs::path& data) { return data / "sectors" / "sec_sic.csv"; }
 
 // Spec: S&P GICS sector, then SEC SIC sector, then ETF/Fund, then Unclassified; filled at load time.
-void fill_sectors(fx::Universe& universe, const fs::path& data) {
-  fx::apply_sector_fill(universe, fx::load_sec_cache(sec_cache_path(data)));
+void fill_sectors(mr::Universe& universe, const fs::path& data) {
+  mr::apply_sector_fill(universe, mr::load_sec_cache(sec_cache_path(data)));
 }
 
-std::map<std::string, std::size_t> sector_counts(const fx::Universe& u) {
+std::map<std::string, std::size_t> sector_counts(const mr::Universe& u) {
   std::map<std::string, std::size_t> out;
   for (const auto& s : u.nodes()) ++out[s.sector];
   return out;
 }
 
-double unclassified_pct(const fx::Universe& u) {
+double unclassified_pct(const mr::Universe& u) {
   if (u.nodes().empty()) return 0;
   std::size_t n = 0;
   for (const auto& s : u.nodes())
-    if (s.sector == fx::kSectorUnclassified || s.sector.empty()) ++n;
+    if (s.sector == mr::kSectorUnclassified || s.sector.empty()) ++n;
   return 100.0 * static_cast<double>(n) / static_cast<double>(u.nodes().size());
 }
 
 // Resolves the universe as rank does (replay path), fetches SIC for every ticker, prints coverage.
-int run_sync_sectors(const fx::CliArgs& args) {
+int run_sync_sectors(const mr::CliArgs& args) {
   const fs::path dir = args.data / "universe";
   std::optional<fs::path> snapshot;
-  if (args.universe != fx::UniverseSource::Sp500) snapshot = fx::latest_snapshot(dir);
-  if (!snapshot && args.universe == fx::UniverseSource::Snapshot)
+  if (args.universe != mr::UniverseSource::Sp500) snapshot = mr::latest_snapshot(dir);
+  if (!snapshot && args.universe == mr::UniverseSource::Snapshot)
     throw std::runtime_error("no universe snapshot; run --mode alpaca first");
-  fx::Universe universe =
-      snapshot ? fx::load_snapshot(*snapshot, dir / "funds.csv") : sp500_universe(args.data);
+  mr::Universe universe =
+      snapshot ? mr::load_snapshot(*snapshot, dir / "funds.csv") : sp500_universe(args.data);
   const double before = unclassified_pct(universe);
-  fx::load_dotenv(".env");
-  fx::SecSyncOptions opt;
+  mr::load_dotenv(".env");
+  mr::SecSyncOptions opt;
   opt.now = now_utc();
   const auto tickers = universe.node_tickers();
   std::cerr << "syncing SEC SIC codes for " << tickers.size() << " tickers"
             << (snapshot ? " from " + snapshot->string() : std::string(" (sp500)")) << "...\n";
-  const auto stats = fx::sync_sec_sectors(tickers, sec_cache_path(args.data), fx::make_sec_client, opt);
+  const auto stats = mr::sync_sec_sectors(tickers, sec_cache_path(args.data), mr::make_sec_client, opt);
   fill_sectors(universe, args.data);
   std::printf("sec sync: %zu fetched, %zu fresh in cache, %zu without CIK, %zu failed (retried next run)\n",
               stats.fetched, stats.fresh, stats.no_cik, stats.failed);
@@ -129,60 +129,60 @@ int run_sync_sectors(const fx::CliArgs& args) {
   return 0;
 }
 
-fs::path ensure_snapshot(const fx::CliArgs& args, const fx::AlpacaConfig& cfg,
-                         fx::AlpacaClient& data_client, fx::BarStore& store,
-                         const fx::PortfolioSpec& portfolio) {
+fs::path ensure_snapshot(const mr::CliArgs& args, const mr::AlpacaConfig& cfg,
+                         mr::AlpacaClient& data_client, mr::BarStore& store,
+                         const mr::PortfolioSpec& portfolio) {
   const fs::path dir = args.data / "universe";
   // Reuse a fresh (< 7 days) snapshot built for exactly the requested size.
   if (!args.refresh_universe)
-    if (auto found = fx::find_snapshot(dir, args.universe_size, now_utc(), 7)) return *found;
-  fx::AlpacaConfig trading_cfg = cfg;
+    if (auto found = mr::find_snapshot(dir, args.universe_size, now_utc(), 7)) return *found;
+  mr::AlpacaConfig trading_cfg = cfg;
   trading_cfg.host = cfg.trading_host;
-  fx::AlpacaClient trading(trading_cfg);
+  mr::AlpacaClient trading(trading_cfg);
   std::cerr << "fetching asset list from " << cfg.trading_host << "...\n";
   const auto assets =
-      fx::parse_assets(trading.get("/v2/assets?status=active&asset_class=us_equity"));
-  const fx::Universe sp = sp500_universe(args.data);
-  fx::UniverseRules rules;
+      mr::parse_assets(trading.get("/v2/assets?status=active&asset_class=us_equity"));
+  const mr::Universe sp = sp500_universe(args.data);
+  mr::UniverseRules rules;
   for (const auto& t : sp.node_tickers()) rules.always_include.insert(t);
   for (const auto& h : portfolio.holdings)
     if (!sp.is_fund(h.ticker)) rules.always_include.insert(h.ticker);
-  for (const auto& t : fx::read_ticker_list(dir / "include.csv")) rules.always_include.insert(t);
-  rules.exclude = fx::read_ticker_list(dir / "exclude.csv");
-  std::vector<fx::AssetInfo> candidates;
+  for (const auto& t : mr::read_ticker_list(dir / "include.csv")) rules.always_include.insert(t);
+  rules.exclude = mr::read_ticker_list(dir / "exclude.csv");
+  std::vector<mr::AssetInfo> candidates;
   for (const auto& a : assets)
-    if (fx::passes_universe_rules(a, rules)) candidates.push_back(a);
+    if (mr::passes_universe_rules(a, rules)) candidates.push_back(a);
   std::vector<std::string> symbols;
   for (const auto& a : candidates) symbols.push_back(a.symbol);
-  const fx::TimePoint end = now_utc() - 16 * 60;
-  store.load_range(symbols, fx::Timeframe::Day, end - 40 * 86400, end);
+  const mr::TimePoint end = now_utc() - 16 * 60;
+  store.load_range(symbols, mr::Timeframe::Day, end - 40 * 86400, end);
   std::cerr << assets.size() << " assets, " << candidates.size()
             << " candidates; fetching 40 days of daily bars to rank liquidity...\n";
-  const auto stale = fx::sync_bars(data_client, store, symbols, fx::Timeframe::Day,
+  const auto stale = mr::sync_bars(data_client, store, symbols, mr::Timeframe::Day,
                                    end - 40 * 86400, end);
   if (!stale.empty()) std::cerr << stale.size() << " stale tickers during ranking\n";
-  const auto ranked = fx::rank_by_liquidity(candidates, store, 20, args.universe_size);
+  const auto ranked = mr::rank_by_liquidity(candidates, store, 20, args.universe_size);
   const fs::path path =
       dir / ("universe_" + today_string() + "_n" + std::to_string(args.universe_size) + ".csv");
-  fx::write_universe_snapshot(path, ranked, sp);
+  mr::write_universe_snapshot(path, ranked, sp);
   std::cerr << "wrote " << ranked.size() << "-ticker universe snapshot " << path.string() << "\n";
   return path;
 }
 
-void print_row(std::size_t rank, const fx::Security& s, double h, double pi, double score) {
+void print_row(std::size_t rank, const mr::Security& s, double h, double pi, double score) {
   std::printf("%5zu  %-7s %-24.24s %+10.4f  %.7f  %+9.4f\n", rank, s.ticker.c_str(),
               s.sector.c_str(), h, pi, score);
 }
 
-int run_eval(const fx::CliArgs& args, const fx::Panel& panel, const fx::Universe& universe) {
+int run_eval(const mr::CliArgs& args, const mr::Panel& panel, const mr::Universe& universe) {
   std::printf("evaluation: last %zu of %zu bars, nodes=%zu, timeframe=%s, threads=%d\n\n",
-              args.eval_bars, panel.T(), panel.N(), std::string(fx::to_string(args.tf)).c_str(),
+              args.eval_bars, panel.T(), panel.N(), std::string(mr::to_string(args.tf)).c_str(),
               omp_get_max_threads());
   std::printf("%-20s %6s %6s %6s %6s %9s %6s %9s %6s %9s %6s %9s %6s %9s\n", "config", "floor",
               "gini", "coher", "struct", "IC(score)", "t", "IC(h)", "t", "IC_oo", "t", "IC_h_oo", "t",
               "ms/frame");
-  for (const auto& c : fx::evaluation_grid()) {
-    const fx::EvalMetrics m = fx::evaluate(panel, universe.nodes(), c.params, args.eval_bars);
+  for (const auto& c : mr::evaluation_grid()) {
+    const mr::EvalMetrics m = mr::evaluate(panel, universe.nodes(), c.params, args.eval_bars);
     std::printf("%-20s %6.3f %6.3f %6.3f %6.3f %+9.4f %+6.2f %+9.4f %+6.2f %+9.4f %+6.2f %+9.4f %+6.2f %9.1f\n",
                 c.name.c_str(), m.floor_share, m.gini, m.sector_coherence, m.structure_gain, m.ic_mean,
                 m.ic_t, m.ic_h_mean, m.ic_h_t, m.ic_oo_mean, m.ic_oo_t, m.ic_h_oo_mean, m.ic_h_oo_t,
@@ -192,21 +192,21 @@ int run_eval(const fx::CliArgs& args, const fx::Panel& panel, const fx::Universe
   return 0;
 }
 
-int run_shock(const fx::CliArgs& args, const fx::Panel& panel, const fx::Universe& universe,
-              const std::optional<fx::PortfolioSpec>& portfolio) {
-  std::vector<fx::Shock> shocks;
+int run_shock(const mr::CliArgs& args, const mr::Panel& panel, const mr::Universe& universe,
+              const std::optional<mr::PortfolioSpec>& portfolio) {
+  std::vector<mr::Shock> shocks;
   for (const auto& [ticker, size] : args.shocks) {
     const auto i = universe.index_of(ticker);
     if (!i) throw std::invalid_argument("--shock: unknown ticker " + ticker);
     shocks.push_back({*i, size});
   }
-  const auto [base, shocked] = fx::run_with_shock(panel, args.params, shocks);  // throws if inactive
-  const fx::ShockDelta d = fx::shock_response(base, shocked);
+  const auto [base, shocked] = mr::run_with_shock(panel, args.params, shocks);  // throws if inactive
+  const mr::ShockDelta d = mr::shock_response(base, shocked);
   const auto& nodes = universe.nodes();
   std::printf("mode=%s timeframe=%s nodes=%zu bars=%zu last=%s threads=%d\n", args.mode.c_str(),
-              std::string(fx::to_string(args.tf)).c_str(), panel.N(), panel.T(),
-              fx::format_rfc3339(base.t).c_str(), omp_get_max_threads());
-  std::printf("params: %s\n", fx::describe(args.params).c_str());
+              std::string(mr::to_string(args.tf)).c_str(), panel.N(), panel.T(),
+              mr::format_rfc3339(base.t).c_str(), omp_get_max_threads());
+  std::printf("params: %s\n", mr::describe(args.params).c_str());
   std::printf("SHOCK at the last bar (extra SIZE%% return at normal volume; <0 sell-off, >0 buying surge)\n");
   std::printf("%-7s %9s %10s %12s\n", "ticker", "size", "dh", "dpi");
   for (const auto& s : shocks)
@@ -243,21 +243,21 @@ int run_shock(const fx::CliArgs& args, const fx::Panel& panel, const fx::Univers
   return 0;
 }
 
-int run_rank(const fx::CliArgs& args, const fx::Panel& panel, const fx::Universe& universe,
-             const std::optional<fx::PortfolioSpec>& portfolio) {
+int run_rank(const mr::CliArgs& args, const mr::Panel& panel, const mr::Universe& universe,
+             const std::optional<mr::PortfolioSpec>& portfolio) {
   const auto t0 = std::chrono::steady_clock::now();
-  const fx::Frame f = fx::run_panel_last(panel, args.params);
+  const mr::Frame f = mr::run_panel_last(panel, args.params);
   const double total_ms =
       std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
   std::printf("mode=%s timeframe=%s nodes=%zu bars=%zu last=%s threads=%d\n", args.mode.c_str(),
-              std::string(fx::to_string(args.tf)).c_str(), panel.N(), panel.T(),
-              fx::format_rfc3339(f.t).c_str(), omp_get_max_threads());
-  std::printf("params: %s\n", fx::describe(args.params).c_str());
+              std::string(mr::to_string(args.tf)).c_str(), panel.N(), panel.T(),
+              mr::format_rfc3339(f.t).c_str(), omp_get_max_threads());
+  std::printf("params: %s\n", mr::describe(args.params).c_str());
   std::printf("solver: %s in %d iterations (residual %.2e); last frame %.1f ms, run %.0f ms\n",
               f.solve.converged ? "converged" : "NOT converged", f.solve.iterations,
               f.solve.residual, f.compute_ms, total_ms);
   std::printf("edges: %zu slow, %zu fast; %.1f%% of active nodes at the teleport floor\n\n",
-              f.P.col.size(), f.P_fast.col.size(), 100.0 * fx::floor_share(f, args.params.alpha));
+              f.P.col.size(), f.P_fast.col.size(), 100.0 * mr::floor_share(f, args.params.alpha));
 
   const auto& nodes = universe.nodes();
   std::vector<std::size_t> hills;
@@ -303,87 +303,87 @@ int run_rank(const fx::CliArgs& args, const fx::Panel& panel, const fx::Universe
 
 int main(int argc, char** argv) {
   try {
-    const fx::CliArgs args = fx::parse_cli(std::vector<std::string>(argv + 1, argv + argc));
+    const mr::CliArgs args = mr::parse_cli(std::vector<std::string>(argv + 1, argv + argc));
     if (args.help) {
-      std::cout << fx::cli_usage();
+      std::cout << mr::cli_usage();
       return 0;
     }
     if (args.threads > 0) omp_set_num_threads(args.threads);
     if (args.migrate_cache) {
-      fx::BarStore lake_store(args.data / "lake");
-      const auto n = fx::migrate_csv_cache(args.migrate_from, lake_store);
+      mr::BarStore lake_store(args.data / "lake");
+      const auto n = mr::migrate_csv_cache(args.migrate_from, lake_store);
       std::cout << "migrated " << n << " series from " << args.migrate_from.string() << " into "
                 << (args.data / "lake").string() << "\n";
       return 0;
     }
     if (args.sync_sectors) return run_sync_sectors(args);
     if (args.maintain) {
-      fx::BarStore lake_store(args.data / "lake");
+      mr::BarStore lake_store(args.data / "lake");
       maintain_lake(lake_store, args.data, args.lookback_days, args.tf);
       return 0;
     }
-    const auto [window_start, end] = fx::data_window(args, now_utc());
-    fx::Universe universe;
-    std::optional<fx::PortfolioSpec> portfolio;
-    fx::Panel panel;
+    const auto [window_start, end] = mr::data_window(args, now_utc());
+    mr::Universe universe;
+    std::optional<mr::PortfolioSpec> portfolio;
+    mr::Panel panel;
     {
       // The bar store (and the lake's DuckDB lock) lives only until the panel is built, so a long-running
       // --serve does not block other replay runs or keep a second copy of every bar in memory.
-      fx::BarStore store(args.data / "lake");
+      mr::BarStore store(args.data / "lake");
       if (args.mode == "synthetic") {
-        fx::SyntheticConfig cfg;
+        mr::SyntheticConfig cfg;
         cfg.tf = args.tf;
-        universe = fx::Universe::from_securities(fx::generate_synthetic(cfg, store));
+        universe = mr::Universe::from_securities(mr::generate_synthetic(cfg, store));
       } else {
-        portfolio = fx::load_portfolio(args.data / "portfolio.json");
+        portfolio = mr::load_portfolio(args.data / "portfolio.json");
         const fs::path dir = args.data / "universe";
-        std::optional<fx::AlpacaConfig> cfg;
-        std::optional<fx::AlpacaClient> client;
+        std::optional<mr::AlpacaConfig> cfg;
+        std::optional<mr::AlpacaClient> client;
         if (args.mode == "alpaca") {
-          fx::load_dotenv(".env");
-          cfg = fx::alpaca_config_from_env();
+          mr::load_dotenv(".env");
+          cfg = mr::alpaca_config_from_env();
           if (!cfg) throw std::runtime_error("APCA_API_KEY_ID / APCA_API_SECRET_KEY not set (.env)");
           client.emplace(*cfg);
         }
         std::optional<fs::path> snapshot;
-        if (args.universe != fx::UniverseSource::Sp500) {
+        if (args.universe != mr::UniverseSource::Sp500) {
           snapshot = args.mode == "alpaca" ? ensure_snapshot(args, *cfg, *client, store, *portfolio)
-                                           : fx::latest_snapshot(dir);
-          if (!snapshot && args.universe == fx::UniverseSource::Snapshot)
+                                           : mr::latest_snapshot(dir);
+          if (!snapshot && args.universe == mr::UniverseSource::Snapshot)
             throw std::runtime_error("no universe snapshot; run --mode alpaca first");
         }
-        universe = snapshot ? fx::load_snapshot(*snapshot, dir / "funds.csv")
+        universe = snapshot ? mr::load_snapshot(*snapshot, dir / "funds.csv")
                             : sp500_universe(args.data);
         fill_sectors(universe, args.data);
         universe.add_extras(*portfolio);
         store.load_range(universe.price_tickers(), args.tf, window_start, end);
         if (client) {
-          const fx::TimePoint start = window_start;
+          const mr::TimePoint start = window_start;
           std::cerr << (args.refetch_full ? "refetching full history of " : "syncing ")
-                    << universe.price_tickers().size() << " tickers (" << fx::to_string(args.tf) << ") from "
-                    << fx::format_rfc3339(start) << " (or earlier stored history)...\n";
-          const auto stale = fx::sync_bars(*client, store, universe.price_tickers(), args.tf, start, end,
+                    << universe.price_tickers().size() << " tickers (" << mr::to_string(args.tf) << ") from "
+                    << mr::format_rfc3339(start) << " (or earlier stored history)...\n";
+          const auto stale = mr::sync_bars(*client, store, universe.price_tickers(), args.tf, start, end,
                                            args.refetch_full);
           if (!stale.empty()) std::cerr << stale.size() << " stale tickers\n";
           store.flush();
           maintain_lake(store, args.data, args.lookback_days, args.tf);
         }
       }
-      panel = fx::build_panel(store, universe.node_tickers(), args.tf, window_start, end);
+      panel = mr::build_panel(store, universe.node_tickers(), args.tf, window_start, end);
     }
     if (panel.T() < 2) throw std::runtime_error("not enough cached bars; run with --mode alpaca first");
     if (args.serve) {
-      if (!fx::is_loopback_host(args.host))
+      if (!mr::is_loopback_host(args.host))
         std::cerr << "warning: --host " << args.host
                   << " is not a loopback address: the server (which has no authentication) is reachable from the "
                      "network\n";
-      fx::FrameStore frames(std::move(panel), universe.nodes(), args.params, fx::LandscapeParams{});
+      mr::FrameStore frames(std::move(panel), universe.nodes(), args.params, mr::LandscapeParams{});
       frames.start();
-      fx::FluxServer server(frames, portfolio, args.mode + " " + std::string(fx::to_string(args.tf)));
+      mr::FluxServer server(frames, portfolio, args.mode + " " + std::string(mr::to_string(args.tf)));
       if (!fs::is_directory(args.web))
         std::cerr << "warning: web root '" << args.web.string() << "' not found; static files will 404\n";
       const int port = server.bind({args.host, args.port, args.web});
-      std::cerr << "serving http://" << args.host << ":" << port << "  (Ctrl-C to stop)\n";
+      std::cerr << "MarketRank Fluxscape serving http://" << args.host << ":" << port << "  (Ctrl-C to stop)\n";
       std::signal(SIGINT, on_signal);
       std::signal(SIGTERM, on_signal);
       std::atomic<bool> finished{false};
@@ -395,7 +395,7 @@ int main(int argc, char** argv) {
       finished = true;
       watcher.join();
       if (!ok && !g_signalled) {
-        std::cerr << "fluxscape: server failed to listen\n";
+        std::cerr << "marketrank: server failed to listen\n";
         return 1;
       }
       return 0;
@@ -404,7 +404,7 @@ int main(int argc, char** argv) {
     if (!args.shocks.empty()) return run_shock(args, panel, universe, portfolio);
     return run_rank(args, panel, universe, portfolio);
   } catch (const std::exception& e) {
-    std::cerr << "fluxscape: " << e.what() << "\n";
+    std::cerr << "marketrank: " << e.what() << "\n";
     return 1;
   }
 }

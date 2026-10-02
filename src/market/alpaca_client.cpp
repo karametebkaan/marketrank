@@ -15,7 +15,7 @@
 
 #include "core/time.hpp"
 
-namespace fx {
+namespace mr {
 
 BarsPage parse_bars_page(const std::string& json) {
   const auto j = nlohmann::json::parse(json);
@@ -188,4 +188,4 @@ FetchResult AlpacaClient::fetch_bars(const std::vector<std::string>& symbols,
   return result;
 }
 
-}  // namespace fx
+}  // namespace mr

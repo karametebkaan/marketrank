@@ -8,7 +8,7 @@
 #include "storage/lake.hpp"
 #include "test_util.hpp"
 
-using namespace fx;
+using namespace mr;
 
 namespace {
 LakeRow row(const std::string& ticker, TimePoint t, double c) {

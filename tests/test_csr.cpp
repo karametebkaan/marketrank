@@ -4,7 +4,7 @@
 
 #include "graph/csr.hpp"
 
-using namespace fx;
+using namespace mr;
 
 TEST_CASE("left_multiply computes x * P") {
   Csr P;

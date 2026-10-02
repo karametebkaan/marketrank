@@ -1,4 +1,4 @@
-# Fluxscape Milestone 1.6 — DuckDB/Parquet Storage and First Live 10K Run
+# MarketRank Milestone 1.6 — DuckDB/Parquet Storage and First Live 10K Run
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -12,7 +12,7 @@
 
 **Tech Stack:** C++20, GCC 13, CMake 3.28, DuckDB 1.5.6 (prebuilt `libduckdb-linux-amd64.zip`), OpenMP, nlohmann/json, doctest.
 
-**Spec:** `docs/superpowers/specs/2026-10-01-fluxscape-design.md` §4.3, plus the storage-swap contract below, which comes from the milestone-1.5 final review.
+**Spec:** `docs/superpowers/specs/2026-10-01-marketrank-design.md` §4.3, plus the storage-swap contract below, which comes from the milestone-1.5 final review.
 
 ## Global Constraints
 

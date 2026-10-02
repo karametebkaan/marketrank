@@ -9,7 +9,7 @@
 #include "market/sec_sectors.hpp"
 #include "test_util.hpp"
 
-using namespace fx;
+using namespace mr;
 
 namespace {
 const char* kTickers = R"({"0":{"cik_str":320193,"ticker":"AAPL","title":"Apple Inc."},

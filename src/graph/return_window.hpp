@@ -3,7 +3,7 @@
 #include <span>
 #include <vector>
 
-namespace fx {
+namespace mr {
 
 // Rolling window of the last `window` returns per node. Pearson correlation is a dot product of
 // the centered, unit-length vectors: corr(i, j) = u_i . u_j. Memory O(n * window).
@@ -26,4 +26,4 @@ class ReturnWindow {
   bool dirty_ = true;
 };
 
-}  // namespace fx
+}  // namespace mr

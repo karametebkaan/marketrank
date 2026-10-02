@@ -2,7 +2,7 @@
 #include <cstdint>
 #include <string_view>
 
-namespace fx {
+namespace mr {
 
 using TimePoint = std::int64_t;  // seconds since Unix epoch, UTC
 
@@ -17,4 +17,4 @@ std::string_view to_string(Timeframe tf);
 Timeframe parse_timeframe(std::string_view s);
 TimePoint timeframe_seconds(Timeframe tf);
 
-}  // namespace fx
+}  // namespace mr

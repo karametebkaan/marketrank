@@ -5,7 +5,7 @@
 
 #include "core/types.hpp"
 
-namespace fx {
+namespace mr {
 
 struct Civil {
   int y;
@@ -21,4 +21,4 @@ TimePoint utc_seconds(int y, unsigned m, unsigned d, int hh = 0, int mm = 0, int
 TimePoint parse_rfc3339(std::string_view s);
 std::string format_rfc3339(TimePoint t);
 
-}  // namespace fx
+}  // namespace mr

@@ -4,7 +4,7 @@
 
 #include "graph/csr.hpp"
 
-namespace fx {
+namespace mr {
 
 struct Forecast {
   int k = 0;
@@ -15,4 +15,4 @@ struct Forecast {
 Forecast forecast(const Csr& P_fast, double alpha, std::span<const double> pi_now,
                   std::span<const double> pi_prev, int k, double beta);
 
-}  // namespace fx
+}  // namespace mr

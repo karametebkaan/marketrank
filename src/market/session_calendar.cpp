@@ -2,7 +2,7 @@
 
 #include <algorithm>
 
-namespace fx {
+namespace mr {
 namespace {
 
 // Day of month of the n-th Sunday (n >= 1) of the given month.
@@ -69,4 +69,4 @@ std::vector<Bar> aggregate_session_hours(const std::vector<Bar>& bars30m) {
   return out;
 }
 
-}  // namespace fx
+}  // namespace mr

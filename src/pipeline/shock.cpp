@@ -4,7 +4,7 @@
 #include <limits>
 #include <stdexcept>
 
-namespace fx {
+namespace mr {
 
 ShockDelta shock_response(const Frame& base, const Frame& shocked) {
   const std::size_t n = base.pi.size();
@@ -37,4 +37,4 @@ std::pair<Frame, Frame> run_with_shock(const Panel& panel, const CoreParams& par
   return {std::move(base), std::move(shocked)};
 }
 
-}  // namespace fx
+}  // namespace mr

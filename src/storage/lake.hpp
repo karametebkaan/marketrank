@@ -9,7 +9,7 @@
 
 #include "core/types.hpp"
 
-namespace fx {
+namespace mr {
 
 struct LakeRow {
   std::string ticker;
@@ -58,4 +58,4 @@ class Lake {
   std::unique_ptr<Impl> impl_;
 };
 
-}  // namespace fx
+}  // namespace mr

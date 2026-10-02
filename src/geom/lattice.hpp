@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace fx {
+namespace mr {
 
 struct LatticeSize {
   std::size_t cols = 0, rows = 0;
@@ -14,4 +14,4 @@ struct LatticeSize {
 // Spec 6.2: cols = ceil(sqrt(n_active)), rows = ceil(n_active / cols).
 LatticeSize lattice_size(std::size_t n_active);
 
-}  // namespace fx
+}  // namespace mr

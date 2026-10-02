@@ -5,7 +5,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace fx {
+namespace mr {
 
 PressureMode parse_pressure_mode(std::string_view s) {
   if (s == "dollar") return PressureMode::Dollar;
@@ -116,4 +116,4 @@ std::vector<double> PressureModel::median_dollar_volume() const {
   return m;
 }
 
-}  // namespace fx
+}  // namespace mr

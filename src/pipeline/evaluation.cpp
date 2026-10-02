@@ -6,7 +6,7 @@
 #include <numeric>
 #include <stdexcept>
 
-namespace fx {
+namespace mr {
 
 double gini(std::span<const double> x) {
   const std::size_t n = x.size();
@@ -293,4 +293,4 @@ std::vector<EvalConfig> evaluation_grid() {
   return g;
 }
 
-}  // namespace fx
+}  // namespace mr

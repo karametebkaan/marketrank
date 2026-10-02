@@ -13,7 +13,7 @@
 #include "pipeline/shock.hpp"
 #include "test_util.hpp"
 
-using namespace fx;
+using namespace mr;
 
 namespace {
 struct Market {

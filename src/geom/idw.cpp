@@ -5,7 +5,7 @@
 #include <limits>
 #include <stdexcept>
 
-namespace fx {
+namespace mr {
 
 Raster idw_raster(const std::vector<std::int32_t>& cell, const std::vector<double>& value, LatticeSize size,
                   const IdwParams& p) {
@@ -137,4 +137,4 @@ Raster smooth_raster(const Raster& r, double sigma_cells, int subdivision) {
   return out;
 }
 
-}  // namespace fx
+}  // namespace mr

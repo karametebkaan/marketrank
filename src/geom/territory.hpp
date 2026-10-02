@@ -5,7 +5,7 @@
 
 #include "geom/lattice.hpp"
 
-namespace fx {
+namespace mr {
 
 // Generalized Hilbert ("gilbert2d", Cerveny) curve over a cols x rows rectangle. Visits every cell exactly once,
 // consecutive cells at Chebyshev distance 1, starting at cell (0,0). Cell index = row*cols + col.
@@ -50,4 +50,4 @@ TerritoryLayout territory_layout(const std::vector<bool>& active, const std::vec
                                  const std::vector<double>& s, LatticeSize size, const PlacementMemory* prev = nullptr,
                                  double rank_tolerance = 0.15);
 
-}  // namespace fx
+}  // namespace mr

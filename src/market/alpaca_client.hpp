@@ -10,7 +10,7 @@
 
 #include "core/types.hpp"
 
-namespace fx {
+namespace mr {
 
 struct HttpResponse {
   int status = 0;
@@ -70,4 +70,4 @@ class AlpacaClient {
   HttpGet get_;
 };
 
-}  // namespace fx
+}  // namespace mr

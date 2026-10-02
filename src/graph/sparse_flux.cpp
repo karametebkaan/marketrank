@@ -5,7 +5,7 @@
 #include <stdexcept>
 #include <utility>
 
-namespace fx {
+namespace mr {
 namespace {
 
 double dot(const double* a, const double* b, std::size_t w) {
@@ -169,4 +169,4 @@ std::size_t FluxAccumulator::edge_count() const {
   return c;
 }
 
-}  // namespace fx
+}  // namespace mr

@@ -3,7 +3,7 @@
 #include <cmath>
 #include <utility>
 
-namespace fx {
+namespace mr {
 
 namespace {
 std::vector<double> step_t(const Csr& PT, double alpha, std::span<const double> pi) {
@@ -60,4 +60,4 @@ std::vector<double> hotness(std::span<const double> pi) {
   return h;
 }
 
-}  // namespace fx
+}  // namespace mr

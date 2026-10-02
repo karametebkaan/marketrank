@@ -16,7 +16,7 @@
 #include "pipeline/core_pipeline.hpp"
 #include "test_util.hpp"
 
-using namespace fx;
+using namespace mr;
 
 namespace {
 Frame synthetic_frame(std::uint64_t seed = 42) {

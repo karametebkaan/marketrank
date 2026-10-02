@@ -2,7 +2,7 @@
 
 #include "graph/markov_solver.hpp"
 
-namespace fx {
+namespace mr {
 
 Forecast forecast(const Csr& P_fast, double alpha, std::span<const double> pi_now,
                   std::span<const double> pi_prev, int k, double beta) {
@@ -20,4 +20,4 @@ Forecast forecast(const Csr& P_fast, double alpha, std::span<const double> pi_no
   return f;
 }
 
-}  // namespace fx
+}  // namespace mr

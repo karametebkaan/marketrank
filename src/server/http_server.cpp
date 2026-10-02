@@ -18,7 +18,7 @@
 #include "graph/transition.hpp"
 #include "server/top_list.hpp"
 
-namespace fx {
+namespace mr {
 using nlohmann::json;
 
 namespace {
@@ -434,4 +434,4 @@ void FluxServer::routes() {
   });
 }
 
-}  // namespace fx
+}  // namespace mr

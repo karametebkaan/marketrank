@@ -12,7 +12,7 @@
 
 #include "core/csv.hpp"
 
-namespace fx {
+namespace mr {
 
 std::vector<AssetInfo> parse_assets(const std::string& json) {
   nlohmann::json j;
@@ -198,4 +198,4 @@ std::set<std::string> read_ticker_list(const std::filesystem::path& path) {
   return out;
 }
 
-}  // namespace fx
+}  // namespace mr

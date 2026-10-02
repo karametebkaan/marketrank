@@ -3,7 +3,7 @@
 #include "graph/forecaster.hpp"
 #include "graph/markov_solver.hpp"
 
-using namespace fx;
+using namespace mr;
 
 namespace {
 Csr two_state() {

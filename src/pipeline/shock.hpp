@@ -5,7 +5,7 @@
 #include "market/panel.hpp"
 #include "pipeline/core_pipeline.hpp"
 
-namespace fx {
+namespace mr {
 
 struct ShockDelta {
   std::vector<double> dh, dpi, dscore;  // shocked - base; dscore uses the first horizon
@@ -20,4 +20,4 @@ ShockDelta shock_response(const Frame& base, const Frame& shocked);
 std::pair<Frame, Frame> run_with_shock(const Panel& panel, const CoreParams& params,
                                        const std::vector<Shock>& shocks);
 
-}  // namespace fx
+}  // namespace mr

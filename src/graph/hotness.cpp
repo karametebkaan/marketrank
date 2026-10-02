@@ -5,7 +5,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace fx {
+namespace mr {
 
 HotRef parse_hot_ref(std::string_view s) {
   if (s == "uniform") return HotRef::Uniform;
@@ -63,4 +63,4 @@ std::vector<double> net_flow_hotness(std::span<const double> in, std::span<const
   return h;
 }
 
-}  // namespace fx
+}  // namespace mr

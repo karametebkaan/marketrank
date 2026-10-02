@@ -15,7 +15,7 @@
 #include "server/http_server.hpp"
 #include "test_util.hpp"
 
-using namespace fx;
+using namespace mr;
 using namespace std::chrono_literals;
 using nlohmann::json;
 

@@ -4,7 +4,7 @@
 #include <cmath>
 #include <stdexcept>
 
-namespace fx {
+namespace mr {
 
 ReturnWindow::ReturnWindow(std::size_t n, std::size_t window)
     : n_(n), w_(window), ring_(n * window, 0.0), unit_(n * window, 0.0) {
@@ -53,4 +53,4 @@ double ReturnWindow::correlation(std::size_t i, std::size_t j) {
   return d;
 }
 
-}  // namespace fx
+}  // namespace mr

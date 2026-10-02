@@ -7,7 +7,7 @@
 
 #include "cli/args.hpp"
 
-using namespace fx;
+using namespace mr;
 
 TEST_CASE("cli defaults") {
   CliArgs a = parse_cli({});

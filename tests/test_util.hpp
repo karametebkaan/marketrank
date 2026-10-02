@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-namespace fx::test {
+namespace mr::test {
 
 // Exact element-wise equality where NaN matches NaN.
 inline bool same_values(const std::vector<double>& a, const std::vector<double>& b) {
@@ -22,7 +22,7 @@ inline bool same_values(const std::vector<double>& a, const std::vector<double>&
 inline std::filesystem::path temp_dir(const std::string& tag) {
   static std::atomic<int> counter{0};
   auto dir = std::filesystem::temp_directory_path() /
-             ("fluxtest_" + tag + "_" + std::to_string(::getpid()) + "_" +
+             ("mrtest_" + tag + "_" + std::to_string(::getpid()) + "_" +
               std::to_string(counter++));
   std::filesystem::remove_all(dir);
   std::filesystem::create_directories(dir);
@@ -36,4 +36,4 @@ inline std::filesystem::path write_file(const std::filesystem::path& path,
   return path;
 }
 
-}  // namespace fx::test
+}  // namespace mr::test

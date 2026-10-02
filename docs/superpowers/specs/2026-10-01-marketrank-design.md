@@ -1,4 +1,4 @@
-# Fluxscape — Market Flux Graph, Steady-State Landscape & Shadow-Portfolio Optimizer
+# MarketRank — Market Flux Graph, Steady-State Landscape & Shadow-Portfolio Optimizer
 
 **Date:** 2026-10-01
 **Status:** Draft — awaiting review
@@ -6,11 +6,11 @@
 
 ## 1. Purpose
 
-Fluxscape is a C++ program that models the market as a directed, weighted graph in which edge weights are the *estimated money flux* leaving one stock (net selling) and entering another (net buying). It solves the Markov chain defined by that graph for its steady state — exactly as PageRank does — and treats the resulting stationary probability as each stock's "heat". No predictive model is fitted: the market's own buy/sell heartbeat defines the chain.
+MarketRank is a C++ program that models the market as a directed, weighted graph in which edge weights are the *estimated money flux* leaving one stock (net selling) and entering another (net buying). It solves the Markov chain defined by that graph for its steady state — exactly as PageRank does — and treats the resulting stationary probability as each stock's "heat". No predictive model is fitted: the market's own buy/sell heartbeat defines the chain.
 
 The steady state is rendered as a 3D topological landscape (hills = money accumulating, valleys = money draining) in a deck.gl canvas. A user portfolio is placed on that landscape and an optimizer proposes a *collective* rebalancing move — uphill — at hourly, daily and weekly horizons. Every proposal is executed in a **shadow (paper) ledger** at realistic next-bar prices, so the program continuously measures whether its own advice would have made money, and keeps the full history across every parameter change.
 
-**Non-goals:** placing real orders; fitted forecasting models (VAR, ML); intraday tick-level data; guarantees of profit. Fluxscape is advisory and experimental. The flux is an *inference* from price/volume co-movement — trades are anonymous, so true stock-to-stock order flow is not observable.
+**Non-goals:** placing real orders; fitted forecasting models (VAR, ML); intraday tick-level data; guarantees of profit. MarketRank is advisory and experimental. The flux is an *inference* from price/volume co-movement — trades are anonymous, so true stock-to-stock order flow is not observable.
 
 ## 2. Decisions made during brainstorming
 
@@ -124,7 +124,7 @@ For each bar *t* and stock *i* with return `r_i = C/C⁻ − 1`, volume V and VW
 - **Forecast score:** `s_i = N_active·(π^(k)_i − π_t,i) + β·N_active·d_i` (β = 0.5).
 
 ### 5.2 Evaluation harness
-`fluxscape --mode replay --eval [--eval-bars B]` runs the pipeline over the cached history (the last B bars, default 120, after a warm-up) for this grid of 15 configurations: legacy; legacy + each of A (relative), B (excess lift), C (k_in = 10), D (size and longrun) and E (retention) on its own; the defaults (all on); defaults with relative pressure; defaults + longrun; defaults + netflow; money-flow; money-flow + netflow; defaults + volscale; and money-flow + volscale. Per configuration it prints:
+`marketrank --mode replay --eval [--eval-bars B]` runs the pipeline over the cached history (the last B bars, default 120, after a warm-up) for this grid of 15 configurations: legacy; legacy + each of A (relative), B (excess lift), C (k_in = 10), D (size and longrun) and E (retention) on its own; the defaults (all on); defaults with relative pressure; defaults + longrun; defaults + netflow; money-flow; money-flow + netflow; defaults + volscale; and money-flow + volscale. Per configuration it prints:
 - **floor share:** the fraction of active nodes whose π is within 1e-6 relative of the teleport floor (1−α)/N_active
 - **Gini:** the Gini coefficient of π
 - **sector coherence:** the share of off-diagonal raw edge weight between nodes of the same known sector
@@ -133,10 +133,12 @@ For each bar *t* and stock *i* with return `r_i = C/C⁻ − 1`, volume V and VW
 - the mean frame time in ms
 
 ### 5.3 Shock mode (counterfactual)
-`fluxscape --shock TICKER:SIZE [--shock ...] --top N` runs the pipeline over bars 1..T−2, copies it, then steps the original (baseline) and the copy (shocked) at the last bar T−1. A shock `TICKER:SIZE` adds an extra SIZE% return at the stock's normal volume to the bar's actual pressure, after the liquidity floor and active masking: `p_X += (SIZE/100) × vol_term`, with vol_term = mdv (dollar), √mdv (sqrt) or 1 (relative, applied after the volume-ratio cap), where mdv is the trailing median dollar volume (SIZE < 0 sell-off/source, SIZE > 0 buying surge/sink; duplicate shocks on a node add). Under `vol_scale` the extra return is divided by the node's trailing σ, like a real return: `p_X += (SIZE/100) / max(σ, 1e-4) × vol_term`; a node without return history (fewer than 5 previous returns) has no σ and can't be shocked (an error, like a node without normal volume). Everything else (bar, flux rules, accumulators, transitions, solve) is identical. An unknown or inactive shocked ticker is an error.
+`marketrank --shock TICKER:SIZE [--shock ...] --top N` runs the pipeline over bars 1..T−2, copies it, then steps the original (baseline) and the copy (shocked) at the last bar T−1. A shock `TICKER:SIZE` adds an extra SIZE% return at the stock's normal volume to the bar's actual pressure, after the liquidity floor and active masking: `p_X += (SIZE/100) × vol_term`, with vol_term = mdv (dollar), √mdv (sqrt) or 1 (relative, applied after the volume-ratio cap), where mdv is the trailing median dollar volume (SIZE < 0 sell-off/source, SIZE > 0 buying surge/sink; duplicate shocks on a node add). Under `vol_scale` the extra return is divided by the node's trailing σ, like a real return: `p_X += (SIZE/100) / max(σ, 1e-4) × vol_term`; a node without return history (fewer than 5 previous returns) has no σ and can't be shocked (an error, like a node without normal volume). Everything else (bar, flux rules, accumulators, transitions, solve) is identical. An unknown or inactive shocked ticker is an error.
 The report gives the shocked nodes' Δh and Δπ, the top-N receivers and losers by Δh among active nodes (with Δπ and Δscore(+1)), the total |Δπ| (L1) and the portfolio holdings' Δh.
 
 ## 6. Geometry — layout, lattice, landscape (milestone 2)
+
+The landscape built here is the 3D view called **Fluxscape**.
 
 Built per frame from the active nodes (about 6,000 at N = 10,000 under the $1M floor). Nothing is O(N²) or O(N³).
 
@@ -274,7 +276,7 @@ data/       universe/, lake/ (ignored), portfolio.json
 Changing a parameter re-runs only the affected stage and those after it. Replay speed is clamped so that the frame interval ≥ max(user Δt, 1.5 × measured compute time), so larger graphs automatically slow playback rather than queuing frames.
 
 ### 9.2b Serve mode (milestone 2)
-`fluxscape --serve [--port 8765] [--web web] [--mode replay|alpaca|synthetic] [model flags]`. The default preset is **money-flow** unless `--legacy`, `--money-flow` or explicit model flags change it.
+`marketrank --serve [--port 8765] [--web web] [--mode replay|alpaca|synthetic] [model flags]`. The default preset is **money-flow** unless `--legacy`, `--money-flow` or explicit model flags change it.
 - A background thread computes core frames and landscape frames for the data window and keeps up to 300 landscapes in memory for the scrubber.
 - Before the last bar it keeps a copy of the pipeline, so shocks at the latest bar cost about two frames.
 - The first `warmup_bars` = 5 bars feed the model only (§6.1).

@@ -3,7 +3,7 @@
 #include <cstdio>
 #include <stdexcept>
 
-namespace fx {
+namespace mr {
 
 std::int64_t floor_div(std::int64_t a, std::int64_t b) {
   std::int64_t q = a / b;
@@ -63,4 +63,4 @@ std::string format_rfc3339(TimePoint t) {
   return buf;
 }
 
-}  // namespace fx
+}  // namespace mr

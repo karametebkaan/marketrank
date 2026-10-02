@@ -10,7 +10,7 @@
 
 #include "geom/idw.hpp"
 
-using namespace fx;
+using namespace mr;
 
 TEST_CASE("IDW with subdivision 1 is exact at the nodes") {
   LatticeSize s{3, 2};

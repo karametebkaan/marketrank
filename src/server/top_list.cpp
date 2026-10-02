@@ -4,7 +4,7 @@
 #include <cmath>
 #include <limits>
 
-namespace fx {
+namespace mr {
 
 namespace {
 // Positions of f's nodes with finite h, sorted hottest first (ties by lower i).
@@ -69,4 +69,4 @@ std::vector<TopRow> top_hot(const std::vector<std::shared_ptr<const LandscapeFra
   return rows;
 }
 
-}  // namespace fx
+}  // namespace mr

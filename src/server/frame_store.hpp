@@ -16,7 +16,7 @@
 #include "pipeline/core_pipeline.hpp"
 #include "pipeline/shock.hpp"
 
-namespace fx {
+namespace mr {
 
 class FrameStore {
  public:
@@ -89,4 +89,4 @@ class FrameStore {
   std::shared_ptr<const Frame> last_core_;
 };
 
-}  // namespace fx
+}  // namespace mr

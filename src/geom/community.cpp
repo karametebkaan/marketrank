@@ -8,7 +8,7 @@
 #include <stdexcept>
 #include <tuple>
 
-namespace fx {
+namespace mr {
 
 namespace {
 
@@ -612,4 +612,4 @@ const std::vector<std::uint32_t>& CommunityTracker::update(const Csr& P, const s
   return group_;
 }
 
-}  // namespace fx
+}  // namespace mr

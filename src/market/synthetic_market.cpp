@@ -5,7 +5,7 @@
 #include <cstdio>
 #include <random>
 
-namespace fx {
+namespace mr {
 
 namespace {
 // Standard normal by Box-Muller on raw mt19937_64 output. std::normal_distribution is implementation-defined, so
@@ -65,4 +65,4 @@ std::vector<Security> generate_synthetic(const SyntheticConfig& cfg, BarStore& s
   return secs;
 }
 
-}  // namespace fx
+}  // namespace mr

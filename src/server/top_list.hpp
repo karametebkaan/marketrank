@@ -7,7 +7,7 @@
 
 #include "geom/landscape.hpp"
 
-namespace fx {
+namespace mr {
 
 struct TopRow {
   std::size_t rank = 0;  // 1-based
@@ -23,4 +23,4 @@ struct TopRow {
 std::vector<TopRow> top_hot(const std::vector<std::shared_ptr<const LandscapeFrame>>& frames, std::size_t n,
                             std::size_t bars);
 
-}  // namespace fx
+}  // namespace mr

@@ -4,7 +4,7 @@
 #include "core/time.hpp"
 #include "core/types.hpp"
 
-namespace fx {
+namespace mr {
 
 bool is_us_dst(TimePoint utc);
 
@@ -24,4 +24,4 @@ TimePoint session_close(TimePoint utc);
 // Session hours 09:30-10:30 ... 14:30-15:30 and 15:30-16:00 ET (7 buckets).
 std::vector<Bar> aggregate_session_hours(const std::vector<Bar>& bars30m);
 
-}  // namespace fx
+}  // namespace mr

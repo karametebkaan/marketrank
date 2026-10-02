@@ -4,7 +4,7 @@
 #include <span>
 #include <vector>
 
-namespace fx {
+namespace mr {
 
 struct Csr {
   std::size_t n = 0;
@@ -19,4 +19,4 @@ Csr transpose(const Csr& P);
 // y = x P computed from PT = transpose(P) as a parallel pull (deterministic).
 std::vector<double> left_multiply_transposed(const Csr& PT, std::span<const double> x);
 
-}  // namespace fx
+}  // namespace mr

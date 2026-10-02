@@ -3,7 +3,7 @@
 #include "core/time.hpp"
 #include "market/session_calendar.hpp"
 
-using namespace fx;
+using namespace mr;
 
 TEST_CASE("US DST boundaries 2026") {
   // DST starts Sunday 2026-03-08 02:00 EST = 07:00 UTC
