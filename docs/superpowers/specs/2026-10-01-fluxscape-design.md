@@ -164,6 +164,14 @@ It is a small convex problem (≤ ~40 variables) solved in C++ by **ADMM** (QP b
 
 **Output — a proposal:** target weights, the resulting buy/sell trade list (shares and $), expected altitude change ΔA, turnover, and a per-trade rationale (e.g. "AAPL h=−0.4 draining into NVDA/AVGO cluster"). Trades below $500 are suppressed.
 
+### 7.2b Optional: simplex-weighted, walk-forward signal blend (gated)
+Built only if the evidence supports it. The gate is that at least two configurations show **independent, stable out-of-sample signal**: open-to-open IC with |t| ≥ 3 in two or more non-overlapping walk-forward windows, and a pairwise rank correlation of their scores below 0.5.
+- Inputs: K per-stock signals per bar (hotness or forecast scores of the qualifying configurations).
+- Blend: `s = Σ w_k · rank_k`, with weights `w ≥ 0, Σ w = 1`, chosen to maximize mean rank IC on a training window (projected gradient on the simplex; no neural network).
+- Walk-forward: fit on window t, apply unchanged to window t+1, and report only out-of-sample results. The refit cadence equals the window length.
+- Lives as its own strategy version (§8.4), so the shadow ledger compares it with its best single component in real P&L. It is dropped if it doesn't beat that component out of sample.
+- This is a fitted layer on top of the no-fitted-model engine, and is labelled as such.
+
 ### 7.3 Schedule
 - Hourly: at each session-aligned hourly bar close.
 - Daily: at the daily bar close.
