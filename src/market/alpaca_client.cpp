@@ -6,6 +6,7 @@
 #include <cctype>
 #include <chrono>
 #include <cstdlib>
+#include <iterator>
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <random>
@@ -172,12 +173,16 @@ FetchResult AlpacaClient::fetch_bars(const std::vector<std::string>& symbols,
                           symbols.begin() + static_cast<std::ptrdiff_t>(batch_end));
       continue;
     }
-    for (const auto& [sym, bars] : batch_bars)
-      result.bars[sym].insert(result.bars[sym].end(), bars.begin(), bars.end());
     if (on_batch) {
+      // The callback persists the batch; keeping a second full copy in result.bars would double memory.
       const std::vector<std::string> batch_symbols(symbols.begin() + static_cast<std::ptrdiff_t>(b),
                                                    symbols.begin() + static_cast<std::ptrdiff_t>(batch_end));
       on_batch(batch_symbols, batch_bars);
+    } else {
+      for (auto& [sym, bars] : batch_bars) {
+        auto& dst = result.bars[sym];
+        dst.insert(dst.end(), std::make_move_iterator(bars.begin()), std::make_move_iterator(bars.end()));
+      }
     }
   }
   return result;

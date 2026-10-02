@@ -46,7 +46,7 @@ using BatchCallback = std::function<void(const std::vector<std::string>& batch_s
                                          const std::map<std::string, std::vector<Bar>>& batch_bars)>;
 
 struct FetchResult {
-  std::map<std::string, std::vector<Bar>> bars;
+  std::map<std::string, std::vector<Bar>> bars;  // empty when fetch_bars was given an on_batch callback
   std::vector<std::string> stale;  // symbols from batches that failed
 };
 
@@ -54,6 +54,9 @@ class AlpacaClient {
  public:
   explicit AlpacaClient(AlpacaConfig config, HttpGet get = {});
 
+  // Fetches in 100-symbol batches. With on_batch set, each successful batch is handed to the
+  // callback only and FetchResult::bars stays empty (no second full copy); without it, the bars are
+  // accumulated into FetchResult::bars. Failed batches are listed in FetchResult::stale either way.
   FetchResult fetch_bars(const std::vector<std::string>& symbols, std::string_view timeframe,
                          TimePoint start, TimePoint end, const BatchCallback& on_batch = {});
   std::string get(const std::string& path);

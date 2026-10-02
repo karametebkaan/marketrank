@@ -373,3 +373,18 @@ TEST_CASE("an unchanged overlap bar does not refetch history") {
   sync_bars(client, store, {"AAPL"}, Timeframe::Day, utc_seconds(2026, 9, 1), utc_seconds(2026, 10, 1));
   CHECK(calls == 1);
 }
+
+TEST_CASE("fetch_bars with a callback hands bars to it and does not accumulate them") {
+  AlpacaClient client(test_config(), [](const std::string& path) {
+    return HttpResponse{200, path.find("page_token") == std::string::npos ? kPage1 : kPage2};
+  });
+  std::map<std::string, std::size_t> seen;
+  auto r = client.fetch_bars({"AAPL", "NVO"}, "1Day", 0, 1,
+                             [&](const std::vector<std::string>&, const std::map<std::string, std::vector<Bar>>& bars) {
+                               for (const auto& [sym, b] : bars) seen[sym] += b.size();
+                             });
+  CHECK(r.bars.empty());
+  CHECK(r.stale.empty());
+  CHECK(seen["AAPL"] == 2);
+  CHECK(seen["NVO"] == 1);
+}
