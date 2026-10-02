@@ -32,6 +32,8 @@ struct Cand {
 Csr build_transition(const FluxAccumulator& acc, const TransitionParams& params,
                      const std::vector<bool>& active) {
   const std::size_t n = acc.size();
+  if (!active.empty() && active.size() != n)
+    throw std::invalid_argument("build_transition: active mask size != accumulator size");
   auto is_active = [&](std::size_t i) { return active.empty() || active[i]; };
   const auto& out = acc.out();
   const auto& in = acc.in();

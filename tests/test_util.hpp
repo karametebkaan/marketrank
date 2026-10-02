@@ -2,11 +2,21 @@
 #include <unistd.h>
 
 #include <atomic>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <vector>
 
 namespace fx::test {
+
+// Exact element-wise equality where NaN matches NaN.
+inline bool same_values(const std::vector<double>& a, const std::vector<double>& b) {
+  if (a.size() != b.size()) return false;
+  for (std::size_t i = 0; i < a.size(); ++i)
+    if (!(a[i] == b[i] || (std::isnan(a[i]) && std::isnan(b[i])))) return false;
+  return true;
+}
 
 // Creates a fresh, empty directory under the system temp dir.
 inline std::filesystem::path temp_dir(const std::string& tag) {

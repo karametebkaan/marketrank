@@ -19,6 +19,7 @@ struct CoreParams {
   PressureMode pressure = PressureMode::Relative;  // (A)
   std::size_t adv_window = 20;
   std::size_t corr_window = 60;
+  std::size_t stale_bars = 5;  // active iff the last finite close is at most this many bars old
   SparseFluxParams flux;  // lambda, sink_candidates, sinks_per_source
   double halflife_slow = 20;
   double halflife_fast = 3;
@@ -36,7 +37,7 @@ struct CoreParams {
 
 struct Frame {
   TimePoint t = 0;
-  std::vector<bool> active;         // size n; false = no data in the whole panel
+  std::vector<bool> active;         // size n; causal: a finite close within stale_bars of t
   std::vector<double> pi, h;        // inactive: pi = 0, h = NaN
   SolveResult solve;
   std::vector<Forecast> forecasts;  // parallel to CoreParams::horizons
@@ -57,9 +58,10 @@ class CorePipeline {
   ReturnWindow window_;
   FluxAccumulator slow_, fast_;
   std::optional<FluxAccumulator> long_;
-  std::vector<bool> active_;          // computed from the panel on the first step
-  std::vector<double> prev_pi_;       // full size n, 0 for inactive
-  std::vector<double> prev_long_pi_;  // active sub-index, warm start for the long-run solve
+  std::vector<std::size_t> last_close_;  // per node: last bar with a finite close (npos = none)
+  std::size_t next_bar_ = 0;             // first bar not yet scanned into last_close_
+  std::vector<double> prev_pi_;          // full size n, 0 for inactive
+  std::vector<double> prev_long_pi_;     // full size n, warm start for the long-run solve
 };
 
 Frame run_panel_last(const Panel& panel, const CoreParams& params);

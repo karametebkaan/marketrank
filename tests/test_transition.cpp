@@ -111,3 +111,10 @@ TEST_CASE("lift mode strings") {
     CHECK(parse_lift_mode(to_string(m)) == m);
   CHECK_THROWS_AS(parse_lift_mode("max"), std::invalid_argument);
 }
+
+TEST_CASE("an active mask of the wrong size throws") {
+  std::vector<double> F = {0, 1, 1, 1, 0, 1, 1, 1, 0};
+  const auto acc = test::acc_from_dense(F, 3);
+  CHECK_THROWS_AS(build_transition(acc, TransitionParams{}, {true, true}), std::invalid_argument);
+  CHECK_NOTHROW(build_transition(acc, TransitionParams{}, {}));
+}

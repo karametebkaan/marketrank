@@ -28,6 +28,26 @@ Csr compact(const Csr& P, const std::vector<std::size_t>& map, std::size_t n_act
   return C;
 }
 
+constexpr std::size_t kNone = static_cast<std::size_t>(-1);
+
+// Warm start on the active sub-index: carry the full-size previous vector over (newly active
+// nodes have 0), renormalized to sum 1. Empty (uniform start) if nothing carries over.
+std::vector<double> remap_warm(const std::vector<double>& full, const std::vector<bool>& active,
+                               std::size_t n_active) {
+  if (full.size() != active.size()) return {};
+  std::vector<double> a;
+  a.reserve(n_active);
+  double sum = 0;
+  for (std::size_t i = 0; i < full.size(); ++i) {
+    if (!active[i]) continue;
+    a.push_back(full[i]);
+    sum += full[i];
+  }
+  if (!(sum > 0)) return {};
+  for (double& x : a) x /= sum;
+  return a;
+}
+
 const CoreParams& validated(const CoreParams& p) {
   p.validate();
   return p;
@@ -59,6 +79,7 @@ void CoreParams::validate() const {
     if (k < 1) fail("horizons must be >= 1");
   if (corr_window < 2) fail("corr_window must be >= 2");
   if (adv_window < 1) fail("adv_window must be >= 1");
+  if (stale_bars < 1) fail("stale_bars must be >= 1");
   if (flux.sinks_per_source < 1 || flux.sink_candidates < flux.sinks_per_source)
     fail("need 1 <= sinks_per_source <= sink_candidates");
   if (row_cap < transition.k_out) fail("row_cap must be >= k_out");
@@ -70,7 +91,8 @@ CorePipeline::CorePipeline(std::size_t n, CoreParams params)
       pressure_(n, params_.pressure, params_.adv_window),
       window_(n, params_.corr_window),
       slow_(n, params_.halflife_slow, params_.row_cap),
-      fast_(n, params_.halflife_fast, params_.row_cap) {
+      fast_(n, params_.halflife_fast, params_.row_cap),
+      last_close_(n, kNone) {
   if (params_.h_ref == HotRef::LongRun) long_.emplace(n, params_.halflife_long, params_.row_cap);
 }
 
@@ -80,16 +102,22 @@ Frame CorePipeline::step(const Panel& panel, std::size_t t) {
   const auto t0 = std::chrono::steady_clock::now();
   const double nan = std::numeric_limits<double>::quiet_NaN();
 
-  if (active_.empty()) {
-    active_.assign(n_, false);
-    for (std::size_t s = 0; s < panel.T(); ++s)
-      for (std::size_t i = 0; i < n_; ++i)
-        if (std::isfinite(panel.close[panel.idx(s, i)])) active_[i] = true;
-  }
-  std::vector<std::size_t> map(n_, static_cast<std::size_t>(-1));
+  if (t < next_bar_) throw std::invalid_argument("CorePipeline::step: t must increase");
+
+  // Causal active mask: scan only bars not seen yet (and, on a first step, only the bars that can
+  // still count as fresh).
+  const std::size_t stale = params_.stale_bars;
+  for (std::size_t s = std::max(next_bar_, t - std::min(t, stale)); s <= t; ++s)
+    for (std::size_t i = 0; i < n_; ++i)
+      if (std::isfinite(panel.close[panel.idx(s, i)])) last_close_[i] = s;
+  next_bar_ = t + 1;
+  std::vector<bool> active(n_, false);
+  std::vector<std::size_t> map(n_, kNone);
   std::size_t n_active = 0;
-  for (std::size_t i = 0; i < n_; ++i)
-    if (active_[i]) map[i] = n_active++;
+  for (std::size_t i = 0; i < n_; ++i) {
+    active[i] = last_close_[i] != kNone && t - last_close_[i] <= stale;
+    if (active[i]) map[i] = n_active++;
+  }
   if (n_active == 0) throw std::runtime_error("no nodes with data");
 
   std::vector<double> returns(n_, nan), volume(n_, nan), vwap(n_, nan);
@@ -111,17 +139,13 @@ Frame CorePipeline::step(const Panel& panel, std::size_t t) {
 
   Frame f;
   f.t = panel.times[t];
-  f.active = active_;
-  f.P = build_transition(slow_, params_.transition, active_);
-  f.P_fast = build_transition(fast_, params_.transition, active_);
+  f.active = active;
+  f.P = build_transition(slow_, params_.transition, active);
+  f.P_fast = build_transition(fast_, params_.transition, active);
 
   const Csr Pa = compact(f.P, map, n_active);
   const Csr Pa_fast = compact(f.P_fast, map, n_active);
-  std::vector<double> prev_a;
-  if (prev_pi_.size() == n_) {
-    for (std::size_t i = 0; i < n_; ++i)
-      if (active_[i]) prev_a.push_back(prev_pi_[i]);
-  }
+  const std::vector<double> prev_a = remap_warm(prev_pi_, active, n_active);
   f.solve = stationary(Pa, params_.alpha, prev_a);
   const std::vector<double> pi_a = f.solve.pi;
 
@@ -135,7 +159,7 @@ Frame CorePipeline::step(const Panel& panel, std::size_t t) {
       std::vector<double> ref;
       ref.reserve(n_active);
       for (std::size_t i = 0; i < n_; ++i)
-        if (active_[i]) ref.push_back(mdv[i]);
+        if (active[i]) ref.push_back(mdv[i]);
       // No volume history yet means a neutral size: use the median of the known references.
       std::vector<double> pos;
       for (double x : ref)
@@ -150,9 +174,12 @@ Frame CorePipeline::step(const Panel& panel, std::size_t t) {
       break;
     }
     case HotRef::LongRun: {
-      const Csr Pl = compact(build_transition(*long_, params_.transition, active_), map, n_active);
-      const SolveResult lr = stationary(Pl, params_.alpha, prev_long_pi_);
-      prev_long_pi_ = lr.pi;
+      const Csr Pl = compact(build_transition(*long_, params_.transition, active), map, n_active);
+      const SolveResult lr =
+          stationary(Pl, params_.alpha, remap_warm(prev_long_pi_, active, n_active));
+      prev_long_pi_.assign(n_, 0.0);
+      for (std::size_t i = 0; i < n_; ++i)
+        if (active[i]) prev_long_pi_[i] = lr.pi[map[i]];
       h_a = relative_hotness(pi_a, lr.pi);
       break;
     }
@@ -161,7 +188,7 @@ Frame CorePipeline::step(const Panel& panel, std::size_t t) {
   f.pi.assign(n_, 0.0);
   f.h.assign(n_, nan);
   for (std::size_t i = 0; i < n_; ++i) {
-    if (!active_[i]) continue;
+    if (!active[i]) continue;
     f.pi[i] = pi_a[map[i]];
     f.h[i] = h_a[map[i]];
   }
@@ -173,7 +200,7 @@ Frame CorePipeline::step(const Panel& panel, std::size_t t) {
     full.pi_k.assign(n_, 0.0);
     full.score.assign(n_, nan);
     for (std::size_t i = 0; i < n_; ++i) {
-      if (!active_[i]) continue;
+      if (!active[i]) continue;
       full.pi_k[i] = fa.pi_k[map[i]];
       full.score[i] = fa.score[map[i]];
     }
