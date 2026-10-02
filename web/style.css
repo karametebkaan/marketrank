@@ -3,7 +3,8 @@
 html, body { height: 100%; margin: 0; font: 13px/1.4 system-ui, -apple-system, Segoe UI, sans-serif; color: var(--ink); }
 #app { display: grid; grid-template-columns: 320px 1fr; height: 100vh; }
 #panel { background: var(--panel); border-right: 1px solid var(--line); overflow-y: auto; padding: 12px 14px; }
-#panel h1 { font-size: 16px; margin: 0 0 4px; }
+#panel h1 { font-size: 16px; margin: 0 0 4px; display: flex; align-items: center; gap: 8px; }
+#panel h1 .logo { width: 28px; height: 28px; border-radius: 6px; flex: none; }
 #panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 16px 0 6px; }
 #panel label { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 4px 0; }
 #panel input[type=range] { width: 150px; }
