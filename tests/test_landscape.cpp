@@ -480,3 +480,75 @@ TEST_CASE("stocks keep their cells while hotness drifts 2% per frame, and territ
     prev = cur;
   }
 }
+
+TEST_CASE("planted flux communities A-B-C: each one contiguous, trading partners adjacent in the territory order") {
+  // Three communities of 40 that trade densely inside; A trades with B and B with C, never A with C. Nodes are
+  // interleaved (community = i % 3) so index order says nothing about the layout.
+  const std::size_t n = 120;
+  auto comm = [](std::size_t i) { return i % 3; };
+  std::mt19937_64 rng(5);
+  std::vector<std::vector<std::pair<std::uint32_t, double>>> rows(n);
+  for (std::size_t i = 0; i < n; ++i)
+    for (std::size_t j = 0; j < n; ++j) {
+      if (i == j) continue;
+      const std::size_t a = comm(i), b = comm(j);
+      if (a == b && rng() % 2) rows[i].push_back({static_cast<std::uint32_t>(j), 1.0 + static_cast<double>(rng() % 100) / 100.0});
+      else if (a != b && (a + b == 1 || a + b == 3) && rng() % 20 == 0) rows[i].push_back({static_cast<std::uint32_t>(j), 0.2});
+    }
+  std::vector<double> h(n);
+  for (std::size_t i = 0; i < n; ++i) h[i] = std::sin(0.7 * static_cast<double>(i));
+  Frame f = plain_frame(h, 1);
+  f.P.row_ptr.assign(1, 0);
+  for (auto& r : rows) {
+    for (auto& e : r) {
+      f.P.col.push_back(e.first);
+      f.P.raw.push_back(e.second);
+      f.P.val.push_back(e.second);
+    }
+    f.P.row_ptr.push_back(f.P.col.size());
+  }
+  LandscapeBuilder b(n, LandscapeParams{});
+  const LandscapeFrame lf = b.build(f);
+  REQUIRE(lf.nodes.size() == n);
+  // Louvain recovers the planted communities: one label each, no loose stocks.
+  std::map<std::size_t, std::set<std::int32_t>> labels;
+  for (const auto& nd : lf.nodes) labels[comm(nd.i)].insert(nd.group);
+  for (std::size_t c = 0; c < 3; ++c) {
+    REQUIRE(labels[c].size() == 1);
+    CHECK(*labels[c].begin() >= 0);
+  }
+  CHECK(lf.communities == 3);
+  CHECK(lf.loose == 0);
+  // Contiguity (8-connected) of each community's cells.
+  const auto W = static_cast<std::int32_t>(lf.size.cols);
+  for (std::size_t c = 0; c < 3; ++c) {
+    std::set<std::int32_t> rest;
+    for (const auto& nd : lf.nodes)
+      if (comm(nd.i) == c) rest.insert(nd.cell);
+    std::vector<std::int32_t> st{*rest.begin()};
+    rest.erase(rest.begin());
+    while (!st.empty()) {
+      const auto cell = st.back();
+      st.pop_back();
+      for (int dy = -1; dy <= 1; ++dy)
+        for (int dx = -1; dx <= 1; ++dx) {
+          const std::int32_t x = cell % W + dx;
+          if (x < 0 || x >= W) continue;
+          auto it = rest.find((cell / W + dy) * W + x);
+          if (it != rest.end()) {
+            st.push_back(*it);
+            rest.erase(it);
+          }
+        }
+    }
+    CHECK(rest.empty());
+  }
+  // Territory order along the curve: B (the only community trading with both) sits between A and C.
+  const auto order = gilbert_order(lf.size);
+  std::vector<std::size_t> at(lf.size.cells());
+  for (std::size_t k = 0; k < order.size(); ++k) at[static_cast<std::size_t>(order[k])] = k;
+  std::vector<std::size_t> first(3, order.size());
+  for (const auto& nd : lf.nodes) first[comm(nd.i)] = std::min(first[comm(nd.i)], at[static_cast<std::size_t>(nd.cell)]);
+  const bool abc = first[0] < first[1] && first[1] < first[2], cba = first[2] < first[1] && first[1] < first[0];
+  CHECK((abc || cba));
+}
