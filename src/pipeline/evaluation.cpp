@@ -1,0 +1,208 @@
+#include "pipeline/evaluation.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <numeric>
+#include <stdexcept>
+
+namespace fx {
+
+double gini(std::span<const double> x) {
+  const std::size_t n = x.size();
+  if (n == 0) return 0.0;
+  std::vector<double> v(x.begin(), x.end());
+  std::sort(v.begin(), v.end());
+  double sum = 0, weighted = 0;
+  for (std::size_t i = 0; i < n; ++i) {
+    sum += v[i];
+    weighted += static_cast<double>(i + 1) * v[i];
+  }
+  if (!(sum > 0)) return 0.0;
+  const double nd = static_cast<double>(n);
+  return 2.0 * weighted / (nd * sum) - (nd + 1.0) / nd;
+}
+
+namespace {
+
+std::vector<double> ranks(std::span<const double> x) {
+  const std::size_t n = x.size();
+  std::vector<std::size_t> order(n);
+  std::iota(order.begin(), order.end(), 0);
+  std::sort(order.begin(), order.end(), [&](auto a, auto b) { return x[a] < x[b]; });
+  std::vector<double> r(n);
+  for (std::size_t i = 0; i < n;) {
+    std::size_t j = i;
+    while (j + 1 < n && x[order[j + 1]] == x[order[i]]) ++j;
+    const double avg = 0.5 * static_cast<double>(i + j) + 1.0;
+    for (std::size_t k = i; k <= j; ++k) r[order[k]] = avg;
+    i = j + 1;
+  }
+  return r;
+}
+
+void summarize(const std::vector<double>& v, double& mean, double& tstat) {
+  mean = 0;
+  tstat = 0;
+  if (v.empty()) return;
+  for (double x : v) mean += x;
+  mean /= static_cast<double>(v.size());
+  if (v.size() < 2) return;
+  double ss = 0;
+  for (double x : v) ss += (x - mean) * (x - mean);
+  const double sd = std::sqrt(ss / static_cast<double>(v.size() - 1));
+  if (sd > 0) tstat = mean / (sd / std::sqrt(static_cast<double>(v.size())));
+}
+
+bool known_sector(const std::string& s) { return !s.empty() && s != "Unclassified" && s != "Extra"; }
+
+}  // namespace
+
+double spearman(std::span<const double> a, std::span<const double> b) {
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  if (a.size() != b.size() || a.size() < 3) return nan;
+  const auto ra = ranks(a), rb = ranks(b);
+  const double n = static_cast<double>(a.size());
+  double ma = 0, mb = 0;
+  for (std::size_t i = 0; i < a.size(); ++i) {
+    ma += ra[i];
+    mb += rb[i];
+  }
+  ma /= n;
+  mb /= n;
+  double sab = 0, saa = 0, sbb = 0;
+  for (std::size_t i = 0; i < a.size(); ++i) {
+    const double da = ra[i] - ma, db = rb[i] - mb;
+    sab += da * db;
+    saa += da * da;
+    sbb += db * db;
+  }
+  if (!(saa > 0 && sbb > 0)) return nan;
+  return sab / std::sqrt(saa * sbb);
+}
+
+double floor_share(const Frame& f, double alpha) {
+  std::size_t n_active = 0;
+  for (bool a : f.active) n_active += a ? 1 : 0;
+  if (n_active == 0) return 0.0;
+  const double floor = (1.0 - alpha) / static_cast<double>(n_active);
+  std::size_t at_floor = 0;
+  for (std::size_t i = 0; i < f.active.size(); ++i)
+    if (f.active[i] && f.pi[i] <= floor * (1.0 + 1e-6)) ++at_floor;
+  return static_cast<double>(at_floor) / static_cast<double>(n_active);
+}
+
+double sector_coherence(const Frame& f, const std::vector<Security>& nodes) {
+  double same = 0, total = 0;
+  for (std::size_t i = 0; i < f.P.n; ++i) {
+    if (!f.active[i] || !known_sector(nodes[i].sector)) continue;
+    for (auto e = f.P.row_ptr[i]; e < f.P.row_ptr[i + 1]; ++e) {
+      const std::size_t j = f.P.col[e];
+      if (j == i || !f.active[j] || !known_sector(nodes[j].sector)) continue;
+      total += f.P.raw[e];
+      if (nodes[j].sector == nodes[i].sector) same += f.P.raw[e];
+    }
+  }
+  return total > 0 ? same / total : 0.0;
+}
+
+EvalMetrics evaluate(const Panel& panel, const std::vector<Security>& nodes,
+                     const CoreParams& params, std::size_t eval_bars) {
+  const std::size_t T = panel.T(), N = panel.N();
+  if (T < 3) throw std::runtime_error("evaluate: need at least three bars");
+  if (nodes.size() != N) throw std::invalid_argument("evaluate: nodes/panel size mismatch");
+  const std::size_t e0 = T > eval_bars + 1 ? T - eval_bars : 1;
+  const std::size_t warmup = std::max<std::size_t>(
+      params.corr_window, static_cast<std::size_t>(std::ceil(3.0 * params.halflife_slow)));
+  const std::size_t s0 = e0 > warmup + 1 ? e0 - warmup : 1;
+
+  CorePipeline pipe(N, params);
+  EvalMetrics m;
+  std::vector<double> ics, ics_h;
+  std::size_t frames = 0;
+  double ms = 0;
+  for (std::size_t t = s0; t < T; ++t) {
+    const Frame f = pipe.step(panel, t);
+    if (t < e0) continue;
+    ++frames;
+    ms += f.compute_ms;
+    m.floor_share += floor_share(f, params.alpha);
+    std::vector<double> pis;
+    for (std::size_t i = 0; i < N; ++i)
+      if (f.active[i]) pis.push_back(f.pi[i]);
+    m.gini += gini(pis);
+    m.sector_coherence += sector_coherence(f, nodes);
+    if (t + 1 < T) {
+      std::vector<double> s, h, r;
+      for (std::size_t i = 0; i < N; ++i) {
+        const double c0 = panel.close[panel.idx(t, i)], c1 = panel.close[panel.idx(t + 1, i)];
+        const double sc = f.forecasts.front().score[i];
+        if (!f.active[i] || !std::isfinite(c0) || !std::isfinite(c1) || !(c0 > 0) ||
+            !std::isfinite(sc) || !std::isfinite(f.h[i]))
+          continue;
+        s.push_back(sc);
+        h.push_back(f.h[i]);
+        r.push_back(c1 / c0 - 1.0);
+      }
+      const double ic = spearman(s, r), ich = spearman(h, r);
+      if (std::isfinite(ic)) ics.push_back(ic);
+      if (std::isfinite(ich)) ics_h.push_back(ich);
+    }
+  }
+  if (frames > 0) {
+    const double fr = static_cast<double>(frames);
+    m.floor_share /= fr;
+    m.gini /= fr;
+    m.sector_coherence /= fr;
+    m.mean_frame_ms = ms / fr;
+  }
+  summarize(ics, m.ic_mean, m.ic_t);
+  summarize(ics_h, m.ic_h_mean, m.ic_h_t);
+  m.ic_samples = ics.size();
+  return m;
+}
+
+std::vector<EvalConfig> evaluation_grid() {
+  const CoreParams L = CoreParams::legacy();
+  std::vector<EvalConfig> g;
+  g.push_back({"legacy", L});
+  {
+    CoreParams p = L;
+    p.pressure = PressureMode::Relative;
+    g.push_back({"+A relative", p});
+  }
+  {
+    CoreParams p = L;
+    p.transition.lift = LiftMode::Excess;
+    g.push_back({"+B excess", p});
+  }
+  {
+    CoreParams p = L;
+    p.transition.k_in = 10;
+    g.push_back({"+C k_in=10", p});
+  }
+  {
+    CoreParams p = L;
+    p.h_ref = HotRef::Size;
+    g.push_back({"+D size", p});
+  }
+  {
+    CoreParams p = L;
+    p.h_ref = HotRef::LongRun;
+    g.push_back({"+D longrun", p});
+  }
+  {
+    CoreParams p = L;
+    p.transition.retention = 1.0;
+    g.push_back({"+E retention", p});
+  }
+  g.push_back({"defaults", CoreParams{}});
+  {
+    CoreParams p;
+    p.h_ref = HotRef::LongRun;
+    g.push_back({"defaults+longrun", p});
+  }
+  return g;
+}
+
+}  // namespace fx
