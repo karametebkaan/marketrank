@@ -52,6 +52,8 @@ CliArgs parse_cli(const std::vector<std::string>& args) {
   if (legacy && money) throw std::invalid_argument("--legacy and --money-flow are mutually exclusive");
   if (legacy) a.params = CoreParams::legacy();
   if (money) a.params = CoreParams::money_flow();
+  const bool serve = std::find(args.begin(), args.end(), "--serve") != args.end();
+  if (serve && !legacy) a.params = CoreParams::money_flow();
   for (std::size_t i = 0; i < args.size(); ++i) {
     const std::string& flag = args[i];
     auto value = [&]() -> std::string {
@@ -80,6 +82,13 @@ CliArgs parse_cli(const std::vector<std::string>& args) {
     } else if (flag == "--maintain") a.maintain = true;
     else if (flag == "--refetch-full") a.refetch_full = true;
     else if (flag == "--sync-sectors") a.sync_sectors = true;
+    else if (flag == "--serve") a.serve = true;
+    else if (flag == "--port") {
+      const std::size_t p = to_size(flag, value());
+      if (p == 0 || p > 65535) throw std::invalid_argument("--port must be between 1 and 65535");
+      a.port = static_cast<int>(p);
+    } else if (flag == "--host") a.host = value();
+    else if (flag == "--web") a.web = value();
     else if (flag == "--legacy" || flag == "--money-flow") continue;
     else if (flag == "--pressure") a.params.pressure = parse_pressure_mode(value());
     else if (flag == "--lift") a.params.transition.lift = parse_lift_mode(value());
@@ -122,6 +131,7 @@ std::string cli_usage() {
          "                 [--lambda X] [--min-dollar-volume X] [--max-volume-ratio X]\n"
          "                 [--vol-scale] [--vol-window N]\n"
          "                 [--shock TICKER:SIZE ...]   (extra SIZE% return at normal volume on the last bar)\n"
+         "                 [--serve [--port N] [--host H] [--web DIR]]   (REST + SSE server; money-flow preset unless --legacy)\n"
          "                 [--migrate-cache [DIR]] [--maintain]\n"
          "                 [--sync-sectors]   (fetch SEC EDGAR SIC sectors for the universe snapshot into\n"
          "                                   data/sectors/sec_sic.csv; needs SEC_USER_AGENT in .env, no Alpaca keys;\n"

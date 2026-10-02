@@ -150,3 +150,18 @@ TEST_CASE("--sync-sectors parses and is documented") {
   CHECK(a.universe_size == 10000);
   CHECK(cli_usage().find("--sync-sectors") != std::string::npos);
 }
+
+TEST_CASE("serve flags default to the money-flow preset") {
+  CliArgs a = parse_cli({"--serve", "--port", "9000", "--host", "0.0.0.0", "--web", "/tmp/w"});
+  CHECK(a.serve);
+  CHECK(a.port == 9000);
+  CHECK(a.host == "0.0.0.0");
+  CHECK(a.web == "/tmp/w");
+  CHECK(a.params.pressure == PressureMode::Dollar);  // money_flow()
+  CHECK(a.params.h_ref == HotRef::Size);
+  CliArgs b = parse_cli({"--serve", "--h-ref", "netflow"});
+  CHECK(b.params.h_ref == HotRef::NetFlow);
+  CliArgs c = parse_cli({"--serve", "--legacy"});
+  CHECK(c.params.transition.lift == LiftMode::Off);
+  CHECK(c.params.h_ref == HotRef::Uniform);
+}

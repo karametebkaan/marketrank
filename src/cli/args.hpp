@@ -30,6 +30,10 @@ struct CliArgs {
   bool sync_sectors = false;  // fetch SEC SIC sectors for the universe; needs no Alpaca keys
   bool refetch_full = false;  // alpaca only: refetch every ticker's full stored history once
   std::vector<std::pair<std::string, double>> shocks;  // --shock TICKER:SIZE, repeatable
+  bool serve = false;
+  int port = 8080;
+  std::string host = "127.0.0.1";
+  std::filesystem::path web = "web";
   bool help = false;
   CoreParams params;
 };

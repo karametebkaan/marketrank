@@ -23,6 +23,7 @@
 #include "pipeline/core_pipeline.hpp"
 #include "pipeline/evaluation.hpp"
 #include "pipeline/shock.hpp"
+#include "server/http_server.hpp"
 #include "storage/csv_migration.hpp"
 #include "storage/lake.hpp"
 
@@ -360,6 +361,15 @@ int main(int argc, char** argv) {
 
     const fx::Panel panel = fx::build_panel(store, universe.node_tickers(), args.tf, window_start, end);
     if (panel.T() < 2) throw std::runtime_error("not enough cached bars; run with --mode alpaca first");
+    if (args.serve) {
+      fx::FrameStore frames(panel, universe.nodes(), args.params, fx::LandscapeParams{});
+      frames.start();
+      fx::FluxServer server(frames, portfolio, args.mode + " " + std::string(fx::to_string(args.tf)));
+      const int port = server.bind({args.host, args.port, args.web});
+      std::cerr << "serving http://" << args.host << ":" << port << "  (Ctrl-C to stop)\n";
+      server.listen();
+      return 0;
+    }
     if (args.eval) return run_eval(args, panel, universe);
     if (!args.shocks.empty()) return run_shock(args, panel, universe, portfolio);
     return run_rank(args, panel, universe, portfolio);
