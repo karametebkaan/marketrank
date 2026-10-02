@@ -58,7 +58,12 @@ TEST_CASE("alignment on common dates") {
   auto s = make_curve(t0, std::vector<double>(10, 0.001));
   auto b = make_curve(t0 + 5 * 86400, std::vector<double>(10, 0.0));
   Perf p = performance(s, b);  // common: days 5..9 -> 5 days
-  CHECK(p.cum_return == doctest::Approx(std::pow(1.001, 10) - 1));  // strategy value on last common date vs 1.0
+  CHECK(p.cum_return == doctest::Approx(std::pow(1.001, 5) - 1));  // 5 common days, not the earlier history
+  CHECK(p.ann_excess == doctest::Approx(0.001 * 252));
+  // both start together: first return is vs 1.0
+  Perf q = performance(make_curve(t0, {0.05, 0.0}), make_curve(t0, {0.0, 0.0}));
+  CHECK(q.cum_return == doctest::Approx(0.05));
+  CHECK(q.ann_excess == doctest::Approx(0.025 * 252));
 }
 
 TEST_CASE("deflated sharpe") {
@@ -82,7 +87,8 @@ TEST_CASE("decision gate") {
   g = decision_gate(a, 0.28, 0.97, true);
   CHECK(!g.c1); CHECK(!g.pass); CHECK(g.reason.find("c1") != std::string::npos);
   a = p; a.ann_excess = -0.01;
-  CHECK(!decision_gate(a, 0.28, 0.97, true).c1);
+  g = decision_gate(a, 0.28, 0.97, true);
+  CHECK(!g.c1); CHECK(g.reason.find("c1") != std::string::npos);
   a = p; a.year_hit_rate = 0.5;
   g = decision_gate(a, 0.28, 0.97, true);
   CHECK(!g.c2); CHECK(g.c1); CHECK(g.reason.find("c2") != std::string::npos);
@@ -97,4 +103,44 @@ TEST_CASE("decision gate") {
   CHECK(g.reason.find("c4") != std::string::npos);
   CHECK(g.reason.find("c5") != std::string::npos);
   CHECK(!g.pass);
+}
+
+TEST_CASE("alternating returns give analytic moments") {
+  const double a = 0.01;
+  const std::size_t T = 1000;
+  std::vector<double> r;
+  for (std::size_t i = 0; i < T; ++i) r.push_back(i % 2 == 0 ? a : -a);
+  // values: multiplicative returns +a/-a; use log-free check via mean of simple returns
+  const TimePoint t0 = utc_seconds(2020, 1, 1);
+  Perf p = performance(make_curve(t0, r), make_curve(t0, std::vector<double>(T, 0.0)));
+  double mean = 0;
+  for (double v : r) mean += v;
+  mean /= T;
+  CHECK(mean == doctest::Approx(0.0).epsilon(1e-9));
+  const double sd = a * std::sqrt(double(T) / (T - 1));
+  CHECK(p.ann_vol == doctest::Approx(sd * std::sqrt(252.0)).epsilon(1e-6));
+  CHECK(p.skew == doctest::Approx(0.0).scale(1.0).epsilon(1e-6));
+  CHECK(p.kurt == doctest::Approx(1.0).epsilon(1e-6));
+  CHECK(p.ir == doctest::Approx(p.sharpe));
+  CHECK(p.sharpe_daily * std::sqrt(252.0) == doctest::Approx(p.sharpe));
+}
+
+TEST_CASE("constant series: CI and degenerate sd") {
+  const TimePoint t0 = utc_seconds(2020, 1, 1);
+  Perf p = performance(make_curve(t0, std::vector<double>(300, 0.001)),
+                       make_curve(t0, std::vector<double>(300, 0.0)));
+  CHECK(p.excess_ci95.lo <= p.ann_excess + 1e-12);
+  CHECK(p.excess_ci95.hi >= p.ann_excess - 1e-12);
+  CHECK(p.excess_ci95.lo == doctest::Approx(0.001 * 252));
+  CHECK(p.excess_ci95.hi == doctest::Approx(0.001 * 252));
+  CHECK(std::isnan(p.sharpe));
+  CHECK(std::isnan(p.ir));
+}
+
+TEST_CASE("gate reason for undefined DSR") {
+  Perf p;
+  p.ann_excess = 0.02; p.excess_ci95 = {0.005, 0.03}; p.year_hit_rate = 0.7; p.max_drawdown = 0.2;
+  GateResult g = decision_gate(p, 0.28, std::nan(""), true);
+  CHECK(!g.c3);
+  CHECK(g.reason.find("c3: deflated Sharpe undefined (non-positive variance term)") != std::string::npos);
 }

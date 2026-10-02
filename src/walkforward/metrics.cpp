@@ -18,6 +18,8 @@ double sample_sd(const std::vector<double>& x, double m) {
   for (double v : x) ss += (v - m) * (v - m);
   return std::sqrt(ss / static_cast<double>(x.size() - 1));
 }
+// sd <= 1e-12*max(1,|mean|) is treated as zero (constant series), giving NaN ratios instead of noise.
+bool sd_zero(double sd, double m) { return !(sd > 1e-12 * std::max(1.0, std::fabs(m))); }
 double mean_of(const std::vector<double>& x) {
   if (x.empty()) return 0;
   double s = 0;
@@ -30,12 +32,17 @@ Perf performance(const EquityCurve& s, const EquityCurve& bench) {
   Perf p;
   std::vector<TimePoint> ts;
   std::vector<double> r, rb;
-  double ps = 1.0, pb = 1.0, peak = 1.0, vend = 1.0;
+  double ps = 1.0, pb = 1.0, peak = 1.0, vend = 1.0, base = 1.0;
   std::size_t i = 0, j = 0;
   const std::size_t ns = std::min(s.t.size(), s.value.size()), nb = std::min(bench.t.size(), bench.value.size());
   while (i < ns && j < nb) {
     if (s.t[i] < bench.t[j]) { ++i; continue; }
     if (s.t[i] > bench.t[j]) { ++j; continue; }
+    if (ts.empty()) {  // first common date: measure against the previous own value (1.0 if the curve starts here)
+      ps = i > 0 ? s.value[i - 1] : 1.0;
+      pb = j > 0 ? bench.value[j - 1] : 1.0;
+      base = peak = ps;
+    }
     ts.push_back(s.t[i]);
     r.push_back(s.value[i] / ps - 1.0);
     rb.push_back(bench.value[j] / pb - 1.0);
@@ -51,15 +58,16 @@ Perf performance(const EquityCurve& s, const EquityCurve& bench) {
   std::vector<double> e(T);
   for (std::size_t d = 0; d < T; ++d) e[d] = r[d] - rb[d];
 
-  p.cum_return = vend - 1.0;
-  p.ann_return = std::pow(vend, kDays / static_cast<double>(T)) - 1.0;
+  p.cum_return = vend / base - 1.0;
+  p.ann_return = std::pow(vend / base, kDays / static_cast<double>(T)) - 1.0;
   const double m = mean_of(r), sd = sample_sd(r, m);
   p.ann_vol = sd * std::sqrt(kDays);
-  p.sharpe = sd > 0 ? m / sd * std::sqrt(kDays) : 0;
+  p.sharpe_daily = sd_zero(sd, m) ? std::nan("") : m / sd;
+  p.sharpe = p.sharpe_daily * std::sqrt(kDays);
 
   const double me = mean_of(e), sde = sample_sd(e, me);
   p.ann_excess = me * kDays;
-  p.ir = sde > 0 ? me / sde * std::sqrt(kDays) : 0;
+  p.ir = sd_zero(sde, me) ? std::nan("") : me / sde * std::sqrt(kDays);
   CI ci = block_bootstrap_mean_ci(std::span<const double>(e), 21, 2000, 11, 0.95);
   p.excess_ci95 = {ci.lo * kDays, ci.hi * kDays};
 
@@ -87,7 +95,7 @@ Perf performance(const EquityCurve& s, const EquityCurve& bench) {
   }
   const double n = static_cast<double>(T);
   m2 /= n; m3 /= n; m4 /= n;
-  if (m2 > 0) { p.skew = m3 / std::pow(m2, 1.5); p.kurt = m4 / (m2 * m2); }
+  if (!sd_zero(std::sqrt(m2), m)) { p.skew = m3 / std::pow(m2, 1.5); p.kurt = m4 / (m2 * m2); }
   return p;
 }
 
@@ -121,7 +129,8 @@ GateResult decision_gate(const Perf& p, double base_max_dd, double dsr, bool lar
   add(g.c1, "c1: excess return not significantly > 0 (ann_excess=" + std::to_string(p.ann_excess) +
                 ", ci95.lo=" + std::to_string(p.excess_ci95.lo) + ")");
   add(g.c2, "c2: year hit rate " + std::to_string(p.year_hit_rate) + " < 0.6");
-  add(g.c3, "c3: deflated Sharpe " + std::to_string(dsr) + " <= 0.95");
+  add(g.c3, std::isnan(dsr) ? std::string("c3: deflated Sharpe undefined (non-positive variance term)")
+                            : "c3: deflated Sharpe " + std::to_string(dsr) + " <= 0.95");
   add(g.c4, "c4: max drawdown " + std::to_string(p.max_drawdown) + " > base " + std::to_string(base_max_dd) + " + 0.05");
   add(g.c5, "c5: large-cap sub-universe check failed");
   return g;
