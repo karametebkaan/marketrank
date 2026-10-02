@@ -239,6 +239,7 @@ Frame CorePipeline::step(const Panel& panel, std::size_t t) {
     f.h[i] = h_a[map[i]];
   }
   f.solve.pi = f.pi;
+  f.inflow.assign(slow_.in().begin(), slow_.in().begin() + static_cast<std::ptrdiff_t>(n_));
   for (int k : params_.horizons) {
     Forecast fa = forecast(Pa_fast, params_.alpha, pi_a, prev_a, k, params_.beta);
     Forecast full;

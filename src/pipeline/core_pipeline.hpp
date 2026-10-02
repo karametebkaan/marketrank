@@ -42,6 +42,7 @@ struct Frame {
   TimePoint t = 0;
   std::vector<bool> active;         // size n; causal: a recent close and the liquidity floor
   std::vector<double> pi, h;        // inactive: pi = 0, h = NaN
+  std::vector<double> inflow;       // size n; slow accumulator in() (structure-gain metric)
   SolveResult solve;
   SolveResult solve_long;           // h_ref == LongRun only (pi full size n); else default
   std::vector<Forecast> forecasts;  // parallel to CoreParams::horizons

@@ -156,3 +156,35 @@ TEST_CASE("an infinite slow half-life does not break the warm-up") {
   const EvalMetrics m = evaluate(panel, secs, p, 30);
   CHECK(m.mean_frame_ms >= 0);
 }
+
+TEST_CASE("structure gain on hand-built frames") {
+  Frame f;
+  f.active = {true, true, true, true, false};
+  f.inflow = {1, 2, 3, 4, 99};
+  f.pi = {0.1, 0.2, 0.3, 0.4, 0};  // proportional to inflow over the active nodes
+  CHECK(structure_gain(f) == doctest::Approx(0.0));
+  f.pi = {0.4, 0.3, 0.2, 0.1, 0};  // ranks exactly reversed
+  CHECK(structure_gain(f) == doctest::Approx(2.0));
+}
+
+TEST_CASE("a dense unpruned graph has less structure gain than the defaults") {
+  SyntheticConfig cfg;
+  cfg.sectors = 10;
+  cfg.per_sector = 20;
+  cfg.bars = 160;
+  cfg.size_sigma = 1.5;
+  BarStore store(test::temp_dir("evalstruct"));
+  auto secs = generate_synthetic(cfg, store);
+  std::vector<std::string> tickers;
+  for (auto& s : secs) tickers.push_back(s.ticker);
+  Panel panel = build_panel(store, tickers, cfg.tf);
+  CoreParams dense_p = CoreParams::legacy();
+  dense_p.transition.k_out = panel.N();
+  dense_p.row_cap = panel.N();
+  dense_p.transition.lift = LiftMode::Off;
+  dense_p.flux.lambda = 0;
+  const EvalMetrics dense = evaluate(panel, secs, dense_p, 30);
+  const EvalMetrics defaults = evaluate(panel, secs, CoreParams{}, 30);
+  INFO("dense structure gain " << dense.structure_gain << ", defaults " << defaults.structure_gain);
+  CHECK(dense.structure_gain < defaults.structure_gain);
+}

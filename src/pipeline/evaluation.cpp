@@ -102,6 +102,21 @@ double floor_share(const Frame& f, double alpha) {
   return static_cast<double>(at_floor) / static_cast<double>(n_active);
 }
 
+double structure_gain(const Frame& f) {
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  double total = 0;
+  for (std::size_t i = 0; i < f.active.size() && i < f.inflow.size(); ++i)
+    if (f.active[i]) total += f.inflow[i];
+  if (!(total > 0)) return nan;
+  std::vector<double> pis, shares;
+  for (std::size_t i = 0; i < f.active.size() && i < f.inflow.size(); ++i) {
+    if (!f.active[i]) continue;
+    pis.push_back(f.pi[i]);
+    shares.push_back(f.inflow[i] / total);
+  }
+  return 1.0 - spearman(pis, shares);
+}
+
 double sector_coherence(const Frame& f, const std::vector<Security>& nodes) {
   double same = 0, total = 0;
   for (std::size_t i = 0; i < f.P.n; ++i) {
@@ -131,7 +146,7 @@ EvalMetrics evaluate(const Panel& panel, const std::vector<Security>& nodes,
   CorePipeline pipe(N, params);
   EvalMetrics m;
   std::vector<double> ics, ics_h;
-  std::size_t frames = 0;
+  std::size_t frames = 0, sg_frames = 0;
   double ms = 0;
   // IC uses the one-bar-ahead forecast when the horizons include k = 1, else the first one.
   std::size_t fc = 0;
@@ -151,6 +166,10 @@ EvalMetrics evaluate(const Panel& panel, const std::vector<Security>& nodes,
       if (f.active[i]) pis.push_back(f.pi[i]);
     m.gini += gini(pis);
     m.sector_coherence += sector_coherence(f, nodes);
+    if (const double sg = structure_gain(f); std::isfinite(sg)) {
+      m.structure_gain += sg;
+      ++sg_frames;
+    }
     if (t + 1 < T) {
       std::vector<double> s, h, r;
       for (std::size_t i = 0; i < N; ++i) {
@@ -175,6 +194,7 @@ EvalMetrics evaluate(const Panel& panel, const std::vector<Security>& nodes,
     m.sector_coherence /= fr;
     m.mean_frame_ms = ms / fr;
   }
+  if (sg_frames > 0) m.structure_gain /= static_cast<double>(sg_frames);
   summarize(ics, m.ic_mean, m.ic_t);
   summarize(ics_h, m.ic_h_mean, m.ic_h_t);
   m.ic_samples = ics.size();

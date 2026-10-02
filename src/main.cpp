@@ -118,12 +118,12 @@ int run_eval(const fx::CliArgs& args, const fx::Panel& panel, const fx::Universe
   std::printf("evaluation: last %zu of %zu bars, nodes=%zu, timeframe=%s, threads=%d\n\n",
               args.eval_bars, panel.T(), panel.N(), std::string(fx::to_string(args.tf)).c_str(),
               omp_get_max_threads());
-  std::printf("%-18s %6s %6s %6s %9s %6s %9s %6s %9s\n", "config", "floor", "gini", "coher",
-              "IC(score)", "t", "IC(h)", "t", "ms/frame");
+  std::printf("%-18s %6s %6s %6s %6s %9s %6s %9s %6s %9s\n", "config", "floor", "gini",
+              "coher", "struct", "IC(score)", "t", "IC(h)", "t", "ms/frame");
   for (const auto& c : fx::evaluation_grid()) {
     const fx::EvalMetrics m = fx::evaluate(panel, universe.nodes(), c.params, args.eval_bars);
-    std::printf("%-18s %6.3f %6.3f %6.3f %+9.4f %+6.2f %+9.4f %+6.2f %9.1f\n", c.name.c_str(),
-                m.floor_share, m.gini, m.sector_coherence, m.ic_mean, m.ic_t, m.ic_h_mean,
+    std::printf("%-18s %6.3f %6.3f %6.3f %6.3f %+9.4f %+6.2f %+9.4f %+6.2f %9.1f\n", c.name.c_str(),
+                m.floor_share, m.gini, m.sector_coherence, m.structure_gain, m.ic_mean, m.ic_t, m.ic_h_mean,
                 m.ic_h_t, m.mean_frame_ms);
     std::fflush(stdout);
   }

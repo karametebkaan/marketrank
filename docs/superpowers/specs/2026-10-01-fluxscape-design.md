@@ -122,6 +122,7 @@ For each bar *t* and stock *i* with return `r_i = C/C⁻ − 1`, volume V and VW
 - **floor share:** the fraction of active nodes whose π is within 1e-6 relative of the teleport floor (1−α)/N_active
 - **Gini:** the Gini coefficient of π
 - **sector coherence:** the share of off-diagonal raw edge weight between nodes of the same known sector
+- **structure gain:** 1 − Spearman(π, inflow share). Near 0 means the chain has collapsed to plain influx (for example a dense, unpruned graph); higher means the pruned multi-hop structure is shaping π.
 - **IC:** the mean Spearman correlation between each bar's +1 forecast score and the next bar's return, and its t-statistic; **IC(h):** the same for hotness h, which is where the D settings show up
 - the mean frame time in ms
 
