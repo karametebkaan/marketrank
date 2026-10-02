@@ -119,7 +119,7 @@ For each bar *t* and stock *i* with return `r_i = C/C⁻ − 1`, volume V and VW
 - **Forecast score:** `s_i = N_active·(π^(k)_i − π_t,i) + β·N_active·d_i` (β = 0.5).
 
 ### 5.2 Evaluation harness
-`fluxscape --mode replay --eval [--eval-bars B]` runs the pipeline over the cached history (the last B bars, default 120, after a warm-up) for this grid of configurations: legacy; legacy + each of A, B, C, D (size and longrun), E on its own; and all on (the current defaults). Per configuration it prints:
+`fluxscape --mode replay --eval [--eval-bars B]` runs the pipeline over the cached history (the last B bars, default 120, after a warm-up) for this grid of 15 configurations: legacy; legacy + each of A (relative), B (excess lift), C (k_in = 10), D (size and longrun) and E (retention) on its own; the defaults (all on); defaults with relative pressure; defaults + longrun; defaults + netflow; money-flow; money-flow + netflow; defaults + volscale; and money-flow + volscale. Per configuration it prints:
 - **floor share:** the fraction of active nodes whose π is within 1e-6 relative of the teleport floor (1−α)/N_active
 - **Gini:** the Gini coefficient of π
 - **sector coherence:** the share of off-diagonal raw edge weight between nodes of the same known sector
@@ -135,10 +135,13 @@ The report gives the shocked nodes' Δh and Δπ, the top-N receivers and losers
 
 Built per frame from the active nodes (about 6,000 at N = 10,000 under the $1M floor). Nothing is O(N²) or O(N³).
 
-1. **Force-directed layout (Barnes–Hut).**
-   - Attraction comes from springs on each active node's top-5 off-diagonal raw-flux edges, symmetrized, with weight normalized by the maximum weight. Repulsion is inverse-distance between all active pairs, approximated with a quadtree (θ = 0.8). A weak pull toward the centre holds the layout together.
-   - The step size is capped by a linearly cooling temperature. 150 iterations on the first frame, then 20 per frame, warm-started from the previous positions.
-   - Forces are computed per node in parallel (OpenMP, deterministic: each node's tree traversal is serial). The edge forces are accumulated serially.
+1. **Solve-based placement (money-destination embedding; user decision 2026-10-01).** Neighbourhoods reflect how the *solved chain* treats stocks, not direct graph adjacency.
+   - P_off is P with self-loops removed and rows renormalized; rows without off-diagonal edges are zero.
+   - A stock's destination signature is row i of P_offᵏ (k = 4): where a dollar leaving it ends up after k hops.
+   - It is computed as Y = P_offᵏ·G, with G a fixed, seeded N×16 Gaussian projection (stable per node), using k sparse row-gather products, parallel per row.
+   - Positions are the top-2 principal components of the centered signatures over active nodes. The 16×16 covariance is accumulated serially, and the components come from deterministic power iteration with deflation.
+   - Each frame is aligned to the previous one by orthogonal Procrustes (rotation, plus reflection if it fits better), then smoothed 50/50 with the previous positions.
+   - Stocks that send money to the same destinations end up adjacent even when no edge joins them.
 2. **Lattice snap (recursive coordinate bisection).**
    - The lattice is cols = ⌈√N_active⌉ by rows = ⌈N_active/cols⌉.
    - Active nodes are sorted by x (ties broken by index) into column bands of `rows` nodes, and each band is sorted by y. A node's cell is (band, rank). This is O(N log N), one node per cell, and it preserves locality.
