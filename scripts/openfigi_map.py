@@ -74,17 +74,32 @@ def save_cache(path, m):
     os.replace(tmp, path)
 
 
-def read_holdings(data_dir):
-    """Return (set of cusips >= min handled by caller, list of (cusip, value))."""
-    rows = []
+def clean_cusip(c):
+    return (c or "").strip().upper()
+
+
+def aggregate_rows(rows, min_value, wanted, acc):
+    """Stream rows into wanted (cusips >= min_value) and acc[cusip] += value. O(unique cusips)."""
+    for r in rows:
+        try:
+            c, v = clean_cusip(r["cusip"]), float(r["value_usd"])
+        except (KeyError, ValueError):
+            continue
+        if not c:
+            continue
+        acc[c] = acc.get(c, 0.0) + v
+        if v >= min_value:
+            wanted.add(c)
+
+
+def read_holdings(data_dir, min_value):
+    """Single streaming pass per file. Returns (wanted, {quarter: {cusip: value}})."""
+    wanted, by_q = set(), {}
     for p in sorted(glob.glob(os.path.join(data_dir, "13f", "holdings_*.csv"))):
+        q = os.path.basename(p)[len("holdings_"):-len(".csv")]
         with open(p, newline="", encoding="utf-8") as f:
-            for r in csv.DictReader(f):
-                try:
-                    rows.append((r["cusip"].strip(), float(r["value_usd"])))
-                except (KeyError, ValueError):
-                    continue
-    return rows
+            aggregate_rows(csv.DictReader(f), min_value, wanted, by_q.setdefault(q, {}))
+    return wanted, by_q
 
 
 def _fresh_nomatch(row, now_dt):
@@ -95,24 +110,31 @@ def _fresh_nomatch(row, now_dt):
     return now_dt - t < timedelta(days=RETRY_NO_MATCH_DAYS)
 
 
-def coverage(data_dir, rows, cache):
+def coverage(data_dir, by_q, cache):
+    """Returns (snapshot name, latest (q, share), [(q, share)], all-quarters share) or None."""
     ups = sorted(glob.glob(os.path.join(data_dir, "universe", "universe_*.csv")))
-    if not ups:
+    if not ups or not by_q:
         return None
     with open(ups[-1], newline="", encoding="utf-8") as f:
-        uni = {r["ticker"].strip().upper() for r in csv.DictReader(f)}
-    total = sum(v for _, v in rows)
-    got = sum(v for c, v in rows if c in cache and cache[c].get("ticker") in uni)
-    return (got / total if total else 0.0), os.path.basename(ups[-1])
+        uni = {normalise(r["ticker"]) for r in csv.DictReader(f)}
+    mapped = {c for c, r in cache.items() if r.get("ticker") and normalise(r["ticker"]) in uni}
+    per, tot_all, got_all = [], 0.0, 0.0
+    for q in sorted(by_q):
+        tot = sum(by_q[q].values())
+        got = sum(v for c, v in by_q[q].items() if c in mapped)
+        per.append((q, got / tot if tot else 0.0))
+        tot_all += tot
+        got_all += got
+    return os.path.basename(ups[-1]), per[-1], per, (got_all / tot_all if tot_all else 0.0)
 
 
 def run(data_dir, min_value, post, api_key=None, now=time.monotonic, sleep=time.sleep,
         batch_override=None):
     path = os.path.join(data_dir, "13f", "cusip_map.csv")
-    rows = read_holdings(data_dir)
+    wanted, by_q = read_holdings(data_dir, min_value)
     cache = load_cache(path)
     now_dt = datetime.now(timezone.utc)
-    want = sorted({c for c, v in rows if v >= min_value and c})
+    want = sorted(wanted)
     todo = [c for c in want if c not in cache or
             (not cache[c].get("ticker") and not _fresh_nomatch(cache[c], now_dt))]
     per_min, batch = LIMITS[bool(api_key)]
@@ -122,7 +144,8 @@ def run(data_dir, min_value, post, api_key=None, now=time.monotonic, sleep=time.
     headers = {"X-OPENFIGI-APIKEY": api_key} if api_key else {}
     print("%d cusips wanted, %d cached, %d to map" % (len(want), len(want) - len(todo), len(todo)))
 
-    state = {"last": None, "requests": 0}
+    state = {"last": None, "requests": 0, "saved": 0}
+    dirty = False
 
     def request(jobs):
         if state["last"] is not None:
@@ -146,7 +169,7 @@ def run(data_dir, min_value, post, api_key=None, now=time.monotonic, sleep=time.
                     raise SystemExit("OpenFIGI: persistent 429, progress saved")
                 try:
                     ra = int(float({k.lower(): v for k, v in hdrs.items()}.get("retry-after", "")))
-                except ValueError:
+                except (ValueError, OverflowError):
                     ra = 2 ** retries429
                 sleep(min(max(ra, 1), MAX_RETRY_AFTER_S))
                 continue
@@ -177,17 +200,24 @@ def run(data_dir, min_value, post, api_key=None, now=time.monotonic, sleep=time.
                 else:  # warning: definitive no-match
                     cache[c] = dict(cusip=c, ticker="", name="", security_type="", figi="",
                                     fetched_at=stamp)
+                dirty = True
             i += len(chunk)
-            if state["requests"] % COMMIT_EVERY == 0:
+            if dirty and state["requests"] - state["saved"] >= COMMIT_EVERY:
                 os.makedirs(os.path.dirname(path), exist_ok=True)
                 save_cache(path, cache)
+                state["saved"], dirty = state["requests"], False
     finally:
-        if todo:
+        if dirty:
             os.makedirs(os.path.dirname(path), exist_ok=True)
             save_cache(path, cache)
-    cov = coverage(data_dir, rows, cache)
+    cov = coverage(data_dir, by_q, cache)
     if cov:
-        print("coverage: %.1f%% of 13F dollar value maps to a ticker in %s" % (cov[0] * 100, cov[1]))
+        snap, (lq, lshare), per, allshare = cov
+        print("coverage: %.1f%% of %s 13F dollar value maps to a ticker in %s"
+              % (lshare * 100, lq, snap))
+        for q, sh in per:
+            print("  %s: %.1f%%" % (q, sh * 100))
+        print("  all quarters: %.1f%%" % (allshare * 100))
     else:
         print("coverage: no universe snapshot found")
     return cache

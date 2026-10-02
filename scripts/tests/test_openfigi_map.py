@@ -218,6 +218,88 @@ class T(unittest.TestCase):
         out = self.run_map(FakePost({"AAA": hit("AAA"), "BBB": hit("BBB")}))
         self.assertIn("75.0%", out)
 
+    def test_aggregate_streams_lazily(self):
+        import tracemalloc
+        def gen():
+            for i in range(200000):
+                yield {"cusip": " c%d " % (i % 10), "value_usd": "2000000"}
+        wanted, acc = set(), {}
+        tracemalloc.start()
+        om.aggregate_rows(gen(), 1e6, wanted, acc)
+        peak = tracemalloc.get_traced_memory()[1]
+        tracemalloc.stop()
+        self.assertLess(peak, 1_000_000)
+        self.assertEqual(wanted, {"C%d" % i for i in range(10)})
+        self.assertEqual(acc["C3"], 20000 * 2e6)
+
+    def test_coverage_latest_quarter_headline(self):
+        write_holdings(self.d, "2024Q1", [["1", "AAA", "I", "1", "1000000"],
+                                          ["1", "BBB", "I", "1", "3000000"]])
+        write_holdings(self.d, "2024Q2", [["1", "AAA", "I", "1", "3000000"],
+                                          ["1", "BBB", "I", "1", "1000000"]])
+        ud = os.path.join(self.d, "universe")
+        os.makedirs(ud)
+        with open(os.path.join(ud, "universe_2024-06-01_n1.csv"), "w") as f:
+            f.write("ticker,name,sector,exchange,median_dollar_volume\nbrk.b,x,y,z,1\n")
+        out = self.run_map(FakePost({"AAA": hit("BRK/B"), "BBB": hit("QQQ")}))
+        lines = out.splitlines()
+        head = [l for l in lines if l.startswith("coverage:")][0]
+        self.assertIn("75.0%", head)
+        self.assertIn("2024Q2", head)
+        self.assertTrue(any("2024Q1" in l and "25.0%" in l for l in lines))
+        self.assertTrue(any("all quarters" in l and "50.0%" in l for l in lines))
+
+    def test_save_not_skipped_when_request_50_is_429(self):
+        self.many(600)
+        saves = []
+        orig = om.save_cache
+        om.save_cache = lambda path, m: (saves.append(len(m)), orig(path, m))[1]
+        script = [None] * 49 + [(429, {"Retry-After": "1"}, None)]
+        try:
+            self.run_map(FakePost(script=script), key="K", batch_override=1)
+        finally:
+            om.save_cache = orig
+        self.assertEqual(saves[0], 50)
+
+    def test_retry_after_overflow(self):
+        self.many(3)
+        p = FakePost(script=[(429, {"Retry-After": "inf"}, None)])
+        self.run_map(p)
+        self.assertEqual(len(read_map(self.d)), 3)
+
+    def test_429_exhaustion(self):
+        self.many(3)
+        p = FakePost(script=[(429, {"Retry-After": "1"}, None)] * 20)
+        with self.assertRaises(SystemExit):
+            self.run_map(p)
+        self.assertEqual(len(p.calls), om.MAX_429_RETRIES + 1)
+
+    def test_consecutive_failures_abort(self):
+        self.many(3)
+        p = FakePost(script=[(500, {}, None)] * 20)
+        with self.assertRaises(SystemExit):
+            self.run_map(p)
+        self.assertEqual(len(p.calls), om.MAX_FAILURES)
+
+    def test_body_length_mismatch_is_failure(self):
+        self.many(3)
+        p = FakePost(script=[(200, {}, [hit("A")])])
+        self.run_map(p)
+        self.assertEqual(len(p.calls), 2)
+        self.assertEqual(len(read_map(self.d)), 3)
+
+    def test_no_save_when_nothing_to_do(self):
+        self.many(3)
+        self.run_map(FakePost())
+        saves = []
+        orig = om.save_cache
+        om.save_cache = lambda path, m: saves.append(1)
+        try:
+            self.run_map(FakePost())
+        finally:
+            om.save_cache = orig
+        self.assertEqual(saves, [])
+
 
 if __name__ == "__main__":
     unittest.main()
