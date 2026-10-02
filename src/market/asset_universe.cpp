@@ -1,6 +1,7 @@
 #include "market/asset_universe.hpp"
 
 #include <algorithm>
+#include <charconv>
 #include <fstream>
 #include <iomanip>
 #include <nlohmann/json.hpp>
@@ -85,7 +86,7 @@ std::string csv_field(const std::string& s) {
 }
 
 const std::regex& snapshot_name() {
-  static const std::regex re(R"(universe_(\d{4}-\d{2}-\d{2})\.csv)");
+  static const std::regex re(R"(universe_(\d{4}-\d{2}-\d{2})(?:_n(\d+))?\.csv)");
   return re;
 }
 
@@ -123,12 +124,29 @@ std::optional<std::string> snapshot_date(const std::filesystem::path& path) {
   return std::nullopt;
 }
 
+std::optional<std::size_t> snapshot_size(const std::filesystem::path& path) {
+  std::smatch m;
+  const std::string name = path.filename().string();
+  if (!std::regex_match(name, m, snapshot_name()) || !m[2].matched) return std::nullopt;
+  const std::string digits = m[2].str();
+  std::size_t n = 0;
+  const auto [end, ec] = std::from_chars(digits.data(), digits.data() + digits.size(), n);
+  if (ec != std::errc{} || end != digits.data() + digits.size()) return std::nullopt;
+  return n;
+}
+
 std::optional<std::filesystem::path> latest_snapshot(const std::filesystem::path& dir) {
   if (!std::filesystem::is_directory(dir)) return std::nullopt;
   std::optional<std::filesystem::path> best;
   for (const auto& entry : std::filesystem::directory_iterator(dir)) {
-    if (!entry.is_regular_file() || !snapshot_date(entry.path())) continue;
-    if (!best || entry.path().filename() > best->filename()) best = entry.path();
+    if (!entry.is_regular_file()) continue;
+    const auto date = snapshot_date(entry.path());
+    if (!date) continue;
+    // Newest date wins; same date: the larger file name, for a deterministic pick.
+    const auto best_date = best ? snapshot_date(*best) : std::nullopt;
+    if (!best || *date > *best_date ||
+        (*date == *best_date && entry.path().filename() > best->filename()))
+      best = entry.path();
   }
   return best;
 }

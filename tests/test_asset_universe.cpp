@@ -104,3 +104,25 @@ TEST_CASE("snapshot write failure throws and leaves no tmp file") {
   CHECK_THROWS(write_universe_snapshot(blocker / "universe_2026-10-01.csv", ranked, sp));
   CHECK_FALSE(std::filesystem::exists(blocker / "universe_2026-10-01.csv.tmp"));
 }
+
+TEST_CASE("snapshot names carry the date and, in the new form, the requested size") {
+  CHECK(snapshot_date("universe_2026-10-01.csv").value() == "2026-10-01");
+  CHECK(snapshot_date("dir/universe_2026-10-01_n500.csv").value() == "2026-10-01");
+  CHECK_FALSE(snapshot_size("universe_2026-10-01.csv").has_value());
+  CHECK(snapshot_size("dir/universe_2026-10-01_n500.csv").value() == 500);
+  CHECK(snapshot_size("universe_2026-10-01_n10000.csv").value() == 10000);
+  CHECK_FALSE(snapshot_date("universe_2026-10-01_n.csv").has_value());
+  CHECK_FALSE(snapshot_size("universe_2026-10-01_nx.csv").has_value());
+  CHECK_FALSE(snapshot_size("funds.csv").has_value());
+
+  auto dir = test::temp_dir("snapnames");
+  Universe sp = Universe::from_securities({});
+  std::vector<RankedAsset> ranked = {{{"AAPL", "Apple", "NASDAQ", true}, 1.0}};
+  write_universe_snapshot(dir / "universe_2026-09-01.csv", ranked, sp);
+  write_universe_snapshot(dir / "universe_2026-09-15_n500.csv", ranked, sp);
+  CHECK(latest_snapshot(dir)->filename() == "universe_2026-09-15_n500.csv");
+  write_universe_snapshot(dir / "universe_2026-10-01.csv", ranked, sp);
+  CHECK(latest_snapshot(dir)->filename() == "universe_2026-10-01.csv");
+  write_universe_snapshot(dir / "universe_2026-10-02_n2000.csv", ranked, sp);
+  CHECK(latest_snapshot(dir)->filename() == "universe_2026-10-02_n2000.csv");
+}

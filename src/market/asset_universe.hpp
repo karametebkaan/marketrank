@@ -38,7 +38,10 @@ std::vector<RankedAsset> rank_by_liquidity(const std::vector<AssetInfo>& assets,
 // ticker,name,sector,exchange,median_dollar_volume (sector from sp500, else Unclassified).
 void write_universe_snapshot(const std::filesystem::path& path,
                              const std::vector<RankedAsset>& ranked, const Universe& sp500);
+// Snapshot names: universe_<YYYY-MM-DD>.csv (old) or universe_<YYYY-MM-DD>_n<size>.csv, where
+// size is the requested --universe-size.
 std::optional<std::string> snapshot_date(const std::filesystem::path& path);  // "YYYY-MM-DD"
+std::optional<std::size_t> snapshot_size(const std::filesystem::path& path);  // new form only
 std::optional<std::filesystem::path> latest_snapshot(const std::filesystem::path& dir);
 Universe load_snapshot(const std::filesystem::path& path, const std::filesystem::path& funds_csv);
 std::set<std::string> read_ticker_list(const std::filesystem::path& path);

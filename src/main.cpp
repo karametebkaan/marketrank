@@ -47,8 +47,11 @@ fs::path ensure_snapshot(const fx::CliArgs& args, const fx::AlpacaConfig& cfg,
                          fx::AlpacaClient& data_client, fx::BarStore& store,
                          const fx::PortfolioSpec& portfolio) {
   const fs::path dir = args.data / "universe";
+  // Reuse a fresh (< 7 days) snapshot only if it was built for the requested size.
   if (auto latest = fx::latest_snapshot(dir); latest && !args.refresh_universe) {
-    if (auto date = fx::snapshot_date(*latest); date && days_since(*date) < 7) return *latest;
+    const auto date = fx::snapshot_date(*latest);
+    if (date && days_since(*date) < 7 && fx::snapshot_size(*latest) == args.universe_size)
+      return *latest;
   }
   fx::AlpacaConfig trading_cfg = cfg;
   trading_cfg.host = cfg.trading_host;
@@ -76,7 +79,8 @@ fs::path ensure_snapshot(const fx::CliArgs& args, const fx::AlpacaConfig& cfg,
                                    end - 40 * 86400, end);
   if (!stale.empty()) std::cerr << stale.size() << " stale tickers during ranking\n";
   const auto ranked = fx::rank_by_liquidity(candidates, store, 20, args.universe_size);
-  const fs::path path = dir / ("universe_" + today_string() + ".csv");
+  const fs::path path =
+      dir / ("universe_" + today_string() + "_n" + std::to_string(args.universe_size) + ".csv");
   fx::write_universe_snapshot(path, ranked, sp);
   std::cerr << "wrote " << ranked.size() << "-ticker universe snapshot " << path.string() << "\n";
   return path;
