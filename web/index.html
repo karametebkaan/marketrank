@@ -14,23 +14,34 @@
 </head>
 <body>
 <div id="app">
+  <aside id="panel">
+    <h1><img class="logo" src="favicon.svg" alt="" width="34" height="34"><span class="brand"><span class="name">MarketRank</span><span class="view">Fluxscape</span></span></h1>
+    <div id="status">loading…</div>
+    <h2>Data</h2>
+    <label>Bar <input id="scrub" type="range" min="0" max="0" value="0"></label>
+    <label>Follow latest <input id="follow" type="checkbox" checked></label>
+    <button id="play">Play</button>
+    <h2>View</h2>
+    <label>Height scale <input id="hscale" type="range" min="0.1" max="3" step="0.1" value="1"></label>
+    <label>Labels <input id="labels" type="checkbox" checked></label>
+    <label>Show ETF clusters <input id="showEtf" type="checkbox"></label>
+    <h2>Portfolio</h2>
+    <div id="holdings" class="list"></div>
+    <h2>Shock</h2>
+    <label>Ticker <input id="shockTicker" type="text" list="tickers" placeholder="NVDA"></label>
+    <datalist id="tickers"></datalist>
+    <label>Size (%) <input id="shockSize" type="range" min="-20" max="20" step="1" value="-10"></label>
+    <div id="shockSizeLabel">-10%</div>
+    <button id="shockApply">Apply shock</button><button id="shockReset">Reset</button>
+    <div id="shockHint" class="hint" hidden>shock applies to the latest bar</div>
+    <div id="shockOut" class="list"></div>
+  </aside>
   <main id="stage">
     <section id="viewport">
       <div id="viewbar" role="toolbar" aria-label="view">
         <button data-view="3d">3D</button><button data-view="top">Top</button><button data-view="front">Front</button><button data-view="side">Side</button><button data-view="sections" class="on">Sections</button>
         <button id="viewReset" class="ghost" title="reset the camera">⟲</button>
-        <button id="viewOptsBtn" class="ghost" title="view options" aria-expanded="false">⚙</button>
         <button class="ghost maxbtn" data-max="viewport" title="expand / collapse (Esc)">⤢</button>
-      </div>
-      <div id="viewopts" class="pop" hidden>
-        <label>Height scale <input id="hscale" type="range" min="0.1" max="3" step="0.1" value="1"></label>
-        <label>Ticker labels <input id="labels" type="checkbox" checked></label>
-        <label>Show ETF clusters <input id="showEtf" type="checkbox"></label>
-      </div>
-      <div id="timebar" role="group" aria-label="time">
-        <button id="play" title="play the cached history">▶</button>
-        <input id="scrub" type="range" min="0" max="0" value="0" aria-label="bar">
-        <span id="barDate">—</span>
       </div>
       <div id="canvas"><div id="legend"></div></div>
       <div id="sections" title="click or drag on the map to move the cuts; arrow keys step them (Shift: 5)">
@@ -39,10 +50,6 @@
       </div>
     </section>
     <aside id="side">
-      <section id="brand" class="card">
-        <h1><img class="logo" src="favicon.svg" alt="" width="40" height="40"><span class="brand"><span class="name">MarketRank</span><span class="view">Fluxscape</span></span></h1>
-        <div id="status">loading…</div>
-      </section>
       <section id="top" aria-live="polite">
         <h3><span>MarketRank top 10 · π (exact) <span class="sub">· click rows to compare</span></span><span class="tools"><button class="maxbtn" data-max="top" title="expand / collapse (Esc)">⤢</button></span></h3>
         <div id="topRows"></div>
@@ -61,25 +68,6 @@
         <h3><span id="graphTitle">Flow graph</span><span class="tools"><button class="maxbtn" data-max="graph" title="expand / collapse (Esc)">⤢</button></span></h3>
         <svg id="graphSvg" role="img"></svg>
         <div id="graphNote" class="hint"></div>
-      </section>
-      <section id="portfolio" class="card">
-        <h3><span>Portfolio</span><span class="tools"><button id="pfEditBtn" class="textbtn" title="enter your own holdings">Edit</button></span></h3>
-        <div id="holdings" class="list"></div>
-        <div id="pfEdit" hidden>
-          <div id="pfRows"></div>
-          <div class="pfbar"><button id="pfAdd" class="textbtn">+ Add holding</button><span id="pfSum" class="hint"></span></div>
-          <div class="pfbar"><button id="pfSave" class="primary">Save</button><button id="pfCancel" class="textbtn">Cancel</button></div>
-          <div id="pfMsg" class="hint"></div>
-        </div>
-      </section>
-      <section id="shock" class="card">
-        <h3><span>Shock</span></h3>
-        <div class="row"><label>Ticker <input id="shockTicker" type="text" list="tickers" placeholder="NVDA"></label>
-          <label>Size <input id="shockSize" type="range" min="-20" max="20" step="1" value="-10"> <span id="shockSizeLabel">-10%</span></label></div>
-        <datalist id="tickers"></datalist>
-        <div class="pfbar"><button id="shockApply" class="primary">Apply shock</button><button id="shockReset" class="textbtn">Reset</button></div>
-        <div id="shockHint" class="hint" hidden>shock applies to the latest bar</div>
-        <div id="shockOut" class="list"></div>
       </section>
     </aside>
   </main>
