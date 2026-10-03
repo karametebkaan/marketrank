@@ -35,3 +35,5 @@ power-curve detection threshold"** (POWER.md), not as "no connectivity".
 
 ## Deviations
 Any change after this file is committed is listed here with a date and a reason.
+
+- 2026-10-03: the first frozen settings (b554cdd) detect the planted graph in only 1 of 12 synthetic markets in rolling mode, because early stopping keeps pre-formation models and relu edges die. **Before any real-data run**, a third synthetic-only round fixes the optimization (validation-IC early stopping with a minimum epoch count, restarts of the first fit, and an optional signed message). Its selection rule is committed before its grid runs. The real run waits until the procedure reliably detects planted graphs. The success criteria above are unchanged.
