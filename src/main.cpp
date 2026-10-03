@@ -26,6 +26,7 @@
 #include "flows13f/compare.hpp"  // M3c --compare-13f
 #include "market/alpaca_client.hpp"
 #include "market/asset_universe.hpp"
+#include "market/intraday.hpp"  // M5
 #include "market/market_sync.hpp"
 #include "market/panel.hpp"
 #include "market/sec_sectors.hpp"
@@ -442,6 +443,111 @@ int run_export_panel(const mr::CliArgs& args, const mr::Panel& panel, const mr::
   return 0;
 }
 
+// --- M5 intraday ---------------------------------------------------------------------------------------------------
+
+// [from 00:00 UTC, to + 1 day 00:00 UTC): the inclusive --from/--to dates as a half-open time range.
+std::pair<mr::TimePoint, mr::TimePoint> intraday_range(const mr::CliArgs& args) {
+  return {mr::parse_day_start(args.from_day), mr::parse_day_start(args.to_day) + 86400};
+}
+
+// --intraday-universe N: the N most liquid names of the daily lake over the window -> data/universe/intraday_top<N>.csv.
+int run_intraday_universe(const mr::CliArgs& args) {
+  const auto [from, to] = intraday_range(args);
+  const auto t0 = std::chrono::steady_clock::now();
+  std::map<std::string, std::vector<mr::Bar>> daily;
+  std::size_t candidates = 0;
+  {
+    mr::Lake lake(args.data / "lake");
+    const auto tickers = lake.tickers(mr::Timeframe::Day);
+    candidates = tickers.size();
+    daily = lake.read(mr::Timeframe::Day, tickers, from, to - 1);
+  }
+  const auto top = mr::rank_intraday_universe(daily, from, to, args.intraday_universe);
+  const fs::path out = args.data / "universe" / ("intraday_top" + std::to_string(args.intraday_universe) + ".csv");
+  mr::write_intraday_universe(out, top);
+  std::printf("intraday universe: %zu daily-lake tickers, %zu with bars in %s..%s, top %zu written to %s (%.1f s)\n",
+              candidates, daily.size(), args.from_day.c_str(), args.to_day.c_str(), top.size(), out.string().c_str(),
+              std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
+  if (!top.empty())
+    std::printf("  #1 %s median $%.0f/day; #%zu %s median $%.0f/day\n", top.front().ticker.c_str(),
+                top.front().median_dollar_volume, top.size(), top.back().ticker.c_str(), top.back().median_dollar_volume);
+  return 0;
+}
+
+// --sync-intraday (alpaca): 15Min regular-session bars of the tickers file over the window into tf=15m.
+int run_sync_intraday(const mr::CliArgs& args) {
+  const auto [from, to] = intraday_range(args);
+  const auto tickers = mr::read_tickers_file(args.tickers_file);
+  if (tickers.empty()) throw std::runtime_error("--sync-intraday: no tickers in " + args.tickers_file.string());
+  mr::load_dotenv(".env");
+  const auto cfg = mr::alpaca_config_from_env();
+  if (!cfg) throw std::runtime_error("APCA_API_KEY_ID / APCA_API_SECRET_KEY not set (.env)");
+  mr::AlpacaClient client(*cfg);
+  mr::Lake lake(args.data / "lake");
+  mr::IntradaySyncOptions opt;
+  opt.now = now_utc();
+  opt.log = true;
+  std::cerr << "sync-intraday: " << tickers.size() << " tickers, 15Min, " << args.from_day << " .. " << args.to_day
+            << " (feed " << cfg->feed << ")\n";
+  const auto t0 = std::chrono::steady_clock::now();
+  const auto st = mr::sync_intraday(client, lake, tickers, from, to, opt);
+  const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+  std::printf("sync-intraday: %zu ticker-months fetched, %zu skipped (already done), %zu requests, %zu bars received, "
+              "%zu regular-session bars written, %zu tickers with a failed chunk, %.1f s\n",
+              st.chunks_fetched, st.chunks_skipped, st.requests, st.raw_bars, st.kept_bars, st.failed.size(), secs);
+  if (!st.failed.empty()) {
+    std::printf("failed:");
+    for (const auto& t : st.failed) std::printf(" %s", t.c_str());
+    std::printf("\n(rerun the same command to retry them)\n");
+  }
+  return st.failed.empty() ? 0 : 2;
+}
+
+// --export-panel DIR --timeframe 15m (replay): the tickers file's 15m panel over the window, arrays + prior + meta.
+int run_export_panel_intraday(const mr::CliArgs& args) {
+  const auto [from, to] = intraday_range(args);
+  const auto tickers = mr::read_tickers_file(args.tickers_file);
+  if (tickers.empty()) throw std::runtime_error("--export-panel: no tickers in " + args.tickers_file.string());
+  const auto t0 = std::chrono::steady_clock::now();
+  mr::Panel panel;
+  {
+    mr::BarStore store(args.data / "lake");
+    store.load_range(tickers, mr::Timeframe::Min15, from, to - 1);
+    panel = mr::build_panel(store, tickers, mr::Timeframe::Min15, from, to - 1);
+  }
+  const double load_s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+  if (panel.T() < 2) throw std::runtime_error("not enough 15m bars; run --sync-intraday first");
+  std::size_t empty = 0;
+  for (std::size_t i = 0; i < panel.N(); ++i) {
+    bool any = false;
+    for (std::size_t t = 0; t < panel.T() && !any; ++t) any = std::isfinite(panel.close[panel.idx(t, i)]);
+    empty += any ? 0 : 1;
+  }
+  // Sectors: the newest universe snapshot (S&P GICS, then SEC SIC, ETF/Fund), else Unclassified.
+  std::map<std::string, std::string> sector_of;
+  if (const auto snap = mr::latest_snapshot(args.data / "universe")) {
+    mr::Universe u = mr::load_snapshot(*snap, args.data / "universe" / "funds.csv");
+    fill_sectors(u, args.data);
+    for (const auto& n : u.nodes()) sector_of[n.ticker] = n.sector;
+  }
+  std::vector<std::string> sectors;
+  for (const auto& t : panel.tickers) {
+    auto it = sector_of.find(t);
+    sectors.push_back(it != sector_of.end() && !it->second.empty() ? it->second : mr::kSectorUnclassified);
+  }
+  mr::IntradayExportParams ep;
+  ep.core = args.params;  // market_rank_intraday() unless model flags changed it
+  std::printf("export-panel 15m: nodes=%zu (%zu without bars) bars=%zu sessions=%zu threads=%d, load %.1f s -> %s\n",
+              panel.N(), empty, panel.T(), mr::session_index(panel.times).sessions, omp_get_max_threads(), load_s,
+              args.export_panel.string().c_str());
+  std::printf("params: %s\n", mr::describe(ep.core).c_str());
+  std::fflush(stdout);
+  const auto t1 = std::chrono::steady_clock::now();
+  mr::export_panel_intraday(panel, sectors, ep, args.export_panel, true);
+  std::printf("done in %.1f s\n", std::chrono::duration<double>(std::chrono::steady_clock::now() - t1).count());
+  return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -467,6 +573,9 @@ int main(int argc, char** argv) {
       std::printf("re-rendered %s\n", (dir / "report.md").string().c_str());
       return 0;
     }
+    if (args.intraday_universe > 0) return run_intraday_universe(args);                  // M5
+    if (args.sync_intraday) return run_sync_intraday(args);                                // M5
+    if (!args.export_panel.empty() && args.tf == mr::Timeframe::Min15) return run_export_panel_intraday(args);  // M5
     if (args.maintain) {
       mr::BarStore lake_store(args.data / "lake");
       maintain_lake(lake_store, args.data, args.lookback_days, args.tf);

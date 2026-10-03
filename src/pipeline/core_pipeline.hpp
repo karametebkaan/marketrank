@@ -44,6 +44,13 @@ struct CoreParams {
   // dollar pressure, no lift, no retention (no self-loops; a row with nothing to give teleports),
   // uniform reference, no volume cap, no vol scaling, slow half-life 1e9 bars (effectively cumulative).
   static CoreParams market_rank();
+  // M5: the MarketRank preset on regular-session 15-minute bars (26 per session), bar-count windows rescaled to the
+  // same wall-clock meaning: ADV 20 sessions = 520 bars; correlation window 20 sessions = 520 bars (the spec's
+  // documented choice; 60 sessions would triple the per-bar affinity cost); liquidity floor $1M per session =
+  // 1e6/26 per bar (median per-bar dollar volume); stale after one session (26 bars) without a close; the cumulative
+  // chain keeps half-life 1e9 bars; the fast chain is the heartbeat, half-life 26 bars (one session); the landscape
+  // cluster flux 20 sessions (520 bars); forecast horizons 1, 6, 26 bars.
+  static CoreParams market_rank_intraday();
   static CoreParams money_flow();  // dollar flux, no lift, two-sided pruning, retention, size ref
   static CoreParams legacy();  // milestone-1 behaviour (spec 5)
   void validate() const;       // throws std::invalid_argument

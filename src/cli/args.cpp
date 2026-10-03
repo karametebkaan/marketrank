@@ -1,5 +1,6 @@
 #include "cli/args.hpp"
 
+#include "core/time.hpp"
 #include "walkforward/external.hpp"
 #include "walkforward/report.hpp"
 
@@ -82,6 +83,24 @@ std::vector<std::string> to_quarters(const std::string& flag, const std::string&
 
 }  // namespace
 
+TimePoint parse_day_start(const std::string& v) {
+  auto digits = [&](std::size_t a, std::size_t n) {
+    for (std::size_t k = a; k < a + n; ++k)
+      if (v[k] < '0' || v[k] > '9') return false;
+    return true;
+  };
+  if (v.size() != 10 || v[4] != '-' || v[7] != '-' || !digits(0, 4) || !digits(5, 2) || !digits(8, 2))
+    throw std::invalid_argument("expected a date YYYY-MM-DD, got '" + v + "'");
+  const int y = std::stoi(v.substr(0, 4));
+  const auto m = static_cast<unsigned>(std::stoi(v.substr(5, 2)));
+  const auto d = static_cast<unsigned>(std::stoi(v.substr(8, 2)));
+  const TimePoint t = utc_seconds(y, m, d);
+  const Civil c = civil_from_days(floor_div(t, 86400));
+  if (m < 1 || m > 12 || d < 1 || c.y != y || c.m != m || c.d != d)
+    throw std::invalid_argument("expected a date YYYY-MM-DD, got '" + v + "'");
+  return t;
+}
+
 CliArgs parse_cli(const std::vector<std::string>& args) {
   CliArgs a;
   // Presets apply first, regardless of position, so later model flags override them. The default (rank and
@@ -95,6 +114,10 @@ CliArgs parse_cli(const std::vector<std::string>& args) {
   if (legacy) a.params = CoreParams::legacy(), a.preset = "legacy";
   if (money) a.params = CoreParams::money_flow(), a.preset = "money-flow";
   if (market) a.params = CoreParams::market_rank(), a.preset = "marketrank";
+  // M5: on 15-minute bars the MarketRank preset is its intraday form (windows in bars of the same wall-clock meaning).
+  for (std::size_t i = 0; i + 1 < args.size(); ++i)
+    if (args[i] == "--timeframe" && args[i + 1] == "15m" && !legacy && !money && !defaults)
+      a.params = CoreParams::market_rank_intraday(), a.preset = "marketrank";
   bool wf_flag = false;  // any --wf-* flag given
   // --- M3c 13F comparison: a run mode of its own (checked before the flag loop so it also covers --walkforward) ---
   if (has("--compare-13f"))
@@ -199,6 +222,14 @@ CliArgs parse_cli(const std::vector<std::string>& args) {
       a.export_panel = value();
       if (a.export_panel.empty()) throw std::invalid_argument("--export-panel needs a directory");
     }
+    // --- M5 intraday ---
+    else if (flag == "--intraday-universe") {
+      a.intraday_universe = to_size(flag, value());
+      if (a.intraday_universe == 0) throw std::invalid_argument("--intraday-universe needs N >= 1");
+    } else if (flag == "--sync-intraday") a.sync_intraday = true;
+    else if (flag == "--tickers-file") a.tickers_file = value();
+    else if (flag == "--from") a.from_day = value();
+    else if (flag == "--to") a.to_day = value();
     else if (flag == "--help" || flag == "-h") a.help = true;
     else throw std::invalid_argument("unknown flag " + flag);
   }
@@ -227,8 +258,16 @@ CliArgs parse_cli(const std::vector<std::string>& args) {
   if (a.compare_13f && a.mode != "replay") throw std::invalid_argument("--compare-13f needs --mode replay");
   if (a.compare_13f && a.tf != Timeframe::Day) throw std::invalid_argument("--compare-13f needs --timeframe 1d");
   if (!a.quarters_13f.empty() && !a.compare_13f) throw std::invalid_argument("--13f-quarters needs --compare-13f");
+  // --- M5 intraday ---
+  if (parse_day_start(a.from_day) > parse_day_start(a.to_day)) throw std::invalid_argument("--from must not be after --to");
+  if (a.sync_intraday && a.mode != "alpaca") throw std::invalid_argument("--sync-intraday needs --mode alpaca");
+  if (a.sync_intraday && (a.refetch_full || a.maintain || a.migrate_cache || a.serve || a.walkforward ||
+                          !a.export_panel.empty() || a.intraday_universe > 0))
+    throw std::invalid_argument("--sync-intraday is a run mode of its own");
+  if (a.intraday_universe > 0 && (a.serve || a.walkforward || !a.export_panel.empty()))
+    throw std::invalid_argument("--intraday-universe is a run mode of its own");
   if (a.lookback_days < 0)
-    a.lookback_days = a.tf == Timeframe::Hour ? 60 : a.tf == Timeframe::Day ? 365 : 5 * 365;
+    a.lookback_days = a.tf == Timeframe::Hour || a.tf == Timeframe::Min15 ? 60 : a.tf == Timeframe::Day ? 365 : 5 * 365;
   a.params.validate();
   return a;
 }
@@ -256,7 +295,7 @@ std::pair<TimePoint, TimePoint> data_window(const CliArgs& args, TimePoint now) 
 
 std::string cli_usage() {
   return "MarketRank - stock ranking by Markov steady state of money flows\n"
-         "usage: marketrank [--mode synthetic|replay|alpaca] [--timeframe 1h|1d|1w]\n"
+         "usage: marketrank [--mode synthetic|replay|alpaca] [--timeframe 1h|1d|1w|15m]\n"
          "                 [--lookback-days N] [--top N] [--data DIR] [--threads N]\n"
          "                 [--universe auto|sp500|snapshot] [--universe-size N] [--refresh-universe]\n"
          "                 [--eval] [--eval-bars N]\n"
@@ -294,6 +333,17 @@ std::string cli_usage() {
          "                                   registry rows; never blended. 'learned' with 'B0' adds the paired comparison)\n"
          "                 [--export-panel DIR]   (replay, M4: float32 [T][N] arrays ret1, ldv, dvshock, vol20, pressure,\n"
          "                                   elig, label_w and meta.json for the graph-learning model; exits)\n"
+         "                 [--export-panel DIR --timeframe 15m [--tickers-file F] [--from D] [--to D]]   (replay, M5:\n"
+         "                                   the regular-session 15m panel of the tickers file over [from, to]: the M4\n"
+         "                                   arrays with 20-session windows, label_6 masked across the close, the\n"
+         "                                   session index and prior/ = MarketRank's kept transition edges per bar)\n"
+         "                 [--intraday-universe N [--from D] [--to D]]   (M5: data/universe/intraday_top<N>.csv = the N\n"
+         "                                   names with the highest median daily dollar volume over [from, to] in the\n"
+         "                                   daily lake; static list, survivorship bias acknowledged; exits)\n"
+         "                 [--sync-intraday --tickers-file F --from YYYY-MM-DD --to YYYY-MM-DD]   (alpaca, M5: 15Min\n"
+         "                                   regular-session bars (09:30-16:00 ET, 13:00 on early closes) into the lake\n"
+         "                                   as tf=15m, monthly chunks with pagination and resume; defaults: the M5\n"
+         "                                   window 2024-10-01 .. 2026-10-02 and data/universe/intraday_top1000.csv)\n"
          "                 [--cluster-persistence [--cp-stride N (5)] [--cp-out DIR (<data>/analysis)] [--cp-fast-hl BARS (preset)]]   (replay: from-\n"
          "                                   scratch Louvain persistence of the flux communities vs lag, seeds, chance\n"
          "                                   and sectors; writes cluster_persistence*.csv and exits)\n"

@@ -84,6 +84,20 @@ CoreParams CoreParams::market_rank() {
   return p;
 }
 
+CoreParams CoreParams::market_rank_intraday() {
+  CoreParams p = market_rank();
+  constexpr std::size_t kBarsPerSession = 26;
+  p.adv_window = 20 * kBarsPerSession;
+  p.corr_window = 20 * kBarsPerSession;
+  p.min_dollar_volume = 1e6 / static_cast<double>(kBarsPerSession);
+  p.stale_bars = kBarsPerSession;
+  p.halflife_slow = 1e9;
+  p.halflife_fast = static_cast<double>(kBarsPerSession);
+  p.halflife_cluster = 20.0 * kBarsPerSession;
+  p.horizons = {1, 6, 26};
+  return p;
+}
+
 CoreParams CoreParams::money_flow() {
   CoreParams p;
   p.pressure = PressureMode::Dollar;

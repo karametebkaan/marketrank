@@ -96,7 +96,7 @@ void BarStore::save(const std::string& ticker, Timeframe tf) {
 
 void BarStore::flush() {
   if (to_write_.empty() && cov_to_write_.empty() && complete_to_write_.empty()) return;
-  for (Timeframe tf : {Timeframe::Hour, Timeframe::Day, Timeframe::Week}) {
+  for (Timeframe tf : {Timeframe::Hour, Timeframe::Day, Timeframe::Week, Timeframe::Min15}) {
     std::vector<LakeRow> rows;
     std::vector<std::pair<std::string, TimePoint>> cov, done;
     for (const auto& [key, bars] : to_write_)

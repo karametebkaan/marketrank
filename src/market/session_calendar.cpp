@@ -37,6 +37,35 @@ TimePoint session_close(TimePoint utc) {
   return is_us_dst(edt) ? edt : edt + 3600;               // else 16:00 EST
 }
 
+bool is_early_close(const Civil& d) {
+  const unsigned wd = weekday_from_days(days_from_civil(d.y, d.m, d.d));
+  if (d.m == 11) {
+    const unsigned w1 = weekday_from_days(days_from_civil(d.y, 11, 1));
+    const unsigned first_thu = 1 + (4 + 7 - w1) % 7;
+    return d.d == first_thu + 21 + 1;  // Friday after the 4th Thursday
+  }
+  if ((d.m == 7 && d.d == 3) || (d.m == 12 && d.d == 24)) return wd >= 1 && wd <= 4;
+  return false;
+}
+
+int session_close_minute(const Civil& d) { return is_early_close(d) ? 13 * 60 : kSessionCloseMin; }
+
+bool is_regular_session_bar(TimePoint t, TimePoint bar_seconds) {
+  if (bar_seconds <= 0 || t % bar_seconds != 0) return false;
+  const EtTime et = to_eastern(t);
+  if (et.weekday == 0 || et.weekday == 6) return false;
+  const int m = et.hour * 60 + et.minute;
+  return m >= kSessionOpenMin && m * 60 + bar_seconds <= session_close_minute(et.date) * 60;
+}
+
+std::vector<Bar> filter_regular_session(const std::vector<Bar>& bars, TimePoint bar_seconds) {
+  std::vector<Bar> out;
+  out.reserve(bars.size());
+  for (const Bar& b : bars)
+    if (is_regular_session_bar(b.t, bar_seconds)) out.push_back(b);
+  return out;
+}
+
 std::vector<Bar> aggregate_session_hours(const std::vector<Bar>& bars30m) {
   std::vector<Bar> out;
   std::int64_t cur_day = 0;

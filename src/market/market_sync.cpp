@@ -16,6 +16,7 @@ TimePoint backfill_tolerance(Timeframe tf) {
     case Timeframe::Hour: return 4 * 86400;
     case Timeframe::Day: return 5 * 86400;
     case Timeframe::Week: return 14 * 86400;
+    case Timeframe::Min15: return 4 * 86400;
   }
   return 5 * 86400;
 }
@@ -26,6 +27,7 @@ TimePoint bar_end(Timeframe tf, TimePoint t) {
     case Timeframe::Hour: return t + 3600;
     case Timeframe::Day: return session_close(t);
     case Timeframe::Week: return t + 7 * 86400;
+    case Timeframe::Min15: return t + 900;
   }
   return session_close(t);
 }

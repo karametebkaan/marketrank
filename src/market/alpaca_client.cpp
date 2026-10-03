@@ -84,6 +84,7 @@ std::string_view alpaca_timeframe(Timeframe tf) {
     case Timeframe::Hour: return "30Min";
     case Timeframe::Day: return "1Day";
     case Timeframe::Week: return "1Week";
+    case Timeframe::Min15: return "15Min";
   }
   return "1Day";
 }
@@ -119,6 +120,7 @@ HttpResponse AlpacaClient::get_with_retry(const std::string& path) {
   int delay_ms = config_.backoff_initial_ms;
   for (int attempt = 0;; ++attempt) {
     throttle();
+    ++requests_;
     HttpResponse res = get_(path);
     if (res.status == 200) return res;
     const bool retryable = res.status == 0 || res.status == 429 || res.status >= 500;

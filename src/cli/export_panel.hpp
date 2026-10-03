@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "market/intraday.hpp"
 #include "market/panel.hpp"
 #include "walkforward/walkforward.hpp"
 
@@ -50,6 +51,53 @@ const std::vector<std::string>& export_array_names();
 // (throws std::invalid_argument on a size mismatch). Progress goes to stderr when `log` is true.
 void export_panel(const Panel& p, const std::vector<std::string>& sectors, const PanelExportParams& ep,
                   const std::filesystem::path& dir, bool log = false);
+
+// --- M5: --export-panel DIR --timeframe 15m --------------------------------------------------------------------
+// The regular-session 15-minute panel (26 bars per session, 14 on early-close days) with the same feature arrays as
+// M4 plus a session-masked label and MarketRank's prior edges. Windows are in bars with the same wall-clock meaning
+// as the daily export (20 sessions = 520 bars). Decision bars: every bar.
+struct IntradayExportParams {
+  CoreParams core = CoreParams::market_rank_intraday();  // pressure, active and the prior edges
+  std::size_t label_h = 6;                              // label_6 = open[t+1+6] / open[t+1] - 1, session-masked
+  std::size_t vol_window = 520, vol_need = 260;         // vol20: sd of ret1 over 20 sessions of bars
+  std::size_t dv_sessions = 20, dv_need = 10;           // dvshock: same slot over the previous 20 sessions
+  std::size_t elig_window = 520;                        // eligible_at window (bars)
+  double elig_min_dollar_volume = 50e6 / 26;            // M4's $50M per day, per bar
+  std::size_t elig_top_n = 0;
+  bool write_prior = true;
+};
+
+// Generic trailing volatility: sample sd of ret1 over bars t-window+1..t (>= need finite values). The M4 vol20 is
+// export_vol(p, 20, 10).
+std::vector<float> export_vol(const Panel& p, std::size_t window, std::size_t need);
+// dv[t] / median(dv at the same slot in sessions s-sessions .. s-1) (finite values only, >= need of them, median > 0),
+// dv = close * volume: the intraday volume shock net of the time-of-day profile. Reads bars <= t only.
+std::vector<float> export_dvshock_slot(const Panel& p, const SessionIndex& si, std::size_t sessions, std::size_t need);
+// open[t+1+h] / open[t+1] - 1 when bars t+1 .. t+1+h are contiguous bars of one session (same session index and
+// times[t+1+h] - times[t+1] = h * 900 s), else NaN: never an overnight return.
+std::vector<float> export_session_label(const Panel& p, const SessionIndex& si, std::size_t h);
+// The 15m array names in file order (<name>.f32): ret1 ldv dvshock vol20 pressure active elig label_6.
+const std::vector<std::string>& intraday_array_names();
+
+// prior/edges.bin: one 20-byte little-endian record per kept transition edge of an ACTIVE source row of the
+// CorePipeline's Frame::P after step(t) (the cumulative MarketRank chain): t (uint32 bar index), src (uint32),
+// dst (uint32), P (float32, the transition probability P[src][dst]), raw (float32, the accumulated dollar flux of the
+// edge). Sorted by (t, src, dst). prior/offsets.u64: T + 1 uint64 record offsets; bar t's edges are records
+// [offsets[t], offsets[t+1]). Bar 0 has none (the pipeline starts at bar 1).
+struct PriorEdge {
+  std::uint32_t t, src, dst;
+  float p, raw;
+};
+static_assert(sizeof(PriorEdge) == 20, "PriorEdge is the 20-byte on-disk record");
+struct PriorEdges {
+  std::vector<std::uint64_t> offsets;
+  std::vector<PriorEdge> edges;
+};
+PriorEdges read_prior(const std::filesystem::path& prior_dir);
+
+// Writes the 15m arrays, prior/ and meta.json (session index, windows, label mask, causality); creates dir.
+void export_panel_intraday(const Panel& p, const std::vector<std::string>& sectors, const IntradayExportParams& ep,
+                           const std::filesystem::path& dir, bool log = false);
 
 // Reads a float32 little-endian file (for tests and checks). Throws std::runtime_error if unreadable.
 std::vector<float> read_f32(const std::filesystem::path& file);

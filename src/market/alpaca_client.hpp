@@ -61,6 +61,8 @@ class AlpacaClient {
   FetchResult fetch_bars(const std::vector<std::string>& symbols, std::string_view timeframe,
                          TimePoint start, TimePoint end, const BatchCallback& on_batch = {});
   std::string get(const std::string& path);
+  // HTTP requests made so far (every attempt, retries included).
+  std::size_t requests() const { return requests_; }
 
  private:
   void throttle();
@@ -68,6 +70,7 @@ class AlpacaClient {
   HttpResponse get_with_retry(const std::string& path);
   AlpacaConfig config_;
   HttpGet get_;
+  std::size_t requests_ = 0;
 };
 
 }  // namespace mr

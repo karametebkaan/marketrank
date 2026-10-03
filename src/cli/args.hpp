@@ -69,7 +69,16 @@ struct CliArgs {
   std::vector<std::pair<std::string, std::filesystem::path>> wf_externals;
   // --export-panel DIR (replay only, a run mode of its own): float32 feature/label arrays + meta.json for M4.
   std::filesystem::path export_panel;
+  // --- M5 intraday ---
+  std::size_t intraday_universe = 0;  // --intraday-universe N: write data/universe/intraday_top<N>.csv and exit
+  bool sync_intraday = false;         // --sync-intraday (alpaca): 15Min regular-session bars into tf=15m and exit
+  std::filesystem::path tickers_file = "data/universe/intraday_top1000.csv";  // --tickers-file (sync, 15m export)
+  std::string from_day = "2024-10-01";  // --from YYYY-MM-DD (inclusive): the M5 window
+  std::string to_day = "2026-10-02";    // --to YYYY-MM-DD (inclusive)
 };
+
+// "YYYY-MM-DD" -> 00:00 UTC of that date; throws std::invalid_argument on a malformed or impossible date.
+TimePoint parse_day_start(const std::string& ymd);
 
 // Time range of bars to load and analyse: everything for synthetic (fixed historical dates),
 // [now - lookback, now - 16 min] for alpaca (free-tier delay), [now - lookback, now] for replay.

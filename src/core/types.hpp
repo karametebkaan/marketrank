@@ -11,7 +11,8 @@ struct Bar {
   double o = 0, h = 0, l = 0, c = 0, v = 0, vw = 0;
 };
 
-enum class Timeframe { Hour, Day, Week };
+// Min15: regular-session 15-minute bars (M5 intraday; lake partition tf=15m, Alpaca "15Min").
+enum class Timeframe { Hour, Day, Week, Min15 };
 
 std::string_view to_string(Timeframe tf);
 Timeframe parse_timeframe(std::string_view s);

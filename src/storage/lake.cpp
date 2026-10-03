@@ -406,6 +406,17 @@ std::map<std::string, TimePoint> Lake::first_times(Timeframe tf, const std::vect
   return out;
 }
 
+std::vector<std::string> Lake::tickers(Timeframe tf) {
+  std::vector<std::string> out;
+  auto& I = *impl_;
+  const fs::path dir = I.root / "bars" / tf_dir_name(tf);
+  if (!has_parquet(dir)) return out;
+  auto r = I.q("SELECT DISTINCT ticker FROM read_parquet(" + sql_str((dir / "*" / "*" / "*.parquet").string()) +
+               ", hive_partitioning = true) ORDER BY ticker");
+  for (std::size_t i = 0; i < r->RowCount(); ++i) out.push_back(r->GetValue(0, i).ToString());
+  return out;
+}
+
 std::size_t Lake::compact(Timeframe tf, std::size_t max_files) {
   auto& I = *impl_;
   const fs::path dir = I.root / "bars" / tf_dir_name(tf);
