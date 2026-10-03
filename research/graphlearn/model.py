@@ -129,13 +129,16 @@ class Reg:
 
 
 class GraphNet(nn.Module):
-    def __init__(self, variant, rank=8, topk=20, dropout=0.1, seed=0, score_fn="relu"):
+    def __init__(self, variant, rank=8, topk=20, dropout=0.1, seed=0, score_fn="relu", signed=False):
         super().__init__()
         if variant not in VARIANTS:
             raise ValueError(f"unknown variant {variant}")
         if score_fn not in ("relu", "softplus"):
             raise ValueError(f"unknown score_fn {score_fn}")
         self.variant, self.rank, self.topk, self.seed, self.score_fn = variant, rank, topk, seed, score_fn
+        # signed message: S = E_s E_d^T with its sign, top-k by |S|, weights S / sum|S| per row -- edges cannot die
+        # and the read-out sign is learnable per edge
+        self.signed = bool(signed)
         self._dense = None
         self.enc = nn.Sequential(nn.Linear(N_FEATURES, 64), nn.GELU(), nn.Dropout(dropout),
                                  nn.Linear(64, 32), nn.GELU(), nn.Dropout(dropout))
@@ -187,6 +190,8 @@ class GraphNet(nn.Module):
         """S = relu(E_s E_d^T) (or softplus: an edge pushed below 0 is not dead and can come back) over the given
         embedding rows (diagonal included)."""
         logits = self.E_s[rows] @ self.E_d[rows].T
+        if self.signed:
+            return logits
         return F.relu(logits) if self.score_fn == "relu" else F.softplus(logits)
 
     def adjacency(self, rows):
@@ -195,6 +200,17 @@ class GraphNet(nn.Module):
         n = S.shape[0]
         k = min(self.topk, n - 1)
         eye = torch.eye(n, dtype=torch.bool)
+        if self.signed:
+            mag = S.abs().masked_fill(eye, float("-inf"))
+            idx = torch.topk(mag.detach(), k, dim=1).indices
+            vals = S.gather(1, idx)
+            pen = S.abs().masked_fill(eye, 0.0).sum() / (n * (n - 1))
+            if self.training:
+                off = S.masked_fill(eye, 0.0)
+                self._dense = off / (off.abs().sum(1, keepdim=True) + 1e-8)
+            else:
+                self._dense = None
+            return idx, vals / (vals.abs().sum(1, keepdim=True) + 1e-8), pen
         masked = S.masked_fill(eye, float("-inf"))
         vals, idx = torch.topk(masked, k, dim=1)
         pen = S.masked_fill(eye, 0.0).sum() / (n * (n - 1))
@@ -294,17 +310,26 @@ def _snapshot(model, opt):
     return copy.deepcopy(model.state_dict()), copy.deepcopy(opt.state_dict())
 
 
-def fit(model, opt, train, val, epochs, reg, patience=None, seed=0, keep_initial=False):
-    """One date per step, dates shuffled per epoch (seeded). With `val` and `patience`: early stopping, and the
-    weights AND the Adam state of the best epoch are restored at the end. keep_initial=True also scores the
-    starting model on `val` first (epoch -1), so a fine-tune that never improves the held-out loss keeps the
-    pre-fine-tune state."""
+def fit(model, opt, train, val, epochs, reg, patience=None, seed=0, keep_initial=False, stop_on="loss",
+        min_epochs=0):
+    """One date per step, dates shuffled per epoch (seeded). With `val` and `patience`: early stopping on the
+    validation loss (stop_on="loss") or the validation rank-IC (stop_on="ic"), never before `min_epochs` epochs;
+    the weights AND the Adam state of the best epoch are restored at the end. keep_initial=True also scores the
+    starting model on `val` first (epoch -1), so a fine-tune that never improves keeps the pre-fine-tune state."""
     gen = torch.Generator().manual_seed(seed)
-    hist = {"train_loss": [], "val_loss": [], "best_epoch": None, "initial_val_loss": None}
+    hist = {"train_loss": [], "val_loss": [], "val_ic": [], "best_epoch": None, "initial_val_loss": None,
+            "initial_val_ic": None}
     early = patience is not None and bool(val)
+
+    def score():  # lower is better
+        vl = evaluate(model, val, reg)
+        vi = evaluate_ic(model, val) if val else float("nan")
+        key = -vi if stop_on == "ic" else vl
+        return vl, vi, (key if np.isfinite(key) else float("inf"))
+
     best, best_state, bad = float("inf"), None, 0
     if early and keep_initial:
-        best = hist["initial_val_loss"] = evaluate(model, val, reg)
+        hist["initial_val_loss"], hist["initial_val_ic"], best = score()
         best_state, hist["best_epoch"] = _snapshot(model, opt), -1
     for ep in range(epochs):
         model.train()
@@ -316,15 +341,16 @@ def fit(model, opt, train, val, epochs, reg, patience=None, seed=0, keep_initial
             opt.step()
             tot += loss.item()
         hist["train_loss"].append(tot / max(1, len(train)))
-        vl = evaluate(model, val, reg)
+        vl, vi, key = score()
         hist["val_loss"].append(vl)
+        hist["val_ic"].append(vi)
         if early:
-            if vl < best:
-                best, bad, hist["best_epoch"] = vl, 0, ep
+            if key < best:
+                best, bad, hist["best_epoch"] = key, 0, ep
                 best_state = _snapshot(model, opt)
             else:
                 bad += 1
-                if bad >= patience:
+                if bad >= patience and ep + 1 >= min_epochs:
                     break
     if early and best_state is not None:
         model.load_state_dict(best_state[0])

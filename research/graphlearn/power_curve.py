@@ -11,6 +11,9 @@ through train_wf.py exactly as deployed with the variants learned, B0, B0E. Repo
 Results are appended to DIR/<stage>.jsonl (a rerun skips finished points), the table to DIR/<stage>.md.
 
 Stages:
+  tune3  round 3: optimization fixes (IC early stopping + min epochs, restarts, signed message) on seeds
+         201/202, beta 0.3/0.4/0.6 and the null, rolling AND scratch; rule select_round3.
+  power3 the round-3 frozen setting on beta 0.1..0.8 x seeds 1/2/3 x both modes, nulls, N=1000 churn.
   sens   sensitivity: the power curve of the most powerful (but null-inadmissible) candidate, prev+softplus.
   tune2  round 2 (POWER.md amendment): the step-4 combination, softplus scores, the first-round defaults.
   tune   one-at-a-time variations around the starting setting (TUNE_SETTINGS) on the tuning markets
@@ -48,9 +51,23 @@ PREV = {**START, "rank": 16, "emb_lr": 1e-2, "emb_l2": 0.0, "l1": 1e-4, "finetun
 TUNE2_SETTINGS = [("combo", COMBO), ("emb_lr=0.01+softplus", {**R1_WINNER, "score_fn": "softplus"}),
                   ("combo+softplus", {**COMBO, "score_fn": "softplus"}), ("prev", PREV),
                   ("prev+softplus", {**PREV, "score_fn": "softplus"})]
+# ---- round 3 (POWER.md "Round 3"): optimization fixes on top of the round-2 frozen setting
+R2_FROZEN = {**COMBO, "score_fn": "softplus"}
+_IC = {"stop_on": "ic", "min_epochs": 15}
+R3_SETTINGS = [
+    ("icstop", {**R2_FROZEN, **_IC}),
+    ("icstop+signed", {**R2_FROZEN, **_IC, "signed_message": True}),
+    ("icstop+restarts", {**R2_FROZEN, **_IC, "restarts": 4}),
+    ("icstop+restarts+signed", {**R2_FROZEN, **_IC, "restarts": 4, "signed_message": True}),
+]
+R3_SETTINGS_BY_NAME = dict(R3_SETTINGS)
+R3_FIXES = ("stop_on", "restarts", "signed_message")
+R3_TUNE_SEEDS, R3_BETAS = (201, 202), (0.3, 0.4, 0.6)
+R3_POWER_SEEDS = (1, 2, 3)
 TUNE_BETAS, TUNE_SEEDS = (0.2, 0.3, 0.4), (101, 102)
 POWER_BETAS, POWER_SEEDS = (0.1, 0.2, 0.3, 0.4, 0.6, 0.8), (1, 2)
-FLAG = {k: "--" + k.replace("_", "-") for k in list(START) + ["score_fn"]}
+FLAG = {k: "--" + k.replace("_", "-") for k in list(START) + ["score_fn", "stop_on", "min_epochs", "restarts",
+                                                               "signed_message"]}
 
 
 def market_key(m):
@@ -103,7 +120,10 @@ def run_point(root, stage, name, setting, m, mode, threads):
            "--store", os.path.join(work, "store"), "--variants", "learned,B0,B0E", "--mode", mode, "--fresh",
            "--jobs", "3", "--threads", str(threads), "--quiet"]
     for k, v in setting.items():
-        cmd += [FLAG[k], str(v)]
+        if isinstance(v, bool):
+            cmd.append(FLAG[k] if v else "--no-" + FLAG[k][2:])
+        else:
+            cmd += [FLAG[k], str(v)]
     t0 = time.time()
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
@@ -141,6 +161,21 @@ def points(stage, settings_override=None):
                     yield "frozen", s, {"n": 300, "beta": beta, "seed": seed}, mode
                 yield "frozen", s, {"n": 300, "beta": 0.8, "seed": seed, "null": True}, mode
             yield "frozen", s, {"n": 1000, "beta": 0.4, "seed": 1, "churn": 0.3}, mode
+    elif stage == "tune3":
+        for name, s in R3_SETTINGS:
+            for mode in ("rolling", "scratch"):
+                for seed in R3_TUNE_SEEDS:
+                    for beta in R3_BETAS:
+                        yield name, s, {"n": 300, "beta": beta, "seed": seed}, mode
+                    yield name, s, {"n": 300, "beta": 0.8, "seed": seed, "null": True}, mode
+    elif stage == "power3":
+        s = settings_override or train_wf.frozen_settings()
+        for mode in ("rolling", "scratch"):
+            for seed in R3_POWER_SEEDS:
+                for beta in POWER_BETAS:
+                    yield "frozen3", s, {"n": 300, "beta": beta, "seed": seed}, mode
+                yield "frozen3", s, {"n": 300, "beta": 0.8, "seed": seed, "null": True}, mode
+            yield "frozen3", s, {"n": 1000, "beta": 0.4, "seed": 1, "churn": 0.3}, mode
     elif stage == "sens":  # sensitivity (NOT the frozen setting): the most powerful tuning candidate
         s = {**PREV, "score_fn": "softplus"}
         for seed in POWER_SEEDS:
@@ -184,6 +219,40 @@ def select_setting(results):
     return best, sorted(table, key=lambda r: (-r["admissible"], -r["score"], -r["tie"]))
 
 
+def detected(r):
+    return r["minus_B0"]["t"] > 2 and r["minus_B0E"]["t"] > 2
+
+
+def n_fixes(params):
+    return (params.get("stop_on") == "ic") + (params.get("restarts", 1) > 1) + bool(params.get("signed_message"))
+
+
+def select_round3(results):
+    """Round-3 rule (POWER.md). Passes: detected (t > 2 vs B0 AND B0E) in >= 10 of the 12 planted tuning markets
+    (beta 0.3/0.4/0.6 x 2 seeds x rolling/scratch) and |t| < 2 vs B0 and B0E on every null market (2 seeds x 2
+    modes). Among passing settings: most detections at beta 0.3, then 0.4, then 0.6 (max power at the smallest
+    oracle IC); ties -> fewer enabled fixes, then lower rank. Returns (name or None, table)."""
+    by = {}
+    for r in results:
+        by.setdefault(r["setting"], []).append(r)
+    table = []
+    for name, rs in by.items():
+        null = [r for r in rs if r["market"].get("null")]
+        live = [r for r in rs if not r["market"].get("null")]
+        null_ok = len(null) == 2 * len(R3_TUNE_SEEDS) and all(
+            abs(r["minus_B0"]["t"]) < 2 and abs(r["minus_B0E"]["t"]) < 2 for r in null)
+        by_beta = [sum(detected(r) for r in live if r["market"]["beta"] == b) for b in R3_BETAS]
+        n_det = sum(by_beta)
+        complete = len(live) == 2 * len(R3_TUNE_SEEDS) * len(R3_BETAS)
+        params = rs[0]["params"]
+        table.append({"setting": name, "detected": n_det, "by_beta": by_beta, "null_ok": null_ok,
+                      "complete": complete, "passes": complete and null_ok and n_det >= 10,
+                      "n_fixes": n_fixes(params), "rank": params.get("rank")})
+    ok = [r for r in table if r["passes"]]
+    best = max(ok, key=lambda r: (*r["by_beta"], -r["n_fixes"], -r["rank"]))["setting"] if ok else None
+    return best, sorted(table, key=lambda r: (-r["passes"], -r["detected"]))
+
+
 def fmt_t(d):
     return f"{d['mean']:+.3f} ({d['t']:+.1f})"
 
@@ -206,7 +275,7 @@ def write_table(results, path):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--out", required=True)
-    ap.add_argument("--stage", choices=("tune", "tune2", "power", "sens"), required=True)
+    ap.add_argument("--stage", choices=("tune", "tune2", "power", "sens", "tune3", "power3"), required=True)
     ap.add_argument("--workers", type=int, default=3)
     ap.add_argument("--threads", type=int, default=2)
     a = ap.parse_args(argv)
@@ -230,6 +299,11 @@ def main(argv=None):
                   f"{r['seconds']}s", flush=True)
     results = load_results(res_path)
     write_table(results, os.path.join(a.out, f"{a.stage}.md"))
+    if a.stage == "tune3":
+        best, table = select_round3(results)
+        with open(os.path.join(a.out, "selection_tune3.json"), "w") as f:
+            json.dump({"best": best, "table": table}, f, indent=1)
+        print("selected:", best)
     if a.stage in ("tune", "tune2"):
         if a.stage == "tune2":  # round 2 competes with every round-1 candidate (same markets)
             results = load_results(os.path.join(a.out, "tune.jsonl")) + results

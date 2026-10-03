@@ -304,3 +304,42 @@ Until then, any real-data comparison should be read as "not detectable with this
 | prev+softplus | 300 | 0.3 | 102 |  | rolling | 0.182 | +0.003 | +0.002 (+0.3) | -0.003 (-0.4) | +0.005 (+0.9) | 0.632 | 0 |
 | prev+softplus | 300 | 0.4 | 102 |  | rolling | 0.243 | +0.021 | +0.022 (+3.4) | +0.014 (+2.0) | +0.007 (+1.2) | 0.737 | 0 |
 | prev+softplus | 300 | 0.8 | 102 | null | rolling | 0.000 | -0.007 | -0.013 (-2.0) | -0.016 (-2.4) | +0.003 (+0.6) | nan | 0 |
+
+## Round 3 (written and committed before any round-3 grid was run)
+
+This round follows the coordinator's ruling and the deviation recorded in PREREGISTRATION.md. It targets the optimization failure diagnosed above, using synthetic data only. Real data stays untouched.
+
+**Candidate fixes.** Each is a flag in the params hash:
+- (a) early stopping on validation rank-IC with `--min-epochs 15` (`--stop-on ic`);
+- (b) `--restarts 4` for the first fit and for scratch retrains, keeping the restart with the best validation IC;
+- (c) `--signed-message`: S = E_s E_dᵀ without relu or softplus, top-k by |S|, weights S/Σ|S| per row;
+- (d) rolling fine-tunes early-stop on validation IC with the 13-date holdout tail, keeping the best checkpoint, including the pre-fine-tune one. This is implied by `--stop-on ic`.
+
+All candidates start from the round-2 frozen setting:
+- rank 8, topk 20, softplus;
+- emb-lr 1e-2, emb-l2 1e-3, l1 1e-1;
+- finetune-epochs 5, ft-holdout 13, window 156;
+- patience 10, epochs 50, embargo 1, retrain every 13.
+
+| candidate | fixes |
+|---|---|
+| `icstop` | a + d |
+| `icstop+signed` | a + c + d |
+| `icstop+restarts` | a + b + d |
+| `icstop+restarts+signed` | a + b + c + d |
+
+**Tuning markets.** Seeds **201/202**, disjoint from the reported seeds 1/2/3 and from the earlier tuning seeds. N=300.
+- Planted markets: beta ∈ {0.3, 0.4, 0.6} × 2 seeds × {rolling, scratch}, counted separately. That makes 12.
+- Null markets: 2 seeds × 2 modes = 4.
+
+**Rule.**
+1. **Pass:** detected (learned − B0 t > 2 **and** learned − B0E t > 2) in at least 10 of the 12 planted markets, **and** |t| < 2 against B0 and B0E on all 4 null markets.
+2. **Choice among passing configs:** maximum power at the smallest oracle IC. Compare the number detected at beta 0.3 first, then 0.4, then 0.6. Ties go to fewer enabled fixes, then lower rank.
+3. **If none passes:** say so plainly. This round's result then is that the model class, as trained here, cannot recover a planted graph at realistic power. Stop: no real-data run.
+
+**If a config passes,** its power curve is reported:
+- beta ∈ {0.1, 0.2, 0.3, 0.4, 0.6, 0.8} × seeds {1, 2, 3} × {rolling, scratch};
+- the null × 3 seeds × 2 modes;
+- the N=1000 churn point.
+
+It reports detection counts, AUC, t against B0 and B0E, and the smallest oracle IC detected on all seeds. The planted unit test must then pass with the frozen settings, with no pinned alternative.

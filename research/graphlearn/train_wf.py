@@ -109,6 +109,15 @@ def parse_args(argv):
                     help="rolling fine-tunes early-stop on the last N usable dates (held out of the fine-tune)")
     ap.add_argument("--epochs", type=int, default=fz["epochs"], help="max epochs of a from-scratch training")
     ap.add_argument("--patience", type=int, default=fz["patience"])
+    ap.add_argument("--stop-on", choices=("loss", "ic"), default=fz.get("stop_on", "loss"),
+                    help="early-stopping metric on the validation dates (scratch fits and rolling fine-tunes)")
+    ap.add_argument("--min-epochs", type=int, default=fz.get("min_epochs", 0),
+                    help="never early-stop before this many epochs")
+    ap.add_argument("--restarts", type=int, default=fz.get("restarts", 1),
+                    help="independent inits per from-scratch fit; the best validation IC is kept")
+    ap.add_argument("--signed-message", action=argparse.BooleanOptionalAction,
+                    default=fz.get("signed_message", False),
+                    help="signed edges: top-k by |S|, weights S/sum|S| (no relu/softplus)")
     ap.add_argument("--min-history", type=int, default=156)
     ap.add_argument("--val-frac", type=float, default=0.2)
     ap.add_argument("--rank", type=int, default=fz["rank"])
@@ -139,7 +148,7 @@ def file_digest(path):
     return h.hexdigest()[:16]
 
 
-HASHED_ARGS = ("mode", "seed", "rank", "topk", "score_fn", "dropout", "lr", "emb_lr", "emb_l2", "weight_decay",
+HASHED_ARGS = ("mode", "seed", "rank", "topk", "score_fn", "signed_message", "stop_on", "min_epochs", "restarts", "dropout", "lr", "emb_lr", "emb_l2", "weight_decay",
                "lambda_ic", "l1", "epochs", "patience", "finetune_epochs", "ft_holdout", "window", "retrain_every", "embargo",
                "min_history", "max_nodes", "val_frac", "threads")
 PANEL_META_KEYS = ("format", "feature_names", "eligibility", "wf_params", "wf_params_hash", "label_horizons")
@@ -236,7 +245,7 @@ def _reg(args):
 
 def _new_model(args, variant):
     return mdl.GraphNet(variant, rank=args.rank, topk=args.topk, dropout=args.dropout, seed=args.seed,
-                        score_fn=getattr(args, "score_fn", "relu"))
+                        score_fn=getattr(args, "score_fn", "relu"), signed=getattr(args, "signed_message", False))
 
 
 def restore(args, variant, ck):
@@ -256,7 +265,7 @@ def load_model_from_store(variant_store, args=None):
     ck = st.load_checkpoint(info["path"])
     p = ck["params"]
     ns = argparse.Namespace(**{k: p[k] for k in ("rank", "topk", "dropout", "seed", "lr", "weight_decay", "emb_lr")},
-                            score_fn=p.get("score_fn", "relu"))
+                            score_fn=p.get("score_fn", "relu"), signed_message=p.get("signed_message", False))
     return restore(ns, p["variant"], ck)[0], ck
 
 
@@ -368,21 +377,33 @@ def run_variant(p, variant, args, log=print):
             tr, val = train[:len(train) - n_val], train[len(train) - n_val:]
             torch.manual_seed(bseed)
             hist = mdl.fit(model, opt, tr, val, args.finetune_epochs, reg, patience=args.patience, seed=bseed,
-                           keep_initial=True)
+                           keep_initial=True, stop_on=args.stop_on)
+            restart_ics, chosen = None, None
         else:
             n_val = int(round(args.val_frac * len(train))) if len(train) >= 5 else 0
             tr, val = train[:len(train) - n_val], train[len(train) - n_val:]
-            torch.manual_seed(bseed)
-            model = _new_model(args, variant)
-            model.ensure_tickers(p.tickers)
-            opt = mdl.make_optimizer(model, args.lr, args.weight_decay, args.emb_lr)
-            torch.manual_seed(bseed)
-            hist = mdl.fit(model, opt, tr, val, args.epochs, reg, patience=args.patience, seed=bseed)
+            fits = []
+            for r in range(max(1, args.restarts)):
+                rseed = bseed + 1_000_003 * r
+                torch.manual_seed(rseed)
+                m_r = _new_model(args, variant)
+                m_r.ensure_tickers(p.tickers)
+                o_r = mdl.make_optimizer(m_r, args.lr, args.weight_decay, args.emb_lr)
+                torch.manual_seed(rseed)
+                h_r = mdl.fit(m_r, o_r, tr, val, args.epochs, reg, patience=args.patience, seed=rseed,
+                              stop_on=args.stop_on, min_epochs=args.min_epochs)
+                fits.append((m_r, o_r, h_r, mdl.evaluate_ic(m_r, val) if val else float("nan")))
+            restart_ics = [f[3] for f in fits]
+            chosen = int(np.nanargmax(restart_ics)) if np.isfinite(restart_ics).any() else 0
+            model, opt, hist = fits[chosen][:3]
+            if args.restarts <= 1:
+                restart_ics, chosen = [restart_ics[0]], 0
         preds = predict_rows(b["pred"])
         entry = {"block": j, "cutoff_t": cutoff, "kind": "finetune" if warm else "scratch",
                  "n_train": len(tr), "n_val": len(val), "first_train_t": train[0].t, "last_train_t": tr[-1].t
                  if tr else None, "usable_until_t": train[-1].t, "oos": oos,
-                 "train_loss": hist["train_loss"], "val_loss": hist["val_loss"],
+                 "train_loss": hist["train_loss"], "val_loss": hist["val_loss"], "val_ic": hist["val_ic"],
+                 "restart_val_ic": restart_ics, "restart_chosen": chosen,
                  "initial_val_loss": hist["initial_val_loss"], "best_epoch": hist["best_epoch"],
                  "seconds": round(time.time() - t0, 3)}
         history = history + [entry]
