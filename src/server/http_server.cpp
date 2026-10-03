@@ -7,6 +7,7 @@
 #include <cmath>
 #include <limits>
 #include <map>
+#include <set>
 #include <stdexcept>
 #include <nlohmann/json.hpp>
 #include <thread>
@@ -329,6 +330,67 @@ void FluxServer::routes() {
                      {"group", n ? json(n->group) : json(nullptr)}});
     }
     send_json(res, 200, {{"ticker", ticker}, {"sector", it->sector}, {"lag", kLag}, {"points", pts}});
+  });
+
+  // The flow graph around up to 8 tickers at bar t (latest when absent): the tickers, each one's up to k strongest
+  // flow neighbours (in or out) from the cached neighbourhoods, and every stored edge among them. Edge weight is
+  // raw dollars (cumulative flow of the chain pi is solved on); share = raw / the source's kept outflow.
+  svr_.Get("/api/graph", [this](const httplib::Request& req, httplib::Response& res) {
+    std::vector<std::string> tickers;
+    long long k = 6;
+    std::optional<TimePoint> t;
+    try {
+      std::string s = req.get_param_value("tickers");
+      for (std::size_t p = 0; p <= s.size();) {
+        const auto c = s.find(',', p);
+        const std::string tk = s.substr(p, c == std::string::npos ? std::string::npos : c - p);
+        if (!tk.empty()) tickers.push_back(tk);
+        if (c == std::string::npos) break;
+        p = c + 1;
+      }
+      if (tickers.empty() || tickers.size() > 8) throw std::invalid_argument("tickers");
+      if (req.has_param("k")) {
+        k = parse_int(req.get_param_value("k"));
+        if (k < 1 || k > static_cast<long long>(FrameStore::kFlowNeighbours * 2)) throw std::invalid_argument("k");
+      }
+      if (req.has_param("t")) t = parse_int(req.get_param_value("t"));
+    } catch (const std::exception&) {
+      return send_json(res, 400, {{"error", "need tickers=A,B (1..8); k in [1, 12]; t integer"}});
+    }
+    if (!store_.status().ready) return send_json(res, 503, {{"error", "landscapes are still being computed"}});
+    const auto f = store_.landscape(t);
+    if (!f) return send_json(res, 404, {{"error", "no such frame"}});
+    const auto g = store_.flows(f->t);
+    if (!g) return send_json(res, 404, {{"error", "no flow graph for this frame"}});
+    const auto& nodes = store_.nodes();
+    std::map<std::string, std::uint32_t> idx;
+    for (std::size_t i = 0; i < nodes.size(); ++i) idx[nodes[i].ticker] = static_cast<std::uint32_t>(i);
+    std::vector<std::uint32_t> focus;
+    json unknown = json::array();
+    for (const auto& tk : tickers) {
+      auto it = idx.find(tk);
+      if (it == idx.end()) unknown.push_back(tk);
+      else focus.push_back(it->second);
+    }
+    const FlowSubgraph sg = flow_subgraph(*g, focus, static_cast<std::size_t>(k));
+    std::map<std::uint32_t, const LandscapeNode*> ln;
+    for (const auto& n : f->nodes) ln[n.i] = &n;
+    std::set<std::uint32_t> fset(focus.begin(), focus.end());
+    json jn = json::array();
+    for (const auto i : sg.nodes) {
+      auto it = ln.find(i);
+      const LandscapeNode* n = it == ln.end() ? nullptr : it->second;
+      jn.push_back({{"i", i}, {"ticker", nodes[i].ticker}, {"sector", nodes[i].sector}, {"focus", fset.count(i) > 0},
+                    {"mr", n ? num(market_rank_score(n->pi, f->nodes.size())) : json(nullptr)},
+                    {"level", n ? num(n->hdisp) : json(nullptr)}, {"group", n ? json(n->group) : json(nullptr)}});
+    }
+    json je = json::array();
+    for (const auto& e : sg.edges) {
+      const double tot = g->out_total[e.a];
+      je.push_back({{"a", e.a}, {"b", e.b}, {"raw", e.raw}, {"share", tot > 0 ? json(e.raw / tot) : json(nullptr)}});
+    }
+    send_json(res, 200, {{"t", f->t}, {"time", format_rfc3339(f->t)}, {"k", k}, {"nodes", jn}, {"edges", je},
+                         {"unknown", unknown}});
   });
 
   svr_.Get("/api/frame/grid", [this](const httplib::Request& req, httplib::Response& res) {

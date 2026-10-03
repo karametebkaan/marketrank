@@ -63,10 +63,10 @@ html, body { height: 100%; margin: 0; font: 13px/1.45 var(--sans); color: var(--
 #sections svg { width: 100%; height: 170px; display: block; }
 #sections svg text { font: 10px var(--sans); fill: var(--muted); }
 #sections svg text.tk { font: 600 10px var(--display); fill: #141821; }
-.card, #top, #path, #legend { background: var(--card); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+.card, #top, #path, #graph, #track, #legend { background: var(--card); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
   border: 1px solid rgba(20, 24, 33, .08); border-radius: 14px; box-shadow: 0 10px 30px rgba(20, 24, 33, .10); }
 #top { padding: 10px 12px; }
-#top h3, #path h3 { font: 600 11px var(--display); margin: 0 0 8px; color: var(--muted); letter-spacing: .14em; text-transform: uppercase; }
+#top h3, #path h3, #graph h3 { font: 600 11px var(--display); margin: 0 0 8px; color: var(--muted); letter-spacing: .14em; text-transform: uppercase; }
 .toprow { display: grid; grid-template-columns: 22px 26px 60px 1fr 60px 58px 72px; align-items: center; gap: 4px;
   padding: 3px 6px; border-radius: 8px; cursor: pointer; font: 12.5px var(--sans); font-variant-numeric: tabular-nums; }
 .toprow:hover { background: rgba(91, 140, 255, .08); }
@@ -116,4 +116,29 @@ html, body { height: 100%; margin: 0; font: 13px/1.45 var(--sans); color: var(--
   border-radius: 999px; padding: 2px 9px 2px 6px; font: 600 11px var(--display); color: var(--ink); cursor: pointer; }
 #pathLegend .chip:hover { border-color: var(--c); }
 #pathLegend .chip .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--c); }
-#top h3::after { content: ' · click rows to compare'; text-transform: none; letter-spacing: 0; font-family: var(--sans); font-weight: 400; color: #a0a6b2; }
+#top h3, #path h3, #graph h3 { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+#top h3 .sub { text-transform: none; letter-spacing: 0; font-family: var(--sans); font-weight: 400; color: #a0a6b2; }
+.tools { display: inline-flex; gap: 4px; }
+.tools button { border: 0; background: rgba(20,24,33,.06); width: 22px; height: 22px; border-radius: 50%; font-size: 13px; line-height: 1;
+  cursor: pointer; color: var(--muted); padding: 0; }
+.tools button:hover { background: rgba(91,140,255,.18); color: var(--ink); }
+#track { padding: 8px 10px; }
+#trackForm { display: flex; gap: 6px; }
+#trackInput { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px; font: 600 12px var(--display);
+  letter-spacing: .03em; text-transform: uppercase; outline: none; background: #fff; }
+#trackInput::placeholder { text-transform: none; font-weight: 400; color: #a0a6b2; letter-spacing: 0; font-family: var(--sans); }
+#trackInput:focus { border-color: var(--accent2); box-shadow: 0 0 0 3px rgba(91,140,255,.18); }
+#trackForm button { border: 0; border-radius: 999px; padding: 6px 14px; font: 600 12px var(--sans); color: #fff; cursor: pointer;
+  background: linear-gradient(90deg, #5b8cff, #7a5bff); }
+#trackMsg:empty { display: none; }
+#graph { padding: 10px 12px; }
+#graphSvg { width: 100%; height: 320px; display: block; background: #fbfbfc; border: 1px solid #e6e8ee; border-radius: 10px; cursor: grab; }
+#graphSvg text { font: 600 10px var(--display); fill: #141821; pointer-events: none; paint-order: stroke; stroke: #fff; stroke-width: 3px; }
+#graphSvg .edge { fill: none; }
+/* expanded window: fills the screen above everything; Esc or ⤢ collapses it */
+.maxed { position: fixed !important; inset: 14px; z-index: 50; max-height: none !important; overflow: auto;
+  box-shadow: 0 30px 80px rgba(15, 20, 32, .45) !important; }
+#viewport.maxed { display: flex; }
+#graph.maxed #graphSvg { height: calc(100vh - 120px); }
+body.has-max::before { content: ''; position: fixed; inset: 0; background: rgba(15, 20, 32, .45); z-index: 40; }
+#top.maxed, #path.maxed, #graph.maxed { background: #fff; padding: 18px 22px; }

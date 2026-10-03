@@ -15,6 +15,7 @@
 #include "market/universe.hpp"
 #include "pipeline/core_pipeline.hpp"
 #include "pipeline/shock.hpp"
+#include "server/flow_graph.hpp"
 
 namespace mr {
 
@@ -53,6 +54,10 @@ class FrameStore {
   // Up to k cached frames ending at t (latest when empty), oldest first; empty if t is not cached.
   std::vector<std::shared_ptr<const LandscapeFrame>> recent(std::optional<TimePoint> t, std::size_t k) const;
   ShockResult shock(const std::vector<Shock>& shocks);
+  // The flow neighbourhoods (top kFlowNeighbours out- and in-edges of P per active node) of the cached bar t;
+  // nullptr if t is not cached. Shared by both ETF layouts (they come from the same chain).
+  std::shared_ptr<const FlowNeighbours> flows(TimePoint t) const;
+  static constexpr std::size_t kFlowNeighbours = 6;
   // Callers blocked here must be released (by progress, a timeout, or stopping them) before the store
   // is destroyed: destruction does not wake waiters.
   std::uint64_t wait_for_change(std::uint64_t seen, std::chrono::milliseconds timeout) const;
@@ -88,6 +93,7 @@ class FrameStore {
   Status status_;
   std::map<TimePoint, std::shared_ptr<const LandscapeFrame>> frames_;
   std::map<TimePoint, std::shared_ptr<const LandscapeFrame>> alt_frames_;  // same bars, exclude_etf flipped
+  std::map<TimePoint, std::shared_ptr<const FlowNeighbours>> flows_;
   std::optional<CorePipeline> pre_last_;
   std::shared_ptr<const Frame> last_core_;
 };

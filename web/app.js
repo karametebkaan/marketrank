@@ -616,11 +616,12 @@ async function onStatus(st) {
       await applyShock();
     }
     if (Q.has('path')) { S.autoSel = true; for (const t of Q.get('path').split(',')) toggleSel(t); }  // ?path=A,B,C selects tickers
-    if (Q.has('view')) setView(Q.get('view'));  // ?view=3d|top|front|side|sections  // ?path=TICKER opens the path panel in the self-test
+    if (Q.has('view')) setView(Q.get('view'));
+    if (Q.has('max')) setTimeout(() => toggleMax(Q.get('max'), true), 300);  // ?max=viewport|top|path|graph  // ?view=3d|top|front|side|sections  // ?path=TICKER opens the path panel in the self-test
     setTimeout(() => {
       if (!$('topRows').querySelector('.toprow')) fail(new Error('top table did not render'));
       // The product UI is fixed: no model or landscape knobs may come back.
-      else if (document.querySelector('#panel select, #apply, #top button, #arcs')) fail(new Error('a removed control is present'));
+      else if (document.querySelector('#panel select, #apply, #top button:not(.maxbtn), #arcs')) fail(new Error('a removed control is present'));
       else if (S.frame.nodes.some((n) => n[2] === 'ETF/Fund' && (n[3] >= 0) !== S.status.show_etf)) fail(new Error('ETF placement does not match show_etf'));
       else document.title = `marketrank-ok:${S.frame.nodes.length}`;
     }, 1500);
@@ -702,7 +703,7 @@ async function openPath(ticker) { if (!selColor(ticker)) toggleSel(ticker); else
 // Fetches (cached per ticker and generation) and draws the paths of every selected ticker.
 async function refreshPaths() {
   const seq = S.pathSeq = (S.pathSeq || 0) + 1;
-  if (!S.sel.length) { $('path').hidden = true; S.pathGeom = null; return; }
+  if (!S.sel.length) { $('path').hidden = true; $('graph').hidden = true; S.pathGeom = null; return; }
   S.pathCacheMap = S.pathCacheMap || new Map();
   const gen = `${S.loadedGen}|${S.times.length}`;
   const out = await Promise.all(S.sel.map(async (x) => {
@@ -713,15 +714,20 @@ async function refreshPaths() {
   }));
   if (seq !== S.pathSeq) return;
   if (S.pathCacheMap.size > 64) S.pathCacheMap = new Map([...S.pathCacheMap].filter(([k]) => k.endsWith(`|${gen}`)));
-  drawPaths(out);
   $('path').hidden = false;
+  drawPaths(out);
+  refreshGraph().catch(fail);
 }
 function drawPaths(series) {
   const svg = $('pathSvg');
   svg.replaceChildren();
   const n = series.length, single = n === 1;
   const stripH = single ? 8 : Math.max(3, Math.min(6, Math.floor(24 / n)));
-  const padL = 40, padR = 10, padT = 10, padB = 30 + (stripH + 1) * n, W = 360, H = 212 + padB;
+  // Pixel-true size: the chart widens (and, expanded, grows tall) with its card; text stays the same size.
+  const maxed = $('path').classList.contains('maxed');
+  const padL = 40, padR = 10, padT = 10, padB = 30 + (stripH + 1) * n;
+  const W = Math.max(320, Math.round(svg.parentElement.clientWidth - 2) || 360);
+  const H = maxed ? Math.max(300, window.innerHeight - 190) : 212 + padB;
   svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
   // Common time axis: the longest series (all come from the same cached frames).
   const P0 = series.reduce((a, x) => (x.r.points.length > a.length ? x.r.points : a), []);
@@ -847,7 +853,134 @@ function pathScrub(e) {
 }
 function closePath() { clearSel(); }
 
+// ---- Tracking any ticker: the input adds it to the selection (paths and flow graph), like clicking a row.
+function trackTicker(raw) {
+  const tk = String(raw || '').trim().toUpperCase();
+  const msg = $('trackMsg');
+  msg.textContent = '';
+  if (!tk) return;
+  const known = S.frame && S.frame.nodes.some((n) => n[1] === tk);
+  if (!known) { msg.textContent = `${tk} is not active on this bar (or not in the universe).`; return; }
+  if (selColor(tk)) { msg.textContent = `${tk} is already tracked.`; return; }
+  if (S.sel.length >= SEL_MAX) msg.textContent = `Up to ${SEL_MAX} at once: ${S.sel[0].ticker} was dropped.`;
+  toggleSel(tk);
+  $('trackInput').value = '';
+}
+
+// ---- Flow graph of the selection (d3-force): the selected stocks, each one's strongest flow neighbours at the
+// displayed bar (cumulative dollars of the chain π is solved on), and every stored edge among them. Arrows point
+// from the stock money leaves to the one it goes to. Positions persist across updates, so the graph morphs as
+// the bar changes instead of re-exploding.
+function fmtUsd(x) {
+  if (!Number.isFinite(x)) return 'n/a';
+  const a = Math.abs(x);
+  return a >= 1e12 ? `$${(x / 1e12).toFixed(2)}T` : a >= 1e9 ? `$${(x / 1e9).toFixed(2)}B` : a >= 1e6 ? `$${(x / 1e6).toFixed(1)}M` : `$${(x / 1e3).toFixed(0)}K`;
+}
+async function refreshGraph() {
+  if (!S.sel.length || !S.frame) { $('graph').hidden = true; return; }
+  if (typeof d3 === 'undefined') { $('graph').hidden = false; $('graphNote').textContent = 'd3 failed to load (offline?)'; return; }
+  const seq = S.graphSeq = (S.graphSeq || 0) + 1;
+  const tickers = S.sel.map((x) => x.ticker).join(',');
+  const key = `${tickers}|${S.frame.t}|${S.loadedGen}`;
+  let g = S.graphCache && S.graphCache.key === key ? S.graphCache.g : null;
+  if (!g) {
+    g = await getJSON(`/api/graph?k=6&t=${S.frame.t}&tickers=${encodeURIComponent(tickers)}`);
+    if (seq !== S.graphSeq) return;
+    S.graphCache = { key, g };
+  }
+  $('graph').hidden = false;
+  drawGraph(g);
+}
+function drawGraph(g) {
+  const svgEl0 = $('graphSvg');
+  const W = Math.max(280, svgEl0.clientWidth || 400), H = Math.max(240, svgEl0.clientHeight || 320);
+  const svg = d3.select(svgEl0).attr('viewBox', `0 0 ${W} ${H}`);
+  svg.selectAll('*').remove();
+  S.gpos = S.gpos || new Map();
+  const nodes = g.nodes.map((n) => {
+    const p = S.gpos.get(n.ticker);
+    return { ...n, x: p ? p.x * W : W / 2 + (Math.random() - 0.5) * 40, y: p ? p.y * H : H / 2 + (Math.random() - 0.5) * 40 };
+  });
+  const byI = new Map(nodes.map((n) => [n.i, n]));
+  const links = g.edges.map((e) => ({ source: byI.get(e.a), target: byI.get(e.b), raw: e.raw, share: e.share })).filter((l) => l.source && l.target);
+  const wmax = Math.max(1e-9, ...links.map((l) => l.raw));
+  const radius = (n) => (n.focus ? 9 : 5) + 2.2 * Math.log10(1 + Math.max(0, n.mr || 0));
+  const fill = (n) => selColor(n.ticker) || (n.level === null ? '#c8ccd4' : n.level >= 0 ? '#f2a3b1' : '#a9c1ee');
+  const defs = svg.append('defs');
+  // Fixed-size arrowheads (user space), so thick edges do not get giant arrows.
+  for (const [id, c] of [['garrow', '#7d8494'], ['garrowF', '#3b4252']])
+    defs.append('marker').attr('id', id).attr('viewBox', '0 -4 8 8').attr('refX', 8).attr('refY', 0).attr('markerUnits', 'userSpaceOnUse')
+      .attr('markerWidth', 8).attr('markerHeight', 8).attr('orient', 'auto').append('path').attr('d', 'M0,-4L8,0L0,4').attr('fill', c);
+  const root = svg.append('g');
+  svg.call(d3.zoom().scaleExtent([0.3, 6]).on('zoom', (ev) => root.attr('transform', ev.transform)));
+  // Edges touching a tracked stock are dark; edges among the neighbours are faint context.
+  const touches = (l) => l.source.focus || l.target.focus;
+  const link = root.append('g').selectAll('path').data(links).join('path').attr('class', 'edge')
+    .attr('stroke', (l) => (touches(l) ? '#3b4252' : '#9aa1ae'))
+    .attr('stroke-opacity', (l) => (touches(l) ? 0.35 + 0.55 * Math.sqrt(l.raw / wmax) : 0.12 + 0.2 * Math.sqrt(l.raw / wmax)))
+    .attr('stroke-width', (l) => 0.5 + 2.5 * Math.sqrt(l.raw / wmax))
+    .attr('marker-end', (l) => (touches(l) ? 'url(#garrowF)' : 'url(#garrow)'));
+  link.append('title').text((l) => `${l.source.ticker} → ${l.target.ticker} · ${fmtUsd(l.raw)}${l.share === null ? '' : ` · ${(100 * l.share).toFixed(1)}% of ${l.source.ticker}'s kept outflow`}`);
+  const node = root.append('g').selectAll('g').data(nodes).join('g').style('cursor', 'pointer');
+  node.append('circle').attr('r', radius).attr('fill', fill).attr('stroke', (n) => (n.focus ? '#141821' : '#fff')).attr('stroke-width', (n) => (n.focus ? 1.6 : 1));
+  node.append('text').attr('x', (n) => radius(n) + 3).attr('y', 3.5).text((n) => n.ticker);
+  node.append('title').text((n) => `${n.ticker} · ${n.sector}\nπ·N ${fmt(n.mr, 3)} · level ${n.level === null ? 'n/a' : fmtSigned(n.level, 3)}${n.focus ? '' : '\nclick to track'}`);
+  node.on('click', (ev, n) => { if (!ev.defaultPrevented && !n.focus) toggleSel(n.ticker); });
+  // Spacing scales with the window, so an expanded graph spreads out instead of staying a small knot.
+  const L0 = Math.max(70, 0.16 * Math.min(W, H));
+  const sim = d3.forceSimulation(nodes)
+    .force('link', d3.forceLink(links).distance((l) => L0 * (1 + 0.6 * (1 - Math.sqrt(l.raw / wmax)))).strength((l) => (touches(l) ? 0.5 : 0.08)))
+    .force('charge', d3.forceManyBody().strength(-6 * L0))
+    .force('x', d3.forceX(W / 2).strength(0.04)).force('y', d3.forceY(H / 2).strength(0.04))
+    .force('center', d3.forceCenter(W / 2, H / 2))
+    .force('collide', d3.forceCollide().radius((n) => radius(n) + 14))
+    .alpha(S.gpos.size ? 0.35 : 1);
+  node.call(d3.drag()
+    .on('start', (ev, n) => { if (!ev.active) sim.alphaTarget(0.25).restart(); n.fx = n.x; n.fy = n.y; })
+    .on('drag', (ev, n) => { n.fx = ev.x; n.fy = ev.y; })
+    .on('end', (ev, n) => { if (!ev.active) sim.alphaTarget(0); n.fx = null; n.fy = null; }));
+  const edgePath = (l) => {
+    // A slight arc so a pair with flows both ways shows two separate curves; the arrow stops at the circle.
+    const dx = l.target.x - l.source.x, dy = l.target.y - l.source.y, d = Math.hypot(dx, dy) || 1;
+    const r = radius(l.target) + 2, tx = l.target.x - dx / d * r, ty = l.target.y - dy / d * r;
+    const mx = (l.source.x + tx) / 2 - dy / d * 0.12 * d, my = (l.source.y + ty) / 2 + dx / d * 0.12 * d;
+    return `M${l.source.x},${l.source.y}Q${mx},${my} ${tx},${ty}`;
+  };
+  sim.on('tick', () => {
+    link.attr('d', edgePath);
+    node.attr('transform', (n) => `translate(${n.x},${n.y})`);
+  });
+  sim.on('end', () => { for (const n of nodes) S.gpos.set(n.ticker, { x: n.x / W, y: n.y / H }); });
+  if (S.gsim) S.gsim.stop();
+  S.gsim = sim;
+  $('graphTitle').textContent = `Flow graph · ${g.time.slice(0, 10)}`;
+  const unk = g.unknown && g.unknown.length ? ` · not found: ${g.unknown.join(', ')}` : '';
+  $('graphNote').textContent = `${nodes.length} stocks, ${links.length} flows · arrow: money from → to (cumulative dollars) · width ∝ √flow · size ∝ log π·N · click a pale node to track it; drag nodes, scroll to zoom${unk}`;
+}
+
+// ---- Expand / collapse any window (viewport, top 10, paths, graph) to fill the screen; Esc collapses.
+function toggleMax(id, force) {
+  const el = $(id);
+  const on = force === undefined ? !el.classList.contains('maxed') : force;
+  document.querySelectorAll('.maxed').forEach((x) => { if (x !== el) x.classList.remove('maxed'); });
+  el.classList.toggle('maxed', on);
+  document.body.classList.toggle('has-max', on);
+  document.querySelectorAll(`[data-max="${id}"]`).forEach((b) => { b.textContent = on ? '⤡' : '⤢'; });
+  // Redraw the size-aware pieces after the layout settles.
+  requestAnimationFrame(() => {
+    if (S.deck && S.frame) render();
+    if (S.sel.length) refreshPaths().catch(fail);
+  });
+}
+
 function wire() {
+  document.querySelectorAll('[data-max]').forEach((b) => b.addEventListener('click', () => toggleMax(b.dataset.max)));
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { const m = document.querySelector('.maxed'); if (m) toggleMax(m.id, false); }
+  });
+  $('trackForm').addEventListener('submit', (e) => { e.preventDefault(); trackTicker($('trackInput').value); });
+  let resizeT = null;
+  window.addEventListener('resize', () => { clearTimeout(resizeT); resizeT = setTimeout(() => { if (S.sel.length) refreshPaths().catch(fail); }, 150); });
   const ps = $('pathSvg');
   ps.style.cursor = 'ew-resize';
   ps.style.touchAction = 'none';

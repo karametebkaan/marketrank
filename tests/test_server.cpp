@@ -7,6 +7,7 @@
 #include <future>
 #include <iostream>
 #include <nlohmann/json.hpp>
+#include <set>
 #include <thread>
 
 #include "cli/args.hpp"
@@ -607,4 +608,33 @@ TEST_CASE("server: /api/path gives a stock's level and 5-bar momentum per cached
   const std::size_t K = frames.size();
   CHECK(pts.back()["momentum"].get<double>() == doctest::Approx(lmr(*frames[K - 1]) - lmr(*frames[K - 6])));
   for (std::size_t k = 1; k < pts.size(); ++k) CHECK(pts[k]["t"].get<long long>() > pts[k - 1]["t"].get<long long>());
+}
+
+TEST_CASE("server: /api/graph returns the focus tickers, their flow neighbours and the edges among them") {
+  Fixture f;
+  httplib::Client c("127.0.0.1", f.port);
+  CHECK(c.Get("/api/graph")->status == 400);
+  CHECK(c.Get("/api/graph?tickers=A,B,C,D,E,F,G,H,I")->status == 400);  // more than 8
+  const auto fr = f.store->landscape(std::nullopt);
+  REQUIRE(fr);
+  const std::string tk = f.store->nodes()[fr->nodes.front().i].ticker;
+  auto r = c.Get("/api/graph?k=3&tickers=" + tk + ",NOPE");
+  REQUIRE(r->status == 200);
+  const json j = json::parse(r->body);
+  CHECK(j["t"] == fr->t);
+  CHECK(j["unknown"] == json::array({"NOPE"}));
+  std::size_t focus = 0;
+  std::set<std::uint32_t> ids;
+  for (const auto& n : j["nodes"]) {
+    focus += n["focus"].get<bool>() ? 1 : 0;
+    ids.insert(n["i"].get<std::uint32_t>());
+  }
+  CHECK(focus == 1);
+  CHECK(j["nodes"].size() <= 4);  // the focus node and at most k = 3 neighbours
+  for (const auto& e : j["edges"]) {
+    CHECK(ids.count(e["a"].get<std::uint32_t>()));
+    CHECK(ids.count(e["b"].get<std::uint32_t>()));
+    CHECK(e["raw"].get<double>() > 0);
+  }
+  CHECK(f.store->flows(fr->t) != nullptr);
 }

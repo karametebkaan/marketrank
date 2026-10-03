@@ -75,6 +75,7 @@ std::uint64_t FrameStore::launch_locked(std::optional<CoreParams> core, std::opt
   complete_ = false;
   frames_.clear();
   alt_frames_.clear();
+  flows_.clear();
   pre_last_.reset();
   last_core_.reset();
   status_ = Status{};
@@ -201,14 +202,17 @@ void FrameStore::run(std::uint64_t gen, CoreParams core, LandscapeParams land, i
       auto f = std::make_shared<Frame>(pipe.step(panel_, t));
       ++steps_;
       std::shared_ptr<const LandscapeFrame> lf, alt;
+      std::shared_ptr<const FlowNeighbours> nb;
       if (t >= first_landscape) {
         lf = std::make_shared<LandscapeFrame>(builder.build(*f));
         alt = std::make_shared<LandscapeFrame>(alt_builder.build(*f));
+        nb = std::make_shared<const FlowNeighbours>(flow_neighbours(f->P, f->active, kFlowNeighbours));
       }
       std::lock_guard<std::mutex> lk(m_);
       if (gen_.load() != gen) return;
       if (lf) frames_[lf->t] = lf;
       if (alt) alt_frames_[alt->t] = alt;
+      if (nb && lf) flows_[lf->t] = nb;
       if (t == T - 1) last_core_ = f;
       status_.computed = t;
       bump();
@@ -237,6 +241,12 @@ void FrameStore::run(std::uint64_t gen, CoreParams core, LandscapeParams land, i
 FrameStore::Status FrameStore::status() const {
   std::lock_guard<std::mutex> lk(m_);
   return status_;
+}
+
+std::shared_ptr<const FlowNeighbours> FrameStore::flows(TimePoint t) const {
+  std::lock_guard<std::mutex> lk(m_);
+  auto it = flows_.find(t);
+  return it == flows_.end() ? nullptr : it->second;
 }
 
 std::vector<TimePoint> FrameStore::times() const {
