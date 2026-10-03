@@ -552,7 +552,8 @@ int main(int argc, char** argv) {
       }
       mr::FrameStore frames(std::move(panel), universe.nodes(), args.params, land);
       frames.start();
-      mr::FluxServer server(frames, portfolio, args.mode + " " + std::string(mr::to_string(args.tf)));
+      mr::FluxServer server(frames, portfolio, args.mode + " " + std::string(mr::to_string(args.tf)),
+                            args.data / "portfolio.json");
       if (!fs::is_directory(args.web))
         std::cerr << "warning: web root '" << args.web.string() << "' not found; static files will 404\n";
       const int port = server.bind({args.host, args.port, args.web});

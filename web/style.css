@@ -8,7 +8,7 @@
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; font: 13px/1.45 var(--sans); color: var(--ink); background: var(--bg); }
-#app { display: grid; grid-template-columns: 300px 1fr; height: 100vh; overflow: hidden; }
+#app { display: block; height: 100vh; overflow: hidden; }
 
 /* ---- side panel (dark) ---- */
 #panel { background: linear-gradient(180deg, var(--panel) 0%, var(--panel2) 100%); color: var(--pink);
@@ -43,7 +43,7 @@ html, body { height: 100%; margin: 0; font: 13px/1.45 var(--sans); color: var(--
 
 /* ---- canvas + floating cards ---- */
 /* stage: the landscape viewport (its own clipped box) and a side column for the cards; nothing overlaps the view */
-#stage { display: grid; grid-template-columns: minmax(0, 1fr) 440px; gap: 14px; padding: 14px; min-height: 0; height: 100vh; }
+#stage { display: grid; grid-template-columns: minmax(0, 1fr) 450px; gap: 14px; padding: 14px; min-height: 0; height: 100vh; }
 #viewport { position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden;
   border-radius: 16px; border: 1px solid rgba(20, 24, 33, .08); box-shadow: 0 10px 30px rgba(20, 24, 33, .10);
   background: radial-gradient(1100px 700px at 55% 40%, #ffffff 0%, #eef0f4 65%, #e4e7ee 100%); }
@@ -63,7 +63,7 @@ html, body { height: 100%; margin: 0; font: 13px/1.45 var(--sans); color: var(--
 #sections svg { width: 100%; height: 170px; display: block; }
 #sections svg text { font: 10px var(--sans); fill: var(--muted); }
 #sections svg text.tk { font: 600 10px var(--display); fill: #141821; }
-.card, #top, #path, #graph, #track, #legend { background: var(--card); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+.card, #top, #path, #graph, #track, #portfolio, #shock, #legend { background: var(--card); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
   border: 1px solid rgba(20, 24, 33, .08); border-radius: 14px; box-shadow: 0 10px 30px rgba(20, 24, 33, .10); }
 #top { padding: 10px 12px; }
 #top h3, #path h3, #graph h3 { font: 600 11px var(--display); margin: 0 0 8px; color: var(--muted); letter-spacing: .14em; text-transform: uppercase; }
@@ -142,3 +142,52 @@ html, body { height: 100%; margin: 0; font: 13px/1.45 var(--sans); color: var(--
 #graph.maxed #graphSvg { height: calc(100vh - 120px); }
 body.has-max::before { content: ''; position: fixed; inset: 0; background: rgba(15, 20, 32, .45); z-index: 40; }
 #top.maxed, #path.maxed, #graph.maxed { background: #fff; padding: 18px 22px; }
+
+/* ---- brand card: MARKETRANK in the same display style as FLUXSCAPE, larger ---- */
+#brand { padding: 14px 16px 10px; background: linear-gradient(135deg, #0f1420 0%, #1a2336 100%) !important; border-color: #263047 !important; }
+#brand h1 { margin: 0; display: flex; align-items: center; gap: 14px; }
+#brand .logo { width: 40px; height: 40px; border-radius: 10px; flex: none; box-shadow: 0 0 0 1px rgba(255,255,255,.08), 0 6px 18px rgba(91,140,255,.35); }
+#brand .brand { display: flex; flex-direction: column; line-height: 1; }
+#brand .name { font: 700 22px/1 var(--display); letter-spacing: .26em; text-transform: uppercase;
+  background: linear-gradient(90deg, #ffffff 0%, #ffd1da 55%, #ff4d6d 100%); -webkit-background-clip: text; background-clip: text; color: transparent; }
+#brand .view { font: 500 11px/1.3 var(--display); letter-spacing: .42em; text-transform: uppercase; color: var(--accent2); margin-top: 6px; }
+#brand #status { color: var(--pmuted); font-size: 11.5px; margin-top: 10px; min-height: 0; }
+
+/* ---- time bar over the landscape (top right) ---- */
+#timebar { position: absolute; top: 12px; right: 12px; z-index: 3; display: flex; align-items: center; gap: 10px; padding: 4px 12px 4px 4px;
+  border-radius: 999px; background: rgba(15, 20, 32, .86); box-shadow: 0 6px 18px rgba(15, 20, 32, .25); color: #c9cfdc; }
+#timebar #play { border: 0; width: 30px; height: 30px; border-radius: 50%; cursor: pointer; color: #fff; font-size: 12px;
+  background: linear-gradient(90deg, #ff4d6d, #ff7a59); }
+#timebar #scrub { width: clamp(120px, 22vw, 340px); accent-color: var(--accent); }
+#timebar #barDate { font: 600 12px var(--mono); color: #fff; min-width: 84px; }
+
+/* ---- view options popover (from the gear on the view toolbar) ---- */
+.pop { position: absolute; top: 56px; left: 12px; z-index: 4; padding: 10px 14px; border-radius: 14px; min-width: 240px;
+  background: rgba(15, 20, 32, .94); color: #cfd4e0; box-shadow: 0 12px 30px rgba(15, 20, 32, .35); }
+.pop label { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 6px 0; font-size: 12.5px; }
+.pop input[type=range] { width: 120px; accent-color: var(--accent); }
+.pop input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--accent); }
+#viewbar button.ghost[aria-expanded="true"] { color: #fff; }
+
+/* ---- side cards: portfolio, shock ---- */
+#portfolio, #shock { padding: 10px 12px; }
+#portfolio h3, #shock h3 { font: 600 11px var(--display); margin: 0 0 8px; color: var(--muted); letter-spacing: .14em; text-transform: uppercase;
+  display: flex; justify-content: space-between; align-items: center; }
+.textbtn { border: 0; background: none; color: var(--accent2); font: 600 12px var(--sans); cursor: pointer; padding: 4px 6px; border-radius: 8px; text-transform: none; letter-spacing: 0; }
+.textbtn:hover { background: rgba(91,140,255,.1); }
+.primary { border: 0; border-radius: 999px; padding: 6px 16px; font: 600 12px var(--sans); color: #fff; cursor: pointer;
+  background: linear-gradient(90deg, #ff4d6d, #ff7a59); }
+.primary:disabled { opacity: .45; cursor: default; }
+.pfbar { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.pfrow { display: grid; grid-template-columns: 1fr 90px 26px; gap: 6px; margin: 4px 0; }
+.pfrow input { border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; font: 600 12px var(--mono); min-width: 0; }
+.pfrow input.tk { text-transform: uppercase; }
+.pfrow button { border: 0; background: rgba(20,24,33,.06); border-radius: 50%; cursor: pointer; color: var(--muted); }
+#holdings .tk { color: var(--ink); border-bottom: 1px dashed #b8bcc6; }
+#holdings .tk:hover { color: var(--accent); border-bottom-color: var(--accent); }
+#shock .row { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+#shock label { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+#shock input[type=text] { width: 90px; border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; font: 600 12px var(--mono); text-transform: uppercase; }
+#shock input[type=range] { width: 110px; accent-color: var(--accent); }
+#shockSizeLabel { font: 12px var(--mono); color: var(--ink); }
+#shockOut:empty { display: none; }

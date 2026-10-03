@@ -1,6 +1,9 @@
 #include "server/http_server.hpp"
 
 #include <algorithm>
+#include <filesystem>
+#include <cctype>
+#include <fstream>
 #include <bit>
 #include <charconv>
 #include <chrono>
@@ -120,8 +123,14 @@ bool is_loopback_host(const std::string& host) {
   return host == "localhost" || host == "::1" || host == "[::1]" || host.rfind("127.", 0) == 0;
 }
 
-FluxServer::FluxServer(FrameStore& store, std::optional<PortfolioSpec> portfolio, std::string label)
-    : store_(store), portfolio_(std::move(portfolio)), label_(std::move(label)) {
+std::optional<PortfolioSpec> FluxServer::portfolio() const {
+  std::lock_guard<std::mutex> lk(portfolio_m_);
+  return portfolio_;
+}
+
+FluxServer::FluxServer(FrameStore& store, std::optional<PortfolioSpec> portfolio, std::string label,
+                       std::filesystem::path portfolio_path)
+    : store_(store), portfolio_(std::move(portfolio)), portfolio_path_(std::move(portfolio_path)), label_(std::move(label)) {
   routes();
 }
 
@@ -223,6 +232,7 @@ void FluxServer::routes() {
     json ja = json::array();
     for (const auto& a : f->arcs) ja.push_back({a.a, a.b, a.w});
     json jp = json::array();
+    const auto portfolio_ = portfolio();
     if (portfolio_) {
       std::map<std::string, std::size_t> idx;
       for (std::size_t i = 0; i < nodes.size(); ++i) idx[nodes[i].ticker] = i;
@@ -402,6 +412,87 @@ void FluxServer::routes() {
     }
     if (!f) return send_json(res, req.has_param("t") && !store_.times().empty() ? 404 : 503, {{"error", "no such frame"}});
     send_raster(res, f->raster);
+  });
+
+  svr_.Get("/api/portfolio", [this](const httplib::Request&, httplib::Response& res) {
+    const auto pf = portfolio();
+    json h = json::array();
+    if (pf)
+      for (const auto& x : pf->holdings) h.push_back({{"ticker", x.ticker}, {"weight", x.weight}});
+    send_json(res, 200, {{"holdings", h}, {"saved_to", portfolio_path_.empty() ? json(nullptr) : json(portfolio_path_.string())}});
+  });
+
+  // Replace the portfolio: 1..50 holdings of tickers in the universe with positive weights (normalized to sum 1;
+  // percentages are fine). The holdings are re-pinned on the surface (a display-only restyle, no model re-run)
+  // and, when the server has a portfolio path, saved there atomically.
+  svr_.Post("/api/portfolio", [this](const httplib::Request& req, httplib::Response& res) {
+    if (!guard_post(req, res)) return;
+    std::vector<Holding> hs;
+    try {
+      const json b = json::parse(req.body);
+      if (!b.contains("holdings") || !b["holdings"].is_array()) throw std::invalid_argument("holdings must be an array");
+      const auto& arr = b["holdings"];
+      if (arr.empty() || arr.size() > 50) throw std::invalid_argument("need 1 to 50 holdings");
+      const auto& nodes = store_.nodes();
+      std::set<std::string> known, seen;
+      for (const auto& n : nodes) known.insert(n.ticker);
+      double sum = 0;
+      for (const auto& h : arr) {
+        std::string t = get_str(h, "ticker");
+        for (auto& c : t) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        const double w = get_num(h, "weight", 0.0, 1e12, true);
+        if (!(w > 0)) throw std::invalid_argument("weight of " + t + " must be > 0");
+        if (!known.count(t)) throw std::invalid_argument("unknown ticker: " + t);
+        if (!seen.insert(t).second) throw std::invalid_argument("duplicate ticker: " + t);
+        hs.push_back({t, w});
+        sum += w;
+      }
+      for (auto& h : hs) h.weight /= sum;
+    } catch (const std::exception& e) {
+      return send_json(res, 400, {{"error", e.what()}});
+    }
+    PortfolioSpec pf;
+    {
+      std::lock_guard<std::mutex> lk(portfolio_m_);
+      if (portfolio_) pf = *portfolio_;
+    }
+    pf.holdings = hs;
+    if (pf.inception.empty()) pf.inception = format_rfc3339(store_.times().empty() ? 0 : store_.times().back()).substr(0, 10);
+    if (!(pf.initial_cash > 0)) pf.initial_cash = 1000000;
+    // Persist first (atomic: temp file + rename), so a failed save leaves both the file and the view unchanged.
+    if (!portfolio_path_.empty()) {
+      json jh = json::array();
+      for (const auto& h : pf.holdings) jh.push_back({{"ticker", h.ticker}, {"weight", h.weight}});
+      const json doc{{"initial_cash", pf.initial_cash}, {"inception", pf.inception}, {"holdings", jh}};
+      const auto tmp = portfolio_path_.string() + ".tmp";
+      {
+        std::ofstream out(tmp, std::ios::trunc);
+        out << doc.dump(2) << "\n";
+        if (!out) return send_json(res, 500, {{"error", "cannot write " + tmp}});
+      }
+      std::error_code ec;
+      std::filesystem::rename(tmp, portfolio_path_, ec);
+      if (ec) return send_json(res, 500, {{"error", "cannot save portfolio: " + ec.message()}});
+    }
+    // Re-pin: pinned is display-only, so a finished store restyles its cached frames instead of re-running.
+    LandscapeParams lp = store_.landscape_params();
+    lp.pinned.clear();
+    const auto& nodes = store_.nodes();
+    for (const auto& h : pf.holdings)
+      for (std::size_t i = 0; i < nodes.size(); ++i)
+        if (nodes[i].ticker == h.ticker) { lp.pinned.push_back(static_cast<std::uint32_t>(i)); break; }
+    {
+      std::lock_guard<std::mutex> lk(portfolio_m_);
+      portfolio_ = pf;
+    }
+    const std::uint64_t gen = store_.set_params(store_.core_params(), lp);
+    {
+      std::lock_guard<std::mutex> lk(shock_m_);
+      shocks_.clear();
+    }
+    json h = json::array();
+    for (const auto& x : pf.holdings) h.push_back({{"ticker", x.ticker}, {"weight", x.weight}});
+    send_json(res, 200, {{"holdings", h}, {"generation", gen}, {"saved", !portfolio_path_.empty()}});
   });
 
   svr_.Post("/api/params", [this](const httplib::Request& req, httplib::Response& res) {

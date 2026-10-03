@@ -14,6 +14,7 @@
 #include "market/panel.hpp"
 #include "market/sec_sectors.hpp"
 #include "market/synthetic_market.hpp"
+#include "market/universe.hpp"
 #include "server/http_server.hpp"
 #include "test_util.hpp"
 
@@ -28,7 +29,8 @@ struct Fixture {
   std::unique_ptr<FluxServer> server;
   std::thread th;
   int port = 0;
-  explicit Fixture(bool start = true, CoreParams core = CoreParams::money_flow(), std::size_t etf_tail = 0) {
+  explicit Fixture(bool start = true, CoreParams core = CoreParams::money_flow(), std::size_t etf_tail = 0,
+                   std::filesystem::path portfolio_path = {}) {
     SyntheticConfig cfg;
     cfg.bars = 80;
     cfg.rotation_start = 40;
@@ -41,7 +43,7 @@ struct Fixture {
     if (start) store->start();
     for (int k = 0; start && k < 600 && !store->status().ready; ++k) std::this_thread::sleep_for(50ms);
     test::write_file(web / "index.html", "hello");
-    server = std::make_unique<FluxServer>(*store, std::nullopt, "synthetic 1d");
+    server = std::make_unique<FluxServer>(*store, std::nullopt, "synthetic 1d", portfolio_path);
     ServerOptions o;
     o.port = 0;
     o.web_root = web;
@@ -637,4 +639,38 @@ TEST_CASE("server: /api/graph returns the focus tickers, their flow neighbours a
     CHECK(e["raw"].get<double>() > 0);
   }
   CHECK(f.store->flows(fr->t) != nullptr);
+}
+
+TEST_CASE("server: POST /api/portfolio validates, normalizes, saves atomically and re-pins the holdings") {
+  const auto dir = test::temp_dir("portfolio");
+  const auto path = dir / "portfolio.json";
+  Fixture f(true, CoreParams::money_flow(), 0, path);
+  httplib::Client c("127.0.0.1", f.port);
+  const auto& nodes = f.store->nodes();
+  const std::string a = nodes[0].ticker, b = nodes[1].ticker;
+  auto post = [&](const std::string& body) { return c.Post("/api/portfolio", body, "application/json"); };
+  CHECK(post(R"({"holdings":[]})")->status == 400);
+  CHECK(post(R"({"holdings":[{"ticker":"NOPE_X","weight":1}]})")->status == 400);
+  CHECK(post("{\"holdings\":[{\"ticker\":\"" + a + "\",\"weight\":0}]}")->status == 400);
+  CHECK(post("{\"holdings\":[{\"ticker\":\"" + a + "\",\"weight\":1},{\"ticker\":\"" + a + "\",\"weight\":1}]}")->status == 400);
+  CHECK_FALSE(std::filesystem::exists(path));  // nothing saved on rejection
+  auto r = post("{\"holdings\":[{\"ticker\":\"" + a + "\",\"weight\":60},{\"ticker\":\"" + b + "\",\"weight\":40}]}");
+  REQUIRE(r->status == 200);
+  const json j = json::parse(r->body);
+  CHECK(j["holdings"][0]["weight"].get<double>() == doctest::Approx(0.6));
+  CHECK(j["holdings"][1]["weight"].get<double>() == doctest::Approx(0.4));
+  CHECK(j["saved"] == true);
+  REQUIRE(std::filesystem::exists(path));
+  CHECK_FALSE(std::filesystem::exists(path.string() + ".tmp"));
+  const auto saved = load_portfolio(path);  // the normal loader accepts it (weights sum to 1)
+  REQUIRE(saved.holdings.size() == 2);
+  CHECK(saved.holdings[0].ticker == a);
+  for (int k = 0; k < 600 && !f.store->status().ready; ++k) std::this_thread::sleep_for(10ms);
+  const auto pinned = f.store->landscape_params().pinned;
+  CHECK(pinned == std::vector<std::uint32_t>{0, 1});
+  const json fr = json::parse(c.Get("/api/frame")->body);
+  REQUIRE(fr["portfolio"].size() == 2);
+  CHECK(fr["portfolio"][0]["ticker"] == a);
+  const json g = json::parse(c.Get("/api/portfolio")->body);
+  CHECK(g["holdings"].size() == 2);
 }

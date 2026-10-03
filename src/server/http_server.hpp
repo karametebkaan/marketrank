@@ -25,7 +25,9 @@ struct ServerOptions {
 
 class FluxServer {
  public:
-  FluxServer(FrameStore& store, std::optional<PortfolioSpec> portfolio, std::string label);
+  // portfolio_path: where POST /api/portfolio saves the user's holdings (atomically); empty = not saved.
+  FluxServer(FrameStore& store, std::optional<PortfolioSpec> portfolio, std::string label,
+             std::filesystem::path portfolio_path = {});
   int bind(const ServerOptions& opts);
   bool listen();  // false if the socket failed (or stop() came first)
   void stop();
@@ -33,7 +35,10 @@ class FluxServer {
  private:
   void routes();
   FrameStore& store_;
-  std::optional<PortfolioSpec> portfolio_;
+  std::optional<PortfolioSpec> portfolio_;  // guarded by portfolio_m_
+  std::filesystem::path portfolio_path_;
+  mutable std::mutex portfolio_m_;
+  std::optional<PortfolioSpec> portfolio() const;
   std::string label_;
   httplib::Server svr_;
   bool guard_post(const httplib::Request& req, httplib::Response& res) const;
