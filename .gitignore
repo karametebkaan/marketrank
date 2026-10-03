@@ -14,3 +14,4 @@ paper/*.spl
 paper/*.pdf
 data/walkforward/
 __pycache__/
+research/.venv/
