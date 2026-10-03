@@ -535,16 +535,19 @@ async function loadFrame(t) {
   return true;
 }
 
+// The view follows the newest bar implicitly while the Bar slider sits at the end; scrubbing back stops
+// following, moving the slider to the end resumes it.
+function atLatest() { const s = $('scrub'); return S.times.length === 0 || Number(s.value) >= Number(s.max); }
 async function refreshTimes() {
+  const follow = atLatest() && !S.pinnedT;
   S.times = await getJSON('/api/times');
   const s = $('scrub');
   s.max = Math.max(0, S.times.length - 1);
-  if (S.selftest && Q.has('t')) { // ?selftest=1&t=<unix s>: open the bar nearest t, not the latest
+  if (S.selftest && Q.has('t') && !S.pinnedT) { // ?selftest=1&t=<unix s>: open the bar nearest t, not the latest
     const t = Number(Q.get('t'));
-    $('follow').checked = false;
+    S.pinnedT = true;
     s.value = S.times.reduce((b, x, i) => (Math.abs(x - t) < Math.abs(S.times[b] - t) ? i : b), 0);
-  }
-  if ($('follow').checked) s.value = s.max;
+  } else if (follow) s.value = s.max;
   updateShockEnabled();
 }
 
@@ -599,8 +602,9 @@ async function onStatus(st) {
   if (key === S.loadedKey) return;
   const newGen = st.generation !== S.loadedGen;
   if (newGen) clearShock();
+  const wasLatest = atLatest() && !S.pinnedT;
   await refreshTimes();
-  if (newGen || $('follow').checked) {
+  if (newGen || wasLatest) {
     if (!(await loadFrame(S.times[Number($('scrub').value)]))) return;
   }
   S.loadedKey = key; S.loadedGen = st.generation;
@@ -845,7 +849,6 @@ function pathScrub(e) {
   const idx = S.times.indexOf(g.times[k]);
   if (idx < 0 || Number($('scrub').value) === idx) return;
   stopPlay();
-  $('follow').checked = false;
   $('scrub').value = idx;
   clearShock();
   $('shockApply').disabled = true;
@@ -958,6 +961,62 @@ function drawGraph(g) {
   $('graphNote').textContent = `${nodes.length} stocks, ${links.length} flows · arrow: money from → to (cumulative dollars) · width ∝ √flow · size ∝ log π·N · click a pale node to track it; drag nodes, scroll to zoom${unk}`;
 }
 
+// ---- Portfolio editor: the user's own holdings (ticker + weight %), saved on the server (POST /api/portfolio),
+// which re-pins them on the surface and keeps them for the next start.
+function addPfRow(ticker, pct) {
+  const row = document.createElement('div');
+  row.className = 'pfrow';
+  const tk = Object.assign(document.createElement('input'), { className: 'tk', value: ticker, placeholder: 'TICKER' });
+  tk.setAttribute('list', 'tickers');
+  const w = Object.assign(document.createElement('input'), { type: 'number', min: '0', step: '0.1', value: pct, placeholder: '%' });
+  const del = Object.assign(document.createElement('button'), { textContent: '×', title: 'remove' });
+  del.addEventListener('click', () => { row.remove(); updatePfSum(); });
+  w.addEventListener('input', updatePfSum);
+  row.append(tk, w, del);
+  $('pfRows').appendChild(row);
+}
+function pfRows() {
+  return [...document.querySelectorAll('#pfRows .pfrow')].map((r) => {
+    const [tk, w] = r.querySelectorAll('input');
+    return { ticker: tk.value.trim().toUpperCase(), weight: Number(w.value) };
+  }).filter((h) => h.ticker || h.weight);
+}
+function updatePfSum() {
+  const sum = pfRows().reduce((a, h) => a + (Number.isFinite(h.weight) ? h.weight : 0), 0);
+  $('pfSum').textContent = `total ${sum.toFixed(1)}% (normalized to 100%)`;
+}
+function openPortfolioEditor() {
+  $('pfRows').replaceChildren();
+  const cur = (S.frame && S.frame.portfolio) || [];
+  if (cur.length) cur.forEach((p) => addPfRow(p.ticker, (100 * p.weight).toFixed(1)));
+  else addPfRow('', '');
+  $('pfMsg').textContent = '';
+  $('pfEdit').hidden = false;
+  $('pfEditBtn').textContent = 'Close';
+  updatePfSum();
+}
+function closePortfolioEditor() { $('pfEdit').hidden = true; $('pfEditBtn').textContent = 'Edit'; }
+async function savePortfolio() {
+  const holdings = pfRows();
+  if (!holdings.length || holdings.some((h) => !h.ticker || !(h.weight > 0))) {
+    $('pfMsg').textContent = 'Each holding needs a ticker and a weight above 0.';
+    return;
+  }
+  $('pfSave').disabled = true;
+  $('pfMsg').textContent = 'saving…';
+  try {
+    const r = await getJSON('/api/portfolio', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ holdings }) });
+    $('pfMsg').textContent = `Saved ${r.holdings.length} holdings${r.saved ? '' : ' (this session only)'}; re-pinning on the surface…`;
+    S.recompGen = r.generation;
+    showStatus();
+    setTimeout(closePortfolioEditor, 1500);
+  } catch (e) {
+    $('pfMsg').textContent = String(e.message || e).replace(/^.*?: \d+ /, '');
+  } finally {
+    $('pfSave').disabled = false;
+  }
+}
+
 // ---- Expand / collapse any window (viewport, top 10, paths, graph) to fill the screen; Esc collapses.
 function toggleMax(id, force) {
   const el = $(id);
@@ -974,6 +1033,10 @@ function toggleMax(id, force) {
 }
 
 function wire() {
+  $('pfEditBtn').addEventListener('click', () => ($('pfEdit').hidden ? openPortfolioEditor() : closePortfolioEditor()));
+  $('pfAdd').addEventListener('click', () => { addPfRow('', ''); updatePfSum(); });
+  $('pfCancel').addEventListener('click', closePortfolioEditor);
+  $('pfSave').addEventListener('click', () => { savePortfolio(); });
   document.querySelectorAll('[data-max]').forEach((b) => b.addEventListener('click', () => toggleMax(b.dataset.max)));
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { const m = document.querySelector('.maxed'); if (m) toggleMax(m.id, false); }
@@ -1010,10 +1073,10 @@ function wire() {
     closePath();
   });
   // Scrubbing exits shock mode (as Reset does): the shock belongs to the latest bar only.
-  $('scrub').addEventListener('input', () => { $('follow').checked = false; clearShock(); render(); $('shockApply').disabled = true; loadFrame(S.times[Number($('scrub').value)]).catch(fail); });
+  $('scrub').addEventListener('input', () => { clearShock(); render(); $('shockApply').disabled = true; loadFrame(S.times[Number($('scrub').value)]).catch(fail); });
   $('play').addEventListener('click', () => {
     if (S.playing) { stopPlay(); return; }
-    S.playing = true; $('play').textContent = 'Pause'; $('follow').checked = false;
+    S.playing = true; $('play').textContent = 'Pause';
     setTimeout(playTick, 0);
   });
   ['hscale', 'labels'].forEach((id) => $(id).addEventListener('input', render));

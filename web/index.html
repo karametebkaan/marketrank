@@ -19,14 +19,24 @@
     <div id="status">loading…</div>
     <h2>Data</h2>
     <label>Bar <input id="scrub" type="range" min="0" max="0" value="0"></label>
-    <label>Follow latest <input id="follow" type="checkbox" checked></label>
     <button id="play">Play</button>
     <h2>View</h2>
+    <div id="viewbar" role="toolbar" aria-label="view">
+      <button data-view="3d">3D</button><button data-view="top">Top</button><button data-view="front">Front</button><button data-view="side">Side</button><button data-view="sections" class="on">Sections</button>
+      <button id="viewReset" class="ghost" title="reset the camera">⟲</button>
+      <button class="ghost maxbtn" data-max="viewport" title="expand / collapse the landscape (Esc)">⤢</button>
+    </div>
     <label>Height scale <input id="hscale" type="range" min="0.1" max="3" step="0.1" value="1"></label>
-    <label>Labels <input id="labels" type="checkbox" checked></label>
+    <label>Ticker labels <input id="labels" type="checkbox" checked></label>
     <label>Show ETF clusters <input id="showEtf" type="checkbox"></label>
-    <h2>Portfolio</h2>
+    <h2 class="withbtn"><span>Portfolio</span><button id="pfEditBtn" class="textbtn" title="enter your own holdings">Edit</button></h2>
     <div id="holdings" class="list"></div>
+    <div id="pfEdit" hidden>
+      <div id="pfRows"></div>
+      <div class="pfbar"><button id="pfAdd" class="textbtn">+ Add holding</button><span id="pfSum" class="hint"></span></div>
+      <div class="pfbar"><button id="pfSave">Save</button><button id="pfCancel" class="textbtn">Cancel</button></div>
+      <div id="pfMsg" class="hint"></div>
+    </div>
     <h2>Shock</h2>
     <label>Ticker <input id="shockTicker" type="text" list="tickers" placeholder="NVDA"></label>
     <datalist id="tickers"></datalist>
@@ -38,11 +48,7 @@
   </aside>
   <main id="stage">
     <section id="viewport">
-      <div id="viewbar" role="toolbar" aria-label="view">
-        <button data-view="3d">3D</button><button data-view="top">Top</button><button data-view="front">Front</button><button data-view="side">Side</button><button data-view="sections" class="on">Sections</button>
-        <button id="viewReset" class="ghost" title="reset the camera">⟲</button>
-        <button class="ghost maxbtn" data-max="viewport" title="expand / collapse (Esc)">⤢</button>
-      </div>
+      <button class="maxonly maxbtn" data-max="viewport" title="collapse (Esc)">⤡</button>
       <div id="canvas"><div id="legend"></div></div>
       <div id="sections" title="click or drag on the map to move the cuts; arrow keys step them (Shift: 5)">
         <div class="sec"><h4 id="secXTitle"></h4><svg id="secX" viewBox="0 0 600 170" preserveAspectRatio="none"></svg></div>

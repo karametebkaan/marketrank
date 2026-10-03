@@ -49,13 +49,13 @@ html, body { height: 100%; margin: 0; font: 13px/1.45 var(--sans); color: var(--
   background: radial-gradient(1100px 700px at 55% 40%, #ffffff 0%, #eef0f4 65%, #e4e7ee 100%); }
 #canvas { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; }
 #side { display: flex; flex-direction: column; gap: 14px; min-height: 0; overflow-y: auto; }
-#viewbar { position: absolute; top: 12px; left: 12px; z-index: 3; display: flex; gap: 2px; padding: 3px; border-radius: 999px;
-  background: rgba(15, 20, 32, .86); box-shadow: 0 6px 18px rgba(15, 20, 32, .25); }
+#viewbar { display: flex; flex-wrap: wrap; gap: 2px; padding: 3px; border-radius: 12px;
+  background: #0b0f18; border: 1px solid var(--pline); }
 #viewbar button { border: 0; background: transparent; color: #c9cfdc; font: 600 11.5px var(--display); letter-spacing: .04em;
   padding: 6px 12px; border-radius: 999px; cursor: pointer; }
 #viewbar button:hover { color: #fff; }
 #viewbar button.on { background: linear-gradient(90deg, #ff4d6d, #ff7a59); color: #fff; }
-#viewbar button.ghost { font-size: 14px; padding: 4px 10px; margin-left: 4px; border-left: 1px solid #2c3550; border-radius: 0 999px 999px 0; }
+#viewbar button.ghost { font-size: 14px; padding: 4px 10px; }
 #sections { flex: 0 0 auto; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 8px 12px 46px;
   border-top: 1px solid rgba(20, 24, 33, .08); background: rgba(255, 255, 255, .7); }
 #sections[hidden] { display: none; }
@@ -142,3 +142,28 @@ html, body { height: 100%; margin: 0; font: 13px/1.45 var(--sans); color: var(--
 #graph.maxed #graphSvg { height: calc(100vh - 120px); }
 body.has-max::before { content: ''; position: fixed; inset: 0; background: rgba(15, 20, 32, .45); z-index: 40; }
 #top.maxed, #path.maxed, #graph.maxed { background: #fff; padding: 18px 22px; }
+
+/* view toolbar now lives in the left panel; a collapse button appears on the landscape only when it is expanded */
+#panel #viewbar button { margin: 0; border: 0; background: transparent; color: #c9cfdc; padding: 6px 6px; border-radius: 9px; font: 600 11px var(--display); letter-spacing: .02em; }
+#panel #viewbar { flex-wrap: nowrap; justify-content: space-between; }
+#panel #viewbar button:hover { color: #fff; background: transparent; }
+#panel #viewbar button.on { background: linear-gradient(90deg, #ff4d6d, #ff7a59); color: #fff; }
+.maxonly { display: none; }
+#viewport.maxed .maxonly { display: block; position: absolute; top: 12px; right: 12px; z-index: 5; width: 32px; height: 32px; border: 0;
+  border-radius: 50%; background: rgba(15, 20, 32, .86); color: #fff; font-size: 15px; cursor: pointer; }
+/* title: MARKETRANK in the FLUXSCAPE display style, larger */
+#panel h1 .name { font: 700 22px/1 var(--display); letter-spacing: .24em; text-transform: uppercase; }
+#panel h1 .view { letter-spacing: .42em; margin-top: 6px; }
+#panel h1 .logo { width: 38px; height: 38px; }
+/* portfolio editor in the panel */
+#panel h2.withbtn { display: flex; justify-content: space-between; align-items: center; }
+#panel .textbtn { margin: 0; border: 0; background: none; color: var(--accent2); font: 600 11.5px var(--sans); text-transform: none; letter-spacing: 0;
+  padding: 3px 6px; border-radius: 8px; cursor: pointer; }
+#panel .textbtn:hover { background: rgba(91,140,255,.15); }
+.pfbar { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.pfrow { display: grid; grid-template-columns: 1fr 74px 24px; gap: 6px; margin: 4px 0; }
+#panel .pfrow input { width: auto; min-width: 0; background: #0b0f18; color: var(--pink); border: 1px solid var(--pline); border-radius: 7px;
+  padding: 5px 8px; font: 600 12px var(--mono); }
+#panel .pfrow input.tk { text-transform: uppercase; }
+#panel .pfrow button { margin: 0; padding: 0; width: 24px; border-radius: 50%; background: #1d2638; border: 1px solid var(--pline); }
+#pfSave { background: linear-gradient(90deg, #ff4d6d, #ff7a59) !important; border-color: transparent !important; color: #fff !important; }
