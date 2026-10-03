@@ -20,7 +20,8 @@ import synth  # noqa: E402
 import train_wf  # noqa: E402
 
 # 120 rebalances; blocks start at positions 30, 50, 70, 90, 110
-COMMON = ["--min-history", "30", "--retrain-every", "20", "--epochs", "3", "--finetune-epochs", "2",
+COMMON = ["--min-history", "30", "--retrain-every", "20", "--epochs", "3", "--finetune-epochs", "2", "--window", "0",
+          "--ft-holdout", "5",
           "--threads", "2", "--quiet", "--seed", "3"]
 
 
@@ -108,6 +109,55 @@ class Persistence(unittest.TestCase):
         r = run(self.full, self.sub("mm_out3"), store, variants="B0", extra=["--l1", "0.5", "--fresh"])
         self.assertEqual(r["variants"]["B0"]["retrained_blocks"], [0, 1, 2, 3, 4])
 
+    def test_rolling_logs_honest_oos_and_holdout(self):
+        hist = self.ref["variants"]["learned"]["history"]
+        self.assertIsNone(hist[0]["oos"])
+        for h in hist[1:]:
+            self.assertEqual(h["kind"], "finetune")
+            self.assertEqual(h["oos"]["n_dates"], 20)  # the dates that became usable since the last retrain
+            self.assertTrue(np.isfinite(h["oos"]["loss"]) and np.isfinite(h["oos"]["ic"]))
+            self.assertEqual(h["n_val"], 5)
+            self.assertIsNotNone(h["initial_val_loss"])
+            self.assertGreaterEqual(h["best_epoch"], -1)
+        run_json = json.loads(read(os.path.join(self.sub("ref_out"), "run.json")))
+        self.assertIn("oos", run_json["variants"]["learned"]["history"][1])
+
+    def test_refuses_on_threads_or_rewritten_history(self):
+        store = self.sub("th_store")
+        run(self.part, self.sub("th_out1"), store, variants="B0")
+        with self.assertRaises(SystemExit) as cm:
+            run(self.full, self.sub("th_out2"), store, variants="B0", extra=["--threads", "1"])
+        self.assertIn("threads", str(cm.exception))
+        # same params, but the export's bar times before the stored cutoff changed
+        p = pnl.load_panel(self.full)
+        times = p.times.copy()
+        times[5] += 1
+        moved = self.sub("moved")
+        pnl.write_panel(moved, p.tickers, p.sectors, times, p.rebalance, {k: p.a[k] for k in pnl.FIELDS})
+        with self.assertRaises(SystemExit) as cm:
+            run(moved, self.sub("th_out3"), store, variants="B0")
+        self.assertIn("bar times", str(cm.exception))
+
+    def test_params_hash_covers_source_and_panel_meta(self):
+        params = self.ref["variants"]["B0"]["params"]
+        self.assertEqual(params["source"], train_wf.source_digest())
+        self.assertIsNotNone(params["panel_meta"])
+        for k in ("threads", "emb_l2", "emb_lr", "rank", "l1", "ft_holdout", "window"):
+            self.assertIn(k, params)
+
+    def test_git_sha_change_warns(self):
+        store = self.sub("sha_store")
+        run(self.part, self.sub("sha_out1"), store, variants="B0")
+        info_path = os.path.join(store, "B0", "latest.json")
+        info = json.loads(read(info_path))
+        info["git_sha"] = "0000000"
+        write_text(info_path, json.dumps(info))
+        logs = []
+        args = train_wf.parse_args(["--panel", self.full, "--out", self.sub("sha_out2"), "--store", store,
+                                    "--variants", "B0", *COMMON])
+        train_wf.run_variant(pnl.load_panel(self.full), "B0", args, log=logs.append)
+        self.assertTrue(any("warning" in m and "0000000" in m for m in logs))
+
     def test_crash_mid_write_then_resume(self):
         store = self.sub("crash_store")
         real = st.Store.save_predictions
@@ -168,7 +218,7 @@ class NewTickers(unittest.TestCase):
         opt = mdl.make_optimizer(m)
         b = mdl.Batch(d=0, t=0, nodes=np.arange(3), tickers=["A", "B", "C"], x=torch.randn(3, mdl.N_FEATURES),
                       y=torch.randn(3), sector=torch.zeros(3, dtype=torch.int64))
-        mdl.date_loss(m, b, 1.0, 1e-4).backward()
+        mdl.date_loss(m, b, mdl.Reg()).backward()
         opt.step()
         old_s, old_d = m.E_s.detach().clone(), m.E_d.detach().clone()
         m.ensure_tickers(["D", "A"], opt)  # D new; B and C departed but keep their rows
@@ -186,7 +236,7 @@ class NewTickers(unittest.TestCase):
         opt.zero_grad()
         b2 = mdl.Batch(d=0, t=0, nodes=np.arange(2), tickers=["D", "A"], x=torch.randn(2, mdl.N_FEATURES),
                        y=torch.randn(2), sector=torch.zeros(2, dtype=torch.int64))
-        mdl.date_loss(m, b2, 1.0, 1e-4).backward()
+        mdl.date_loss(m, b2, mdl.Reg()).backward()
         opt.step()
         # absent rows are not decayed: only Adam's fading momentum moves them (<= ~lr per step)
         emb_lr = opt.param_groups[1]["lr"]

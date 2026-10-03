@@ -3,9 +3,12 @@
 Variants (identical except the message-passing matrix A):
   learned  A = row-softmax over the top-k of relu(E_s E_d^T) (per-ticker embeddings, diagonal masked)
   B0       m = 0 (no graph; the decisive baseline)
+  B0E      control: B0 plus the same per-ticker embedding fed straight into the head, head([h, E_s[i]]), no
+           message -- separates "the graph helps" from "per-ticker parameters help"
   B1       A = a supplied fixed sparse matrix (e.g. MarketRank's P), row-normalized
   B2       A = sector block (uniform over the same-sector nodes, excluding self)
 """
+import copy
 import zlib
 from dataclasses import dataclass
 
@@ -16,11 +19,9 @@ import torch.nn.functional as F
 
 FEATURES = ("r1", "r5", "r20", "dvshock", "vol20", "pressure")
 N_FEATURES = 2 * len(FEATURES)  # value + missing flag
-VARIANTS = ("learned", "B0", "B1", "B2")
-# Embedding init: entries 0.25 +- 0.25, so S = E_s.E_d^T starts at ~1 +- 0.4, almost all positive: relu is not
-# dead for any pair at init and every edge can receive gradient (with mean-0 init half the pairs never learn).
-EMB_INIT_MEAN = 0.25
-EMB_INIT_STD = 0.25
+VARIANTS = ("learned", "B0", "B0E", "B1", "B2")
+# Embedding init: entries (1 +- 1)/sqrt(rank), so S = E_s.E_d^T starts at ~1 and is almost always positive: relu is
+# not dead for any pair at init and every edge can receive gradient (with mean-0 init half the pairs never learn).
 
 
 # ---------------------------------------------------------------- features
@@ -52,16 +53,6 @@ def rank_gauss(v):
     return out
 
 
-def robust_std(v):
-    v = v[np.isfinite(v)]
-    if v.size == 0:
-        return 1.0
-    s = 1.4826 * np.median(np.abs(v - np.median(v)))
-    if not np.isfinite(s) or s <= 0:
-        s = v.std()
-    return s if np.isfinite(s) and s > 0 else 1.0
-
-
 def node_set(p, d, max_nodes, require_label):
     """The walk-forward's decision set at bar d -- elig AND active (active.f32 when exported, else finite
     pressure: inactive nodes are exactly those with NaN pressure) -- with a finite label when training, capped to
@@ -91,8 +82,8 @@ def _window_sum(r, d, nodes, length):
 def date_features(p, d, nodes):
     """Causal features (bars <= d), each rank-gaussianized over the node set; NaN -> 0 plus a missing flag."""
     r = p.a["ret1"]
+    # (pressure is rank-gaussianized like everything else, so no scale normalization is needed)
     press = p.a["pressure"][d, nodes].astype(np.float64)
-    press = press / robust_std(press)
     raw = [_window_sum(r, d, nodes, 1), _window_sum(r, d, nodes, 5), _window_sum(r, d, nodes, 20),
            p.a["dvshock"][d, nodes].astype(np.float64), p.a["vol20"][d, nodes].astype(np.float64), press]
     x = np.zeros((len(nodes), N_FEATURES), dtype=np.float32)
@@ -129,8 +120,16 @@ def make_batch(p, d, max_nodes, train, sector_codes, b1_lookup=None):
 
 # ---------------------------------------------------------------- net
 
+@dataclass
+class Reg:
+    """Loss weights: loss = MSE - lambda_ic * Pearson + l1 * mean(S) + emb_l2 * mean(E[rows]^2)."""
+    lambda_ic: float = 1.0
+    l1: float = 1e-2
+    emb_l2: float = 1e-3
+
+
 class GraphNet(nn.Module):
-    def __init__(self, variant, rank=16, topk=20, dropout=0.1, seed=0):
+    def __init__(self, variant, rank=8, topk=20, dropout=0.1, seed=0):
         super().__init__()
         if variant not in VARIANTS:
             raise ValueError(f"unknown variant {variant}")
@@ -138,18 +137,19 @@ class GraphNet(nn.Module):
         self._dense = None
         self.enc = nn.Sequential(nn.Linear(N_FEATURES, 64), nn.GELU(), nn.Dropout(dropout),
                                  nn.Linear(64, 32), nn.GELU(), nn.Dropout(dropout))
-        self.head = nn.Sequential(nn.Linear(64, 32), nn.GELU(), nn.Dropout(dropout), nn.Linear(32, 1))
+        head_in = 32 + (rank if variant == "B0E" else 32)
+        self.head = nn.Sequential(nn.Linear(head_in, 32), nn.GELU(), nn.Dropout(dropout), nn.Linear(32, 1))
         self.tickers = []  # embedding row -> ticker
         self.row = {}  # ticker -> embedding row
-        if variant == "learned":
-            self.E_s = nn.Parameter(torch.zeros(0, rank))
-            self.E_d = nn.Parameter(torch.zeros(0, rank))
+        self.emb_names = {"learned": ("E_s", "E_d"), "B0E": ("E_s",)}.get(variant, ())
+        for name in self.emb_names:
+            setattr(self, name, nn.Parameter(torch.zeros(0, rank)))
 
     # --- per-ticker embeddings that persist across dates and universe changes
     def _ticker_init(self, ticker):
         key = (zlib.crc32(ticker.encode()) * 1_000_003 + 7919 * int(self.seed)) % (2 ** 62)
         g = torch.Generator().manual_seed(key)
-        return EMB_INIT_MEAN + torch.randn(2, self.rank, generator=g) * EMB_INIT_STD
+        return (1.0 + torch.randn(2, self.rank, generator=g)) / self.rank ** 0.5
 
     def ensure_tickers(self, tickers, optimizer=None):
         """Give every new ticker a fresh (ticker-seeded, order-independent) embedding row; existing and departed
@@ -160,10 +160,11 @@ class GraphNet(nn.Module):
                 self.row[t] = len(self.tickers)
                 self.tickers.append(t)
                 new.append(t)
-        if not new or self.variant != "learned":
+        if not new or not self.emb_names:
             return
         init = torch.stack([self._ticker_init(t) for t in new])  # [n_new, 2, r]
-        for name, part in (("E_s", init[:, 0]), ("E_d", init[:, 1])):
+        for j, name in enumerate(self.emb_names):
+            part = init[:, j]
             old = getattr(self, name)
             newp = nn.Parameter(torch.cat([old.data, part]))
             if optimizer is not None:
@@ -196,38 +197,51 @@ class GraphNet(nn.Module):
         self._dense = torch.softmax(masked, dim=1) if self.training else None
         return idx, torch.softmax(vals, dim=1), pen
 
+    def emb_sq(self, rows):
+        """mean(E_s[rows]^2 + E_d[rows]^2): an L2 penalty on the rows of today's nodes only (absent tickers are
+        left untouched)."""
+        return sum((getattr(self, name)[rows] ** 2).mean() for name in self.emb_names)
+
     def forward(self, b):
+        """Returns (y_hat, aux) with aux = {"s_mean": mean off-diagonal S, "e_sq": embedding L2 term}."""
         h = self.enc(b.x)
-        pen = h.new_zeros(())
+        zero = h.new_zeros(())
+        aux = {"s_mean": zero, "e_sq": zero}
         n = h.shape[0]
-        if self.variant == "B0" or n < 2:
-            m = torch.zeros_like(h)
+        rows = self.rows_for(b.tickers) if self.emb_names else None
+        if rows is not None:
+            aux["e_sq"] = self.emb_sq(rows)
+        if self.variant == "B0E":
+            z = self.E_s[rows]  # the same per-ticker embedding, fed straight into the head; no message
+        elif self.variant == "B0" or n < 2:
+            z = torch.zeros_like(h)
         elif self.variant == "B2":
+            # static sectors (the panel's one sector label per ticker)
             g = int(b.sector.max()) + 1
             sums = torch.zeros(g, h.shape[1]).index_add(0, b.sector, h)
             cnt = torch.bincount(b.sector, minlength=g).to(h.dtype)
-            m = (sums[b.sector] - h) / (cnt[b.sector] - 1).clamp(min=1).unsqueeze(1)
+            z = (sums[b.sector] - h) / (cnt[b.sector] - 1).clamp(min=1).unsqueeze(1)
         elif self.variant == "B1":
-            m = torch.zeros_like(h)
+            z = torch.zeros_like(h)
             if b.b1 is not None and len(b.b1[0]):
-                rows, cols, w = b.b1
-                m = m.index_add(0, rows, w.unsqueeze(1) * h[cols])
+                br, bc, w = b.b1
+                z = z.index_add(0, br, w.unsqueeze(1) * h[bc])
         else:
-            idx, w, pen = self.adjacency(self.rows_for(b.tickers))
-            m = (w.unsqueeze(-1) * h[idx]).sum(1)
+            idx, w, aux["s_mean"] = self.adjacency(rows)
+            z = (w.unsqueeze(-1) * h[idx]).sum(1)
             if self._dense is not None:
                 # training only, straight-through: the forward value stays the top-k message, but the dense
                 # row-softmax adds a gradient path to every S_ij (only S learns through it). Without it only the
                 # k selected edges per row get gradient and true edges outside the top-k are never discovered.
                 md = self._dense @ h.detach()
-                m = m + md - md.detach()
-        return self.head(torch.cat([h, m], dim=1)).squeeze(-1), pen
+                z = z + md - md.detach()
+        return self.head(torch.cat([h, z], dim=1)).squeeze(-1), aux
 
 
-def make_optimizer(model, lr=1e-3, weight_decay=1e-4, emb_lr=1e-2):
-    """Adam; weight decay on the net weights only. The embeddings are regularized by the L1 term on S (decaying
-    them too would shrink the rows of tickers that are absent from the current universe), and use their own,
-    larger learning rate (each row only moves on the dates its ticker is in the node set)."""
+def make_optimizer(model, lr=1e-3, weight_decay=1e-4, emb_lr=1e-3):
+    """Adam; weight decay on the net weights only. The embeddings get their own lr and no weight decay -- they are
+    regularized by emb_l2 on the rows of each date's nodes (AdamW-style decay would also shrink the rows of
+    tickers absent from the current universe)."""
     emb = [p for n, p in model.named_parameters() if n in ("E_s", "E_d")]
     net = [p for n, p in model.named_parameters() if n not in ("E_s", "E_d")]
     groups = [{"params": net, "weight_decay": weight_decay}]
@@ -244,47 +258,73 @@ def pearson(a, b):
     return (a * b).sum() / (a.norm() * b.norm() + 1e-8)
 
 
-def date_loss(model, b, lambda_ic, l1):
-    yhat, pen = model(b)
-    return F.mse_loss(yhat, b.y) - lambda_ic * pearson(yhat, b.y) + l1 * pen
+def date_loss(model, b, reg):
+    yhat, aux = model(b)
+    return (F.mse_loss(yhat, b.y) - reg.lambda_ic * pearson(yhat, b.y) + reg.l1 * aux["s_mean"]
+            + reg.emb_l2 * aux["e_sq"])
 
 
-def evaluate(model, batches, lambda_ic, l1):
+def evaluate(model, batches, reg):
     if not batches:
         return float("nan")
     model.eval()
     with torch.no_grad():
-        return float(np.mean([date_loss(model, b, lambda_ic, l1).item() for b in batches]))
+        return float(np.mean([date_loss(model, b, reg).item() for b in batches]))
 
 
-def fit(model, opt, train, val, epochs, lambda_ic=1.0, l1=1e-4, patience=None, restore_best=False, seed=0):
-    """One date per step, dates shuffled per epoch (seeded). Early stopping on `val` when patience is set."""
+def spearman_np(a, b):
+    ra, rb = avg_ranks(a), avg_ranks(b)
+    ra, rb = ra - ra.mean(), rb - rb.mean()
+    den = np.sqrt((ra * ra).sum() * (rb * rb).sum())
+    return float((ra * rb).sum() / den) if den > 0 else float("nan")
+
+
+def evaluate_ic(model, batches):
+    """Mean per-date Spearman of y_hat vs the label (y is a monotone transform of label_w)."""
+    ics = [spearman_np(predict(model, b), b.y.numpy()) for b in batches if len(b.nodes) >= 3]
+    ics = [x for x in ics if np.isfinite(x)]
+    return float(np.mean(ics)) if ics else float("nan")
+
+
+def _snapshot(model, opt):
+    return copy.deepcopy(model.state_dict()), copy.deepcopy(opt.state_dict())
+
+
+def fit(model, opt, train, val, epochs, reg, patience=None, seed=0, keep_initial=False):
+    """One date per step, dates shuffled per epoch (seeded). With `val` and `patience`: early stopping, and the
+    weights AND the Adam state of the best epoch are restored at the end. keep_initial=True also scores the
+    starting model on `val` first (epoch -1), so a fine-tune that never improves the held-out loss keeps the
+    pre-fine-tune state."""
     gen = torch.Generator().manual_seed(seed)
-    hist = {"train_loss": [], "val_loss": [], "best_epoch": None}
+    hist = {"train_loss": [], "val_loss": [], "best_epoch": None, "initial_val_loss": None}
+    early = patience is not None and bool(val)
     best, best_state, bad = float("inf"), None, 0
+    if early and keep_initial:
+        best = hist["initial_val_loss"] = evaluate(model, val, reg)
+        best_state, hist["best_epoch"] = _snapshot(model, opt), -1
     for ep in range(epochs):
         model.train()
         tot = 0.0
         for i in torch.randperm(len(train), generator=gen).tolist():
             opt.zero_grad()
-            loss = date_loss(model, train[i], lambda_ic, l1)
+            loss = date_loss(model, train[i], reg)
             loss.backward()
             opt.step()
             tot += loss.item()
         hist["train_loss"].append(tot / max(1, len(train)))
-        vl = evaluate(model, val, lambda_ic, l1)
+        vl = evaluate(model, val, reg)
         hist["val_loss"].append(vl)
-        if patience is not None and val:
+        if early:
             if vl < best:
                 best, bad, hist["best_epoch"] = vl, 0, ep
-                if restore_best:
-                    best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
+                best_state = _snapshot(model, opt)
             else:
                 bad += 1
                 if bad >= patience:
                     break
-    if restore_best and best_state is not None:
-        model.load_state_dict(best_state)
+    if early and best_state is not None:
+        model.load_state_dict(best_state[0])
+        opt.load_state_dict(best_state[1])
     model.eval()
     return hist
 

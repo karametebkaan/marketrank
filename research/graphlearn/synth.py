@@ -14,7 +14,10 @@ import panel as pnl
 
 
 def make_planted_panel(out, n=300, t=1500, beta=0.4, k=3, rank_true=4, null=False, label_shift_weeks=0,
-                       seed=0, sigma=0.02, elig_drop=0.02, n_sectors=10):
+                       seed=0, sigma=0.02, elig_drop=0.02, n_sectors=10, churn=0.0):
+    """Writes the panel to `out` plus `signal.f32` ([T][N]: the true predictable part of label_w at each bar,
+    NaN where there is none) for oracle ICs. churn > 0: that fraction of the stocks lists late and another
+    fraction delists early (eligibility churn, tickers entering and leaving the universe)."""
     rng = np.random.default_rng(seed)
     weeks = t // 5
     t = weeks * 5
@@ -33,6 +36,7 @@ def make_planted_panel(out, n=300, t=1500, beta=0.4, k=3, rank_true=4, null=Fals
     noise_scale = np.where(has_in, np.sqrt(1 - beta ** 2), 1.0)
     for w in range(1, weeks):
         R[w] = beta * (W @ R[w - 1]) + noise_scale * rng.normal(0, sigma, n)
+    sig_w = np.vstack([beta * (W @ R[w - 1])[None, :] for w in range(1, weeks)])  # predictable part of R[w]
     eta = rng.normal(0, sigma / 5, (weeks, 5, n))
     eta -= eta.mean(axis=1, keepdims=True)
     ret1 = (R[:, None, :] / 5 + eta).reshape(t, n)
@@ -41,11 +45,14 @@ def make_planted_panel(out, n=300, t=1500, beta=0.4, k=3, rank_true=4, null=Fals
     label = np.full((t, n), np.nan)
     d = np.arange(t - 5)
     label[d] = cs[d + 6] - cs[d + 1]  # sum of ret1[d+1 .. d+5]
+    signal = np.full((t, n), np.nan)
+    signal[np.arange(4, 5 * (weeks - 1), 5)] = sig_w  # label at bar 5w+4 is R[w+1]
     if label_shift_weeks:
         s = 5 * label_shift_weeks
         shifted = np.full_like(label, np.nan)
         shifted[: t - s] = label[s:]
         label = shifted
+        signal[:] = np.nan  # nothing at bar d predicts R two weeks ahead (W^2 = 0)
 
     vol20 = np.full((t, n), np.nan)
     for i in range(19, t):
@@ -53,6 +60,13 @@ def make_planted_panel(out, n=300, t=1500, beta=0.4, k=3, rank_true=4, null=Fals
     ldv = 15 + rng.normal(0, 1, n)[None, :] + 0.1 * rng.standard_normal((t, n))
     elig = (rng.random((t, n)) > elig_drop).astype(np.float32)
     elig[:20] = 0
+    if churn > 0:
+        late = rng.random(n) < churn
+        early = ~late & (rng.random(n) < churn / (1 - churn))
+        start = np.where(late, rng.integers(20, int(0.6 * t), n), 0)
+        end = np.where(early, rng.integers(int(0.4 * t), t, n), t)
+        bars = np.arange(t)[:, None]
+        elig[(bars < start[None, :]) | (bars >= end[None, :])] = 0
     arrays = {"ret1": ret1, "ldv": ldv, "dvshock": rng.standard_normal((t, n)), "vol20": vol20,
               "pressure": rng.standard_normal((t, n)) * rng.lognormal(0, 1, (t, n)), "elig": elig,
               "label_w": label}
@@ -60,7 +74,12 @@ def make_planted_panel(out, n=300, t=1500, beta=0.4, k=3, rank_true=4, null=Fals
     sectors = [f"SEC{int(s)}" for s in rng.integers(0, n_sectors, n)]
     times = 1_600_000_000 + 86400 * np.arange(t)
     pnl.write_panel(out, tickers, sectors, times, np.arange(4, t, 5), arrays)
+    np.ascontiguousarray(signal, dtype="<f4").tofile(os.path.join(out, "signal.f32"))
     return {"W": W, "sources": sources, "targets": targets, "tickers": tickers}
+
+
+def load_signal(panel_dir, T, N):
+    return np.fromfile(os.path.join(panel_dir, "signal.f32"), dtype="<f4").reshape(T, N)
 
 
 def truncate_panel(src, dst, t_keep, horizon=5):
