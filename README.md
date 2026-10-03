@@ -425,7 +425,7 @@ The blend windows are in rebalance periods: 156/1/104/52 weekly and 36/1/24/12 m
 scripts/ui_smoke.sh                                # headless-Chrome smoke test + screenshot (MODE=replay for real data)
 ```
 
-![Fluxscape on the real replay data, 1d bar of 2026-10-01](docs/img/fluxscape.png)
+![MarketRank Fluxscape on the real 2026-10-01 bar: Sections view, exact top 10, tracked paths and the transition graph](docs/img/fluxscape.png)
 
 The page shows a triangulated landscape of **π relative to size**: the height is log(π_i / s_i), where s_i is the stock's size share (trailing median dollar volume over the sum across active stocks, the size `HotRef::Size` uses). A hill attracts more money than its size predicts, a valley less, and 0 is exactly as predicted; stocks without a size get no height. Ranking and the table show π itself: the landscape is a reading aid, the table is the truth. Note that the many stocks at the teleport floor get the same π whatever their size, so small floor stocks read slightly above 0 here (a mild relief, not a signal). The same value orders the stocks inside each territory and decides mountain or crater. The legend under the landscape names the quantity.
 

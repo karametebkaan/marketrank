@@ -64,7 +64,7 @@ Every trading day, money leaves some stocks and moves into others. \MR\ asks whe
 
 Who sold what to buy what is not public, so the flows are \emph{estimated} from daily prices and volumes with a correlation-tilted gravity model, in a deterministic parallel C++ engine. On a universe of 10{,}000 US stocks and ETFs, the ranking is led by the large semiconductor and technology names, and estimated flows stay within a sector more often than chance. The level of the score, however, does not predict next-day returns: it shows where money sits, not where prices go next. A 3D landscape view, \FS, turns the ranking into terrain: Louvain communities of the recent flow graph, re-clustered on every bar, become territories, ordered by recursive spectral bisection along a generalized Hilbert curve, interpolated by inverse-distance weighting, smoothed by a centroidal-Voronoi-style relaxation with portfolio holdings pinned to their exact values, and rendered as a Gouraud-shaded mesh. The surface is for reading trends; the exact ranked table remains the reference.
 
-The practical question is whether MarketRank can improve real portfolio moves, and we answer it with tests fixed in advance. First, a ten-year walk-forward: step through 2016--2026 week by week, decide each week's moves using only past data, and ask whether following MarketRank beats simply holding the current portfolio after trading costs. It does not. Every configuration lost 3--5\% a year against buy-and-hold, and the one persistent effect, a short-term reversal in which today's hottest names do slightly worse, is statistically real but economically small. Second, we compare the estimated flows with \emph{observed} ones: the quarter-to-quarter holding changes of every institutional manager reporting to the SEC on Form 13F, 39 quarters and 4,000--9,000 managers each. The estimate knows roughly \emph{which} stocks send and receive money and a little about \emph{when}, but nothing about \emph{who pairs with whom} beyond those totals, and plain trading volume ranks the observed destinations better than the estimated score does. Third, the flow communities that shape the landscape are re-clustered from scratch on every bar and measured: they persist only about as long as the flow window that defines them. The conclusion is that public daily bars carry size and a little timing, not pairing; better flow data, not a better solver, is the next step.
+The practical question is whether MarketRank can improve real portfolio moves, and we answer it with tests fixed in advance. First, a ten-year walk-forward: step through 2016--2026 week by week, decide each week's moves using only past data, and ask whether following MarketRank beats simply holding the current portfolio after trading costs. It does not. Every configuration lost 3--5\% a year against buy-and-hold, and the one persistent effect, a short-term reversal in which today's hottest names do slightly worse, is statistically real but economically small. Second, we compare the estimated flows with \emph{observed} ones: the quarter-to-quarter holding changes of every institutional manager reporting to the SEC on Form 13F, 39 quarters and 4,000--9,000 managers each. The estimate knows roughly \emph{which} stocks send and receive money and a little about \emph{when}, but nothing about \emph{who pairs with whom} beyond those totals, and plain trading volume ranks the observed destinations better than the estimated score does. Third, the flow communities that shape the landscape are re-clustered from scratch on every bar and measured: they persist only about as long as the flow window that defines them. The conclusion is that the Markov solver is sound but its transition probabilities are only as good as the connectivity fed into it: public daily bars carry size and a little timing, not pairing. The next step learns the chain's connectivity, who funds whom, directly from market behaviour.
 \end{abstract}
 
 \begin{keyword}
@@ -297,11 +297,26 @@ Raw $\pi$ is dominated by size, since the largest names carry the largest flows.
 
 \subsection{Gouraud-shaded mesh}
 \label{Section:gouraud}
-Each lattice quad is split into two triangles with a fixed index buffer, so per frame only the vertex heights change. Vertex colours come from a diverging map symmetric around 0 (red for inflow, blue for outflow), scaled robustly by the 90th percentile of $|z|$ and soft-clipped by $\tanh$, and each triangle is Gouraud-shaded~\cite{gouraud} with relief lighting. The strongest flux arcs and the user's portfolio are drawn on top. Portfolio holdings are \emph{pinned}: during CVT smoothing their vertices are held at their exact values (a Dirichlet constraint), so the surface passes exactly through each holding while every other vertex is smoothed. On the real 2026-10-01 frame the measured gap between each holding's exact value and the surface is at most $4\cdot10^{-8}$, which is float rounding.
+Each lattice quad is split into two triangles with a fixed index buffer, so per frame only the vertex heights change. Vertex colours come from a diverging map symmetric around 0 (red for inflow, blue for outflow), scaled robustly by the 90th percentile of $|z|$ and soft-clipped by $\tanh$, and each triangle is Gouraud-shaded~\cite{gouraud} with relief lighting. The user's portfolio is drawn as screen-facing dots at the holdings' own surface vertices, depth-tested with the terrain so that they move with it. Portfolio holdings are \emph{pinned}: during CVT smoothing their vertices are held at their exact values (a Dirichlet constraint), so the surface passes exactly through each holding while every other vertex is smoothed. On the real 2026-10-01 frame the measured gap between each holding's exact value and the surface is at most $4\cdot10^{-8}$, which is float rounding.
 
 \paragraph{A fixed interface} The web interface has no model or landscape options. Its settings are fixed defaults: the \MR\ preset, height $\log(\pi/s)$, flux-community territories, the CVT smoother (12 iterations, $\lambda=0.6$) and subdivision 1. The exact sorted $\pi$ table is the truth; the surface is for the eye and the trend. Developer options remain on the command line and the HTTP API.
 
 %% ------------------------------------------------------------------
+\subsection{The view: sections, paths and the chain around a stock}
+\label{Section:view}
+The interface (Figure~\ref{Figure:landscape}) is built around the chain rather than the picture. The default \emph{Sections} view shows the landscape from above with a crosshair; two profile charts cut the surface along the crosshair's row and column and plot every stock on the cut at its exact value, so a hill can be read stock by stock. Orthographic top, front and side views and a perspective 3D view are one click away, and every panel can be expanded to the full screen. The exact ranked table stays beside the landscape at all times.
+
+Any stock can be \emph{tracked}, from the table or by typing its ticker. Its path over the whole cached history is drawn as $\log(\pi/s)$ per bar with a cursor at the displayed bar; dragging the chart scrubs the whole view through time, and several stocks share one chart. A strip under the path colours each bar by the stock's flux community, which makes the churn of Table~\ref{Table:persist} visible stock by stock.
+
+The \emph{transition graph} of the tracked stocks is the chain itself, seen locally (Figure~\ref{Figure:flowgraph}). For every cached bar the server keeps each active stock's six strongest kept out-edges and six strongest in-edges of $P$; for the tracked stocks it returns them, their strongest partners and every stored edge among those partners. An arrow $j\to i$ is money that left $j$ for $i$; its width grows with the cumulative dollars, and its hover gives the transition probability $P_{ji}$, the share of $j$'s kept outflow that goes to $i$, which is exactly the term of Equation~(\ref{eqn:mrc}) through which $j$ passes its rank to $i$. The layout is a force-directed simulation (d3-force~\cite{d3}) whose node positions persist from bar to bar, so the local chain visibly re-wires as the displayed bar moves.
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=0.85\linewidth,trim=200 190 230 205,clip]{figs/flow-graph.png}
+\caption{The transition graph around MU and NVDA (large nodes) on 2026-10-01: their six strongest flow partners each and the 57 kept edges among the ten stocks. Arrows point from the stock money leaves to the stock it reaches; width grows with cumulative dollars, node size with $\log\pi N$. Dark edges touch a tracked stock; pale edges are context among the partners.}
+\label{Figure:flowgraph}
+\end{figure}
+
 \section{Results on real data}
 \label{Section:results}
 
@@ -369,8 +384,8 @@ ETFs are deliberately kept in the universe and in the graph, uncapped and unfilt
 
 \begin{figure*}[t]
 \centering
-\includegraphics[width=0.92\textwidth,keepaspectratio]{figs/fluxscape-final.png}
-\caption{\FS\ on the real 2026-10-01 bar: 6,188 active names (3,939 stocks and 2,249 ETF/funds), \MR\ preset. The surface is laid out in flux-community territories; its height is $\pi$ relative to size, $\log(\pi/s)$, CVT-smoothed, Gouraud-shaded on a red/blue diverging scale at P90 $\pm2.55$. Portfolio holdings (green rings) sit on the surface: their vertices are pinned to their exact values during smoothing. Labels are decluttered. The top-10 panel is the truth table: exact $\pi N$ with the heartbeat $\Delta\log(\pi N)$; the surface is for the trend. The lower-left plateau is a territory in which 87\% of the names are tied at the teleport floor, so their tiny size share makes $\log(\pi/s)$ high (Section~\ref{Section:limits}).}
+\includegraphics[width=\textwidth,keepaspectratio]{figs/fluxscape-ui.png}
+\caption{The \MR\ \FS\ interface on the real 2026-10-01 bar (6,188 active names: 3,939 stocks and 2,249 ETF/funds, which are in the chain but hidden from the surface by default), \MR\ preset. \emph{Centre:} the default Sections view, the landscape seen from above with a crosshair; height and colour are $\pi$ relative to size, $\log(\pi/s)$, on a red/blue diverging scale at P90 $\pm2.32$, and the two profile charts below cut the surface along the crosshair's row and column with every stock on the cut. Portfolio holdings are green dots pinned to their exact values. \emph{Right, top:} the truth table, the ten highest exact $\pi N$ with the heartbeat $\Delta\log(\pi N)$. \emph{Right, middle:} the tracked stocks (MU, NVDA) over the whole cached year, as $\log(\pi/s)$ per bar with a strip of each stock's flux community and a cursor at the displayed bar. \emph{Right, bottom:} the transition graph around the tracked stocks (Figure~\ref{Figure:flowgraph}).}
 \label{Figure:landscape}
 \end{figure*}
 
@@ -451,52 +466,55 @@ money-flow+volscale & 0.180 & 0.281 & 0.234 & 0.118 & 1.99\\
 \end{tabular}
 \end{table}
 
-\paragraph{Flux communities are not sectors} On the last bar the flux graph has 4 communities plus a loose pool of 22 names, with modularity 0.109; every one of the 245 landscape frames has exactly 4 communities, with median modularity 0.150. Against SEC sectors, over the 3,738 active, classified, non-ETF stocks outside the loose pool, the normalized mutual information is 0.0168 and the adjusted Rand index 0.0079, against a shuffled baseline of 0.0021 and 0.0005 (20 seeds). The agreement is above chance but negligible in absolute terms. Table~\ref{Table:comm} shows that each community's leading sectors track the universe base rates (Financials 18.9\%, Health Care 16.7\%, Industrials 16.3\%, IT 13.0\%) to within a few points; the strongest tilt is Industrials at 23\% in community 5. Restricted to the 1,580 off-floor stocks, NMI and ARI roughly double, to 0.028 and 0.015, which is still small. Money rotates across sector lines, and the partition probably reflects liquidity and flow regimes rather than industries. The territories therefore show structure that a sector map does not; we do not claim that they recover sectors.
+\paragraph{Flux communities are not sectors} On the last bar the 20-bar flow graph of the 3,939 placed stocks has 7 communities plus a loose pool of 4 names, with modularity 0.108. Against SEC sectors, over the 3,744 classified stocks outside the loose pool, the normalized mutual information is 0.034, against 0.004 for shuffled labels (20 seeds); the persistence study finds 0.03--0.04 on every flow window (Section~\ref{Section:louvain}). The agreement is above chance but negligible in absolute terms. Table~\ref{Table:comm} shows that each community's leading sectors stay within about ten points of the universe base rates (Financials 19.0\%, Health Care 16.7\%, Industrials 16.3\%, IT 13.0\%); the strongest tilts are Health Care at 32\% and Financials at 32\% in two of the smaller communities. Money rotates across sector lines, and the partition reflects recent flow regimes rather than industries. The territories therefore show structure that a sector map does not; we do not claim that they recover sectors.
 
 \begin{table}[t]
 \centering
-\caption{Flux communities on 2026-10-01. Size is all active members; the top-2 sector shares are among each community's classified non-ETF stocks (Fin.\ = Financials, Indust.\ = Industrials, IT = Information Technology).}
+\caption{Flux communities of the 20-bar flows on 2026-10-01 (ETF/funds hidden, the default). Size is the number of placed stocks; the top-2 sector shares are among each community's classified stocks (Fin.\ = Financials, Indust.\ = Industrials, IT = Information Technology).}
 \label{Table:comm}
-\footnotesize\setlength{\tabcolsep}{2.5pt}
-\begin{tabular}{rrrrll}
+\footnotesize\setlength{\tabcolsep}{3pt}
+\begin{tabular}{rrll}
 \toprule
-Comm. & Size & ETF & Stocks & Top-1 & Top-2\\
+Comm. & Stocks & Top-1 & Top-2\\
 \midrule
-3 & 2401 & 620 & 1697 & Fin.\ 21\% & Health 17\%\\
-5 & 1506 & 614 & 843 & Indust.\ 23\% & IT 17\%\\
-0 & 1231 & 720 & 484 & Indust.\ 19\% & Health 17\%\\
-1 & 1028 & 284 & 714 & Fin.\ 23\% & Health 17\%\\
-loose & 22 & 11 & 9 & Fin.\ 44\% & Staples 11\%\\
+157 & 1391 & Fin.\ 27\% & Indust.\ 17\%\\
+155 & 742 & Indust.\ 20\% & Health 18\%\\
+146 & 610 & Health 22\% & Indust.\ 16\%\\
+150 & 438 & Fin.\ 32\% & IT 20\%\\
+159 & 297 & Health 21\% & IT 20\%\\
+160 & 272 & Health 32\% & Fin.\ 14\%\\
+154 & 185 & Health 23\% & IT 14\%\\
+loose & 4 & -- & --\\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\paragraph{Landscape} Figure~\ref{Figure:landscape} shows the real landscape on 2026-10-01 with flux-community territories, the strongest flux arcs and the portfolio holdings.
+\paragraph{Landscape} Figure~\ref{Figure:landscape} shows the interface on the real 2026-10-01 bar: the landscape in the default Sections view, the exact table, the paths of two tracked stocks and their transition graph.
 \begin{figure*}[t]
 \centering
 \begin{subfigure}[t]{0.49\textwidth}\centering
-\includegraphics[width=\linewidth,trim=330 120 0 0,clip]{figs/tl-1.png}
+\includegraphics[width=\linewidth,trim=15 15 15 15,clip]{figs/tl-1.png}
 \caption{2026-01-02}\label{Figure:tl1}
 \end{subfigure}\hfill
 \begin{subfigure}[t]{0.49\textwidth}\centering
-\includegraphics[width=\linewidth,trim=330 120 0 0,clip]{figs/tl-2.png}
+\includegraphics[width=\linewidth,trim=15 15 15 15,clip]{figs/tl-2.png}
 \caption{2026-04-01}\label{Figure:tl2}
 \end{subfigure}
 
 \medskip
 \begin{subfigure}[t]{0.49\textwidth}\centering
-\includegraphics[width=\linewidth,trim=330 120 0 0,clip]{figs/tl-3.png}
+\includegraphics[width=\linewidth,trim=15 15 15 15,clip]{figs/tl-3.png}
 \caption{2026-07-01}\label{Figure:tl3}
 \end{subfigure}\hfill
 \begin{subfigure}[t]{0.49\textwidth}\centering
-\includegraphics[width=\linewidth,trim=330 120 0 0,clip]{figs/tl-4.png}
+\includegraphics[width=\linewidth,trim=15 15 15 15,clip]{figs/tl-4.png}
 \caption{2026-10-01}\label{Figure:tl4}
 \end{subfigure}
-\caption{\FS\ time-lapse on four real bars about a quarter apart, \MR\ preset, height $\log(\pi/s)$, flux-community territories, holdings pinned to the surface (green rings). The control panel is cropped; each panel keeps its exact top-10 table. Active names: 5,645, 5,879, 6,142 and 6,188.}
+\caption{\FS\ time-lapse on four real bars about a quarter apart, in the default Sections view expanded to the full screen: \MR\ preset, height $\log(\pi/s)$, flux communities re-clustered from scratch on each bar from the 20-bar flows, holdings pinned (green dots), with the row and column profiles under each map. Active names: 5,645, 5,879, 6,142 and 6,188.}
 \label{Figure:timelapse}
 \end{figure*}
 
-\paragraph{Time-lapse} Figure~\ref{Figure:timelapse} shows the landscape on four dates about a quarter apart. On 2026-01-02 a single tall ridge in the upper left stands over a deep basin, and TSLA leads ($\pi N$ 454.3). By 2026-04-01 the relief is flatter, with broader lobes, and SNDK is on top. On 2026-07-01 two red masses stand with hollows between them; MU and SNDK lead, and SOXS enters the top 5. On 2026-10-01 the ridge in the upper left is back, joined by a large red dome on the right. The number of communities stays at 4 throughout, while modularity drifts down from 0.179 to 0.153, 0.123 and 0.109, so the partition is stable in count but grows weaker. The semiconductor and memory complex (MU, SNDK, NVDA, TSLA) stays at the top throughout while its order rotates: TSLA, NVDA, \dots, MU fifth in January; SNDK, TSLA, NVDA, MU in April; MU, SNDK, TSLA, NVDA in July; MU, SNDK, NVDA, TSLA in October. The holdings stay pinned to their exact values and rise and fall with the terrain.
+\paragraph{Time-lapse} Figure~\ref{Figure:timelapse} shows the landscape on four dates about a quarter apart. Because the communities are now re-clustered from scratch on each bar from the recent flows, the territories are re-drawn from panel to panel rather than carried over: there are 7 communities in January (modularity 0.176), 7 in April (0.145), 4 in July (0.108) and 7 in October (0.108). Weakening modularity means the recent flows split less cleanly into groups as the year goes on. The ranking of the chain is far steadier than the map. The semiconductor and memory complex leads throughout while its order rotates: TSLA ($\pi N$ 455.8), NVDA, AMD, BYND and MU in January; SNDK (361.9), TSLA, NVDA and MU in April, with SLV and SQQQ close behind; MU (387.4), SNDK, TSLA, NVDA and SOXS in July; MU (388.3), SNDK, NVDA, TSLA, SOXS and META in October. The holdings stay pinned to their exact values in every panel.
 
 \paragraph{Stability} An earlier version of the view warm-started Louvain from the previous partition and re-clustered only every 5 bars on the cumulative graph. Over 245 frames it kept 85\% of stocks in their cell between re-clusters and 74\% of community labels per re-cluster. That stability was largely produced by the algorithm and the cumulative graph, not by the market (Table~\ref{Table:persist}), and it made the map look more persistent than the flows are. The current view re-clusters from scratch on every bar on the 20-bar flows: territories now hold their shape for about a week and reorganize over a month, as the measurement predicts. The spiral ordering still keeps mountains and craters coherent within a territory (median Spearman correlation of value against distance from the centre 0.98 in the earlier measurement).
 
@@ -747,7 +765,7 @@ The 13F data therefore give no reason to change $\lambda$ or the pressure of the
 
 \paragraph{The landscape is honest about its limits} Re-clustered from scratch on every bar, the flux communities persist about as long as the flow window that defines them and are not sectors. The view now shows that churn instead of hiding it; the exact table remains the reference.
 
-\paragraph{What would change the answer} The negative results locate the bottleneck in the flows, not the solver: public bars carry size and a little timing, not pairing. Data that observe pairing more directly, such as ETF creation and redemption, signed intraday order flow and observed 13F edges mixed into $T$, are the next step, each to be re-tested with the same walk-forward harness and the same 13F nulls.
+\paragraph{What would change the answer} The negative results locate the bottleneck in the flows, not the solver: public bars carry size and a little timing, not pairing. The transition-probability graph remains the core of the method; what must improve is its connectivity. Two routes follow: \emph{learning} the connectivity end to end from market behaviour, so that the chain built on it minimizes the error of next-week return forecasts (a test now registered in advance with graph-free and identity controls), and data that observe pairing more directly, such as ETF creation and redemption, signed intraday order flow and observed 13F edges mixed into $T$, each to be re-tested with the same walk-forward harness and the same 13F nulls.
 
 \section*{Software availability}
 \MR\ is a C++20 program; the model, the evaluation harness and the \FS\ view described here are those of the current implementation.
