@@ -85,7 +85,11 @@ def make_market(root, m):
 
 
 def edge_auc(model, W, targets, tickers):
+    """AUC of the learned edge strength for true vs false edges. A signed model's strength is |S| (its sign is
+    the read-out sign, which is learnable and arbitrary)."""
     S = model.scores(model.rows_for(tickers)).detach().numpy()[targets]
+    if getattr(model, "signed", False):
+        S = np.abs(S)
     truth = W[targets] > 0
     if not truth.any():
         return float("nan")

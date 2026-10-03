@@ -1,9 +1,19 @@
 {
- "status": "frozen by the pre-registered rule in POWER.md (round 2 winner: combo+softplus); chosen on synthetic markets only",
+ "status": "round-2 frozen setting (combo+softplus). Round 3 (POWER.md) found no configuration meeting the pre-registered target, so nothing new is frozen and no real-data run is authorized.",
  "selected": "combo+softplus",
  "settings": {
-  "rank": 8, "topk": 20, "score_fn": "softplus", "emb_lr": 0.01, "emb_l2": 0.001, "l1": 0.1,
-  "finetune_epochs": 5, "ft_holdout": 13, "window": 156, "patience": 10, "epochs": 50, "embargo": 1,
+  "rank": 8,
+  "topk": 20,
+  "score_fn": "softplus",
+  "emb_lr": 0.01,
+  "emb_l2": 0.001,
+  "l1": 0.1,
+  "finetune_epochs": 5,
+  "ft_holdout": 13,
+  "window": 156,
+  "patience": 10,
+  "epochs": 50,
+  "embargo": 1,
   "retrain_every": 13
  }
 }

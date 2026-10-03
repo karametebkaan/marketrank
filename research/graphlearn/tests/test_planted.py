@@ -62,6 +62,8 @@ def edge_auc(model, info):
     """AUC of the learned scores S_ij for true vs false edges over the rows that have true edges."""
     W, tg = info["W"], info["targets"]
     S = model.scores(model.rows_for(info["tickers"])).detach().numpy()[tg]
+    if getattr(model, "signed", False):
+        S = np.abs(S)  # a signed model's edge strength is |S|
     truth = W[tg] > 0
     off_diag = np.ones_like(truth)
     off_diag[np.arange(len(tg)), tg] = False

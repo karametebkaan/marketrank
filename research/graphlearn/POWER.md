@@ -343,3 +343,105 @@ All candidates start from the round-2 frozen setting:
 - the N=1000 churn point.
 
 It reports detection counts, AUC, t against B0 and B0E, and the smallest oracle IC detected on all seeds. The planted unit test must then pass with the frozen settings, with no pinned alternative.
+
+### Round 3 result: no configuration meets the target
+
+Every row is a synthetic market. Raw rows are in `power_results/tune3.jsonl`; the selection is in `selection_tune3.json`.
+
+| candidate | detected (of 12) | at beta 0.3 / 0.4 / 0.6 (of 4 each) | all 4 nulls \|t\|<2 | passes |
+|---|---|---|---|---|
+| icstop+restarts+signed | 9 | 1 / 4 / 4 | yes | no |
+| icstop+signed | 6 | 1 / 2 / 3 | yes | no |
+| icstop | 5 | 1 / 1 / 3 | yes | no |
+| icstop+restarts | 5 | 0 / 1 / 4 | yes | no |
+
+**No configuration passes the pre-registered target** of at least 10 of 12 planted markets with every null clean.
+- The best, `icstop+restarts+signed`, detects 9 of 12:
+  - every planted market at beta 0.4 (oracle IC 0.24) and beta 0.6 (oracle IC 0.36), in both modes and on both seeds, with t from 3.4 to 24;
+  - only 1 of 4 at beta 0.3 (oracle IC 0.17).
+- Its nulls are clean: max |t| = 1.95.
+- The miss that cost the target is beta 0.3, seed 201, rolling. There learned − B0 had t = 3.2, but learned − B0E had t = 1.2.
+
+Under the rule, nothing is frozen from round 3. The settings stay at the round-2 values (`frozen_settings.json`), and **real data is not run.**
+
+**Changes from round 2 to round 3, read descriptively, not as a selection:**
+- **The signed message removes the bimodal failure.** With it, learned recovers the graph on both seeds: edge AUC on |S| is 0.84 to 0.96 wherever beta ≥ 0.4. Without it, AUC sits at 0.45 to 0.70.
+  - The raw-S AUC of the signed models is often far *below* 0.5, down to 0.04. That means the learned edges are the true ones, carrying a negative sign, which the read-out flips. This confirms that the round-2 failure was the read-out sign.
+- **IC early stopping with min-epochs 15 alone** (`icstop`): 5 of 12. **Restarts alone on top of it:** 5 of 12.
+
+**Edge AUC for signed models.** It is computed on |S|: a signed model's edge strength is the magnitude, and the sign belongs to the read-out. The raw-S value is kept as `edge_auc_signedS` in the jsonl. The AUC is not part of the selection rule.
+
+**What this means.**
+- On these synthetic markets, the best procedure (signed message, IC stopping, restarts) needs an oracle IC of about **0.24** (beta 0.4) for reliable detection. It is marginal at 0.17 and gone below that.
+- Realistic weekly cross-sectional ICs are 0.01 to 0.05, so the needed oracle IC is 5 to 20 times larger.
+- So the model class, as trained here, cannot recover a planted stock-to-stock graph at realistic signal strength with about 3 years of weekly data and N=300.
+- A real-data run would not be informative in its negative direction, and per the ruling it is not run.
+
+#### Every round-3 tuning point (seeds 201/202)
+
+| setting | N | beta | seed | null/churn | mode | oracle IC | learned IC | learned-B0 (t) | learned-B0E (t) | B0E-B0 (t) | edge AUC | 1st best epoch |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| icstop | 300 | 0.3 | 201 |  | rolling | 0.174 | +0.001 | -0.003 (-0.4) | -0.004 (-0.5) | +0.001 (+0.1) | 0.508 | 7 |
+| icstop | 300 | 0.4 | 201 |  | rolling | 0.236 | +0.000 | -0.004 (-0.6) | -0.003 (-0.5) | -0.001 (-0.1) | 0.533 | 4 |
+| icstop | 300 | 0.6 | 201 |  | rolling | 0.365 | +0.023 | +0.017 (+2.2) | +0.019 (+2.6) | -0.002 (-0.3) | 0.546 | 5 |
+| icstop | 300 | 0.8 | 201 | null | rolling | 0.000 | +0.007 | +0.006 (+0.8) | -0.002 (-0.3) | +0.007 (+1.1) | nan | 6 |
+| icstop | 300 | 0.3 | 202 |  | rolling | 0.176 | +0.015 | +0.015 (+2.3) | +0.015 (+2.2) | -0.000 (-0.1) | 0.555 | 29 |
+| icstop | 300 | 0.4 | 202 |  | rolling | 0.237 | +0.043 | +0.042 (+5.9) | +0.044 (+5.9) | -0.001 (-0.2) | 0.607 | 24 |
+| icstop | 300 | 0.6 | 202 |  | rolling | 0.364 | +0.151 | +0.149 (+18.3) | +0.152 (+17.0) | -0.003 (-0.4) | 0.701 | 42 |
+| icstop | 300 | 0.8 | 202 | null | rolling | 0.000 | -0.002 | +0.002 (+0.3) | +0.004 (+0.6) | -0.002 (-0.3) | nan | 4 |
+| icstop | 300 | 0.3 | 201 |  | scratch | 0.174 | +0.002 | -0.002 (-0.3) | -0.002 (-0.4) | +0.001 (+0.1) | 0.485 | 7 |
+| icstop | 300 | 0.4 | 201 |  | scratch | 0.236 | -0.002 | -0.004 (-0.7) | -0.005 (-0.7) | +0.000 (+0.0) | 0.445 | 4 |
+| icstop | 300 | 0.6 | 201 |  | scratch | 0.365 | +0.011 | +0.011 (+1.6) | +0.009 (+1.2) | +0.002 (+0.3) | 0.458 | 5 |
+| icstop | 300 | 0.8 | 201 | null | scratch | 0.000 | +0.004 | -0.000 (-0.0) | -0.003 (-0.4) | +0.002 (+0.4) | nan | 6 |
+| icstop | 300 | 0.3 | 202 |  | scratch | 0.176 | +0.002 | +0.003 (+0.4) | +0.001 (+0.2) | +0.001 (+0.2) | 0.504 | 29 |
+| icstop | 300 | 0.4 | 202 |  | scratch | 0.237 | +0.008 | +0.008 (+1.2) | +0.009 (+1.1) | -0.001 (-0.1) | 0.500 | 24 |
+| icstop | 300 | 0.6 | 202 |  | scratch | 0.364 | +0.036 | +0.039 (+4.8) | +0.036 (+4.2) | +0.003 (+0.4) | 0.476 | 42 |
+| icstop | 300 | 0.8 | 202 | null | scratch | 0.000 | +0.004 | +0.005 (+1.0) | +0.007 (+1.0) | -0.002 (-0.3) | nan | 4 |
+| icstop+signed | 300 | 0.3 | 201 |  | rolling | 0.174 | +0.011 | +0.007 (+1.1) | +0.006 (+0.9) | +0.001 (+0.1) | 0.641 | 17 |
+| icstop+signed | 300 | 0.4 | 201 |  | rolling | 0.236 | +0.009 | +0.005 (+0.7) | +0.005 (+0.9) | -0.001 (-0.1) | 0.604 | 1 |
+| icstop+signed | 300 | 0.6 | 201 |  | rolling | 0.365 | -0.006 | -0.012 (-1.6) | -0.009 (-1.2) | -0.002 (-0.3) | 0.800 | 8 |
+| icstop+signed | 300 | 0.8 | 201 | null | rolling | 0.000 | +0.006 | +0.004 (+0.7) | -0.003 (-0.5) | +0.007 (+1.1) | nan | 2 |
+| icstop+signed | 300 | 0.3 | 202 |  | rolling | 0.176 | +0.023 | +0.022 (+3.4) | +0.023 (+3.0) | -0.000 (-0.1) | 0.705 | 42 |
+| icstop+signed | 300 | 0.4 | 202 |  | rolling | 0.237 | +0.048 | +0.047 (+7.0) | +0.049 (+6.9) | -0.001 (-0.2) | 0.860 | 25 |
+| icstop+signed | 300 | 0.6 | 202 |  | rolling | 0.364 | +0.164 | +0.162 (+20.9) | +0.165 (+19.9) | -0.003 (-0.4) | 0.949 | 27 |
+| icstop+signed | 300 | 0.8 | 202 | null | rolling | 0.000 | +0.001 | +0.005 (+0.8) | +0.007 (+1.0) | -0.002 (-0.3) | nan | 15 |
+| icstop+signed | 300 | 0.3 | 201 |  | scratch | 0.174 | +0.004 | +0.001 (+0.1) | -0.000 (-0.0) | +0.001 (+0.1) | 0.502 | 17 |
+| icstop+signed | 300 | 0.4 | 201 |  | scratch | 0.236 | +0.012 | +0.010 (+1.4) | +0.010 (+1.6) | +0.000 (+0.0) | 0.659 | 1 |
+| icstop+signed | 300 | 0.6 | 201 |  | scratch | 0.365 | +0.114 | +0.114 (+12.7) | +0.112 (+11.0) | +0.002 (+0.3) | 0.900 | 8 |
+| icstop+signed | 300 | 0.8 | 201 | null | scratch | 0.000 | +0.008 | +0.004 (+0.7) | +0.002 (+0.4) | +0.002 (+0.4) | nan | 2 |
+| icstop+signed | 300 | 0.3 | 202 |  | scratch | 0.176 | +0.001 | +0.002 (+0.2) | +0.000 (+0.1) | +0.001 (+0.2) | 0.507 | 42 |
+| icstop+signed | 300 | 0.4 | 202 |  | scratch | 0.237 | +0.015 | +0.015 (+2.2) | +0.016 (+2.1) | -0.001 (-0.1) | 0.505 | 25 |
+| icstop+signed | 300 | 0.6 | 202 |  | scratch | 0.364 | +0.126 | +0.128 (+15.6) | +0.125 (+14.2) | +0.003 (+0.4) | 0.931 | 27 |
+| icstop+signed | 300 | 0.8 | 202 | null | scratch | 0.000 | -0.007 | -0.006 (-0.8) | -0.004 (-0.6) | -0.002 (-0.3) | nan | 15 |
+| icstop+restarts | 300 | 0.3 | 201 |  | rolling | 0.174 | +0.002 | +0.009 (+1.4) | -0.005 (-0.8) | +0.014 (+2.1) | 0.520 | 2 |
+| icstop+restarts | 300 | 0.4 | 201 |  | rolling | 0.236 | +0.009 | +0.010 (+1.4) | +0.005 (+0.6) | +0.005 (+0.8) | 0.540 | 2 |
+| icstop+restarts | 300 | 0.6 | 201 |  | rolling | 0.365 | +0.083 | +0.077 (+10.8) | +0.080 (+10.5) | -0.003 (-0.5) | 0.587 | 27 |
+| icstop+restarts | 300 | 0.8 | 201 | null | rolling | 0.000 | +0.003 | +0.002 (+0.3) | -0.008 (-1.2) | +0.010 (+1.5) | nan | 6 |
+| icstop+restarts | 300 | 0.3 | 202 |  | rolling | 0.176 | +0.010 | +0.009 (+1.4) | +0.010 (+1.6) | -0.001 (-0.1) | 0.594 | 30 |
+| icstop+restarts | 300 | 0.4 | 202 |  | rolling | 0.237 | +0.043 | +0.041 (+5.9) | +0.040 (+5.5) | +0.001 (+0.2) | 0.607 | 24 |
+| icstop+restarts | 300 | 0.6 | 202 |  | rolling | 0.364 | +0.151 | +0.148 (+18.2) | +0.148 (+17.6) | -0.001 (-0.1) | 0.701 | 42 |
+| icstop+restarts | 300 | 0.8 | 202 | null | rolling | 0.000 | +0.002 | +0.003 (+0.5) | +0.013 (+2.0) | -0.010 (-1.5) | nan | 33 |
+| icstop+restarts | 300 | 0.3 | 201 |  | scratch | 0.174 | +0.001 | -0.002 (-0.3) | -0.001 (-0.1) | -0.001 (-0.2) | 0.456 | 2 |
+| icstop+restarts | 300 | 0.4 | 201 |  | scratch | 0.236 | -0.002 | -0.000 (-0.1) | -0.002 (-0.3) | +0.002 (+0.2) | 0.482 | 2 |
+| icstop+restarts | 300 | 0.6 | 201 |  | scratch | 0.365 | +0.041 | +0.036 (+4.4) | +0.044 (+5.4) | -0.009 (-1.2) | 0.576 | 27 |
+| icstop+restarts | 300 | 0.8 | 201 | null | scratch | 0.000 | +0.004 | +0.001 (+0.2) | -0.003 (-0.4) | +0.004 (+0.6) | nan | 6 |
+| icstop+restarts | 300 | 0.3 | 202 |  | scratch | 0.176 | -0.007 | -0.007 (-1.1) | -0.002 (-0.3) | -0.005 (-1.0) | 0.483 | 30 |
+| icstop+restarts | 300 | 0.4 | 202 |  | scratch | 0.237 | +0.001 | -0.000 (-0.1) | +0.005 (+0.7) | -0.006 (-1.0) | 0.542 | 24 |
+| icstop+restarts | 300 | 0.6 | 202 |  | scratch | 0.364 | +0.076 | +0.078 (+9.8) | +0.078 (+10.0) | -0.000 (-0.0) | 0.611 | 42 |
+| icstop+restarts | 300 | 0.8 | 202 | null | scratch | 0.000 | +0.005 | +0.006 (+1.0) | +0.010 (+1.4) | -0.003 (-0.6) | nan | 33 |
+| icstop+restarts+signed | 300 | 0.3 | 201 |  | rolling | 0.174 | +0.015 | +0.021 (+3.2) | +0.007 (+1.2) | +0.014 (+2.1) | 0.672 | 14 |
+| icstop+restarts+signed | 300 | 0.4 | 201 |  | rolling | 0.236 | +0.047 | +0.048 (+6.2) | +0.042 (+5.6) | +0.005 (+0.8) | 0.839 | 23 |
+| icstop+restarts+signed | 300 | 0.6 | 201 |  | rolling | 0.365 | +0.196 | +0.190 (+22.8) | +0.193 (+24.2) | -0.003 (-0.5) | 0.953 | 47 |
+| icstop+restarts+signed | 300 | 0.8 | 201 | null | rolling | 0.000 | -0.001 | -0.002 (-0.3) | -0.012 (-1.7) | +0.010 (+1.5) | nan | 14 |
+| icstop+restarts+signed | 300 | 0.3 | 202 |  | rolling | 0.176 | +0.023 | +0.022 (+3.3) | +0.023 (+3.2) | -0.001 (-0.1) | 0.705 | 42 |
+| icstop+restarts+signed | 300 | 0.4 | 202 |  | rolling | 0.237 | +0.048 | +0.046 (+6.9) | +0.045 (+6.6) | +0.001 (+0.2) | 0.860 | 25 |
+| icstop+restarts+signed | 300 | 0.6 | 202 |  | rolling | 0.364 | +0.164 | +0.161 (+20.9) | +0.161 (+20.5) | -0.001 (-0.1) | 0.949 | 27 |
+| icstop+restarts+signed | 300 | 0.8 | 202 | null | rolling | 0.000 | +0.001 | +0.002 (+0.3) | +0.012 (+2.0) | -0.010 (-1.5) | nan | 15 |
+| icstop+restarts+signed | 300 | 0.3 | 201 |  | scratch | 0.174 | +0.007 | +0.004 (+0.7) | +0.005 (+1.0) | -0.001 (-0.2) | 0.562 | 14 |
+| icstop+restarts+signed | 300 | 0.4 | 201 |  | scratch | 0.236 | +0.027 | +0.028 (+4.6) | +0.027 (+3.8) | +0.002 (+0.2) | 0.789 | 23 |
+| icstop+restarts+signed | 300 | 0.6 | 201 |  | scratch | 0.365 | +0.152 | +0.147 (+16.9) | +0.156 (+18.0) | -0.009 (-1.2) | 0.898 | 47 |
+| icstop+restarts+signed | 300 | 0.8 | 201 | null | scratch | 0.000 | -0.003 | -0.006 (-0.9) | -0.010 (-1.8) | +0.004 (+0.6) | nan | 14 |
+| icstop+restarts+signed | 300 | 0.3 | 202 |  | scratch | 0.176 | +0.003 | +0.002 (+0.4) | +0.007 (+1.1) | -0.005 (-1.0) | 0.507 | 42 |
+| icstop+restarts+signed | 300 | 0.4 | 202 |  | scratch | 0.237 | +0.022 | +0.021 (+3.4) | +0.027 (+3.7) | -0.006 (-1.0) | 0.503 | 25 |
+| icstop+restarts+signed | 300 | 0.6 | 202 |  | scratch | 0.364 | +0.141 | +0.143 (+18.8) | +0.143 (+17.4) | -0.000 (-0.0) | 0.931 | 27 |
+| icstop+restarts+signed | 300 | 0.8 | 202 | null | scratch | 0.000 | -0.003 | -0.001 (-0.2) | +0.002 (+0.3) | -0.003 (-0.6) | nan | 15 |
