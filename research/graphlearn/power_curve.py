@@ -11,6 +11,7 @@ through train_wf.py exactly as deployed with the variants learned, B0, B0E. Repo
 Results are appended to DIR/<stage>.jsonl (a rerun skips finished points), the table to DIR/<stage>.md.
 
 Stages:
+  tune2  round 2 (POWER.md amendment): the step-4 combination, softplus scores, the first-round defaults.
   tune   one-at-a-time variations around the starting setting (TUNE_SETTINGS) on the tuning markets
          (beta 0.2/0.3/0.4 and the null market, seeds 101/102 -- disjoint from the reported seeds), rolling mode.
   power  the frozen setting (frozen_settings.json) on beta 0.1..0.8 x seeds 1/2 x rolling/scratch, the null
@@ -40,9 +41,15 @@ START = {"rank": 8, "topk": 20, "emb_lr": 1e-3, "emb_l2": 1e-3, "l1": 1e-2, "fin
 VARIATIONS = [("emb_lr", 1e-2), ("emb_l2", 1e-4), ("emb_l2", 1e-2), ("rank", 4), ("rank", 16), ("l1", 1e-3),
               ("l1", 1e-1), ("finetune_epochs", 5)]
 TUNE_SETTINGS = [("start", dict(START))] + [(f"{k}={v:g}", {**START, k: v}) for k, v in VARIATIONS]
+R1_WINNER = {**START, "emb_lr": 1e-2}  # round-1 selection (selection.json)
+COMBO = {**START, "emb_lr": 1e-2, "finetune_epochs": 5, "l1": 1e-1}  # rule step 4: all variations beating start
+PREV = {**START, "rank": 16, "emb_lr": 1e-2, "emb_l2": 0.0, "l1": 1e-4, "finetune_epochs": 5}  # first-round defaults
+TUNE2_SETTINGS = [("combo", COMBO), ("emb_lr=0.01+softplus", {**R1_WINNER, "score_fn": "softplus"}),
+                  ("combo+softplus", {**COMBO, "score_fn": "softplus"}), ("prev", PREV),
+                  ("prev+softplus", {**PREV, "score_fn": "softplus"})]
 TUNE_BETAS, TUNE_SEEDS = (0.2, 0.3, 0.4), (101, 102)
 POWER_BETAS, POWER_SEEDS = (0.1, 0.2, 0.3, 0.4, 0.6, 0.8), (1, 2)
-FLAG = {k: "--" + k.replace("_", "-") for k in START}
+FLAG = {k: "--" + k.replace("_", "-") for k in list(START) + ["score_fn"]}
 
 
 def market_key(m):
@@ -119,8 +126,8 @@ def run_point(root, stage, name, setting, m, mode, threads):
 
 
 def points(stage, settings_override=None):
-    if stage == "tune":
-        for name, s in TUNE_SETTINGS:
+    if stage in ("tune", "tune2"):
+        for name, s in (TUNE_SETTINGS if stage == "tune" else TUNE2_SETTINGS):
             for seed in TUNE_SEEDS:
                 for beta in TUNE_BETAS:
                     yield name, s, {"n": 300, "beta": beta, "seed": seed}, "rolling"
@@ -192,7 +199,7 @@ def write_table(results, path):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--out", required=True)
-    ap.add_argument("--stage", choices=("tune", "power"), required=True)
+    ap.add_argument("--stage", choices=("tune", "tune2", "power"), required=True)
     ap.add_argument("--workers", type=int, default=3)
     ap.add_argument("--threads", type=int, default=2)
     a = ap.parse_args(argv)
@@ -216,9 +223,11 @@ def main(argv=None):
                   f"{r['seconds']}s", flush=True)
     results = load_results(res_path)
     write_table(results, os.path.join(a.out, f"{a.stage}.md"))
-    if a.stage == "tune":
+    if a.stage in ("tune", "tune2"):
+        if a.stage == "tune2":  # round 2 competes with every round-1 candidate (same markets)
+            results = load_results(os.path.join(a.out, "tune.jsonl")) + results
         best, table = select_setting(results)
-        with open(os.path.join(a.out, "selection.json"), "w") as f:
+        with open(os.path.join(a.out, f"selection_{a.stage}.json"), "w") as f:
             json.dump({"best": best, "table": table}, f, indent=1)
         print("selected:", best)
 

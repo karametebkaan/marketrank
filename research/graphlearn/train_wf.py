@@ -113,6 +113,8 @@ def parse_args(argv):
     ap.add_argument("--val-frac", type=float, default=0.2)
     ap.add_argument("--rank", type=int, default=fz["rank"])
     ap.add_argument("--topk", type=int, default=fz["topk"])
+    ap.add_argument("--score-fn", choices=("relu", "softplus"), default=fz.get("score_fn", "relu"),
+                    help="S = score_fn(E_s E_d^T)")
     ap.add_argument("--dropout", type=float, default=0.1)
     ap.add_argument("--lr", type=float, default=1e-3)
     ap.add_argument("--weight-decay", type=float, default=1e-4)
@@ -137,8 +139,8 @@ def file_digest(path):
     return h.hexdigest()[:16]
 
 
-HASHED_ARGS = ("mode", "seed", "rank", "topk", "dropout", "lr", "emb_lr", "emb_l2", "weight_decay", "lambda_ic", "l1",
-               "epochs", "patience", "finetune_epochs", "ft_holdout", "window", "retrain_every", "embargo",
+HASHED_ARGS = ("mode", "seed", "rank", "topk", "score_fn", "dropout", "lr", "emb_lr", "emb_l2", "weight_decay",
+               "lambda_ic", "l1", "epochs", "patience", "finetune_epochs", "ft_holdout", "window", "retrain_every", "embargo",
                "min_history", "max_nodes", "val_frac", "threads")
 PANEL_META_KEYS = ("format", "feature_names", "eligibility", "wf_params", "wf_params_hash", "label_horizons")
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -233,7 +235,8 @@ def _reg(args):
 
 
 def _new_model(args, variant):
-    return mdl.GraphNet(variant, rank=args.rank, topk=args.topk, dropout=args.dropout, seed=args.seed)
+    return mdl.GraphNet(variant, rank=args.rank, topk=args.topk, dropout=args.dropout, seed=args.seed,
+                        score_fn=getattr(args, "score_fn", "relu"))
 
 
 def restore(args, variant, ck):
@@ -252,7 +255,8 @@ def load_model_from_store(variant_store, args=None):
     info = st.latest()
     ck = st.load_checkpoint(info["path"])
     p = ck["params"]
-    ns = argparse.Namespace(**{k: p[k] for k in ("rank", "topk", "dropout", "seed", "lr", "weight_decay", "emb_lr")})
+    ns = argparse.Namespace(**{k: p[k] for k in ("rank", "topk", "dropout", "seed", "lr", "weight_decay", "emb_lr")},
+                            score_fn=p.get("score_fn", "relu"))
     return restore(ns, p["variant"], ck)[0], ck
 
 
@@ -305,6 +309,8 @@ def run_variant(p, variant, args, log=print):
                 continue
             model.ensure_tickers(b.tickers, opt)  # predicting a brand-new ticker: fresh embedding row
             s = mdl.predict(model, b)
+            if not np.isfinite(s).any():
+                continue  # the C++ harness counts any date with rows as scored: never write an all-NaN date
             cols["t"].extend([b.t] * len(b.nodes))
             cols["ticker"].extend(b.tickers)
             cols["score"].extend(s.astype(np.float64).tolist())

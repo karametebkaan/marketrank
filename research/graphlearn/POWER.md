@@ -39,3 +39,26 @@ The frozen setting then goes through the power curve:
 - one N=1000 point with 30% eligibility churn (beta 0.4).
 
 **"Smallest oracle IC detectable at t > 2"** is the smallest oracle IC at which both reported seeds, in rolling mode, have learned − B0 t > 2 **and** learned − B0E t > 2.
+
+## Amendment before round 2 (written and committed after round 1, before running round 2)
+
+**Round 1 outcome under the rule.**
+- Every candidate was admissible.
+- The winner was **emb-lr 1e-2**: score 1 of 6, mean min-t 0.96.
+- Three variations beat the start under rule 3: emb-lr 1e-2, finetune-epochs 5 and l1 1e-1. Rule step 4 therefore evaluates their combination, `combo`.
+
+**Diagnosis that motivates round 2: the beta=0.4 AUC of 0.43.**
+- I reproduced it with the first-round code on the same market, with the old calendar (no +1 bar) and 4 threads: AUC 0.425 and IC difference t = 0.7.
+- The first scratch fit early-stopped at its best epoch 0. At that point the head read the neighbours with a slightly *negative* sign: the Jacobian ∂ŷ_i/∂r5_j over the top-k edges was about −1e-4.
+- The rolling fine-tunes then amplified that sign. The Jacobian over false edges went to about −0.015 and over true edges negative too.
+- With a negative read-out, the straight-through gradient pushes **true** edges down, because they predict with the "wrong" sign. They hit relu = 0 and die: 52% of the true edges had S = 0 at the end, against 0% at the start. S_true fell from 1.15 to 0.75, while the S of other pairs rose.
+- relu makes this absorbing: a dead edge gets no gradient. So AUC drifts systematically below 0.5.
+- The same market with a different trajectory recovered: with 13 epochs and best epoch 2, AUC was 0.82 and t = 10, because the read-out sign came out positive.
+- Round 1 shows the same signature: on seed 101 most candidates end at AUC 0.42–0.47.
+
+**Round 2 candidates**, on the same tuning markets and in the same rolling mode:
+- `combo`: emb-lr 1e-2, finetune-epochs 5, l1 1e-1 (rule step 4);
+- `emb_lr=0.01+softplus` and `combo+softplus`: S = softplus(E_s E_dᵀ) instead of relu, so a suppressed edge is never dead and can come back if the read-out sign flips;
+- `prev` and `prev+softplus`: the first-round defaults (rank 16, emb-lr 1e-2, emb-l2 0, l1 1e-4, finetune-epochs 5), now run with the honest fine-tune holdout.
+
+**Rule:** unchanged (rules 1–3), applied to every round-1 and round-2 candidate together. The winner is frozen; there is no further round.

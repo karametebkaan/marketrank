@@ -129,11 +129,13 @@ class Reg:
 
 
 class GraphNet(nn.Module):
-    def __init__(self, variant, rank=8, topk=20, dropout=0.1, seed=0):
+    def __init__(self, variant, rank=8, topk=20, dropout=0.1, seed=0, score_fn="relu"):
         super().__init__()
         if variant not in VARIANTS:
             raise ValueError(f"unknown variant {variant}")
-        self.variant, self.rank, self.topk, self.seed = variant, rank, topk, seed
+        if score_fn not in ("relu", "softplus"):
+            raise ValueError(f"unknown score_fn {score_fn}")
+        self.variant, self.rank, self.topk, self.seed, self.score_fn = variant, rank, topk, seed, score_fn
         self._dense = None
         self.enc = nn.Sequential(nn.Linear(N_FEATURES, 64), nn.GELU(), nn.Dropout(dropout),
                                  nn.Linear(64, 32), nn.GELU(), nn.Dropout(dropout))
@@ -182,8 +184,10 @@ class GraphNet(nn.Module):
         return torch.tensor([self.row[t] for t in tickers], dtype=torch.int64)
 
     def scores(self, rows):
-        """S = relu(E_s E_d^T) over the given embedding rows (diagonal included)."""
-        return F.relu(self.E_s[rows] @ self.E_d[rows].T)
+        """S = relu(E_s E_d^T) (or softplus: an edge pushed below 0 is not dead and can come back) over the given
+        embedding rows (diagonal included)."""
+        logits = self.E_s[rows] @ self.E_d[rows].T
+        return F.relu(logits) if self.score_fn == "relu" else F.softplus(logits)
 
     def adjacency(self, rows):
         """Top-k per row of S (diagonal masked) and their row-softmax weights; also the mean off-diagonal S."""

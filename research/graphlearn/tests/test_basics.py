@@ -4,6 +4,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 import numpy as np
 import torch
@@ -251,6 +252,19 @@ class Variants(unittest.TestCase):
         self.assertEqual(opt.state_dict()["state"], {})  # the pre-fine-tune (empty) Adam state is back
 
 
+    def test_softplus_scores_never_die(self):
+        torch.manual_seed(0)
+        m = mdl.GraphNet("learned", rank=4, topk=3, score_fn="softplus")
+        m.ensure_tickers([f"T{i}" for i in range(12)])
+        with torch.no_grad():
+            m.E_d.mul_(-1.0)  # all logits negative: relu would give S = 0 and no gradient anywhere
+        rows = m.rows_for(m.tickers)
+        self.assertTrue(torch.all(m.scores(rows) > 0))
+        m.train()
+        mdl.date_loss(m, tiny_batch(), mdl.Reg()).backward()
+        self.assertTrue(torch.any(m.E_s.grad != 0))
+
+
 class FrozenDefaults(unittest.TestCase):
     def test_cli_defaults_are_the_frozen_settings(self):
         args = train_wf.parse_args(["--panel", "x", "--out", "y"])
@@ -273,6 +287,28 @@ class SynthSignal(unittest.TestCase):
             late = p.a["elig"][20] == 0
             early = p.a["elig"][-1] == 0
             self.assertTrue(listed.all() and late.sum() > 5 and early.sum() > 5)
+
+
+class NoAllNaNDates(unittest.TestCase):
+    def test_all_nan_date_is_not_written(self):
+        with tempfile.TemporaryDirectory() as d:
+            synth.make_planted_panel(os.path.join(d, "panel"), n=30, t=300, seed=2)
+            p = pnl.load_panel(os.path.join(d, "panel"))
+            bad_t = int(p.times[p.rebalance[40]])
+            real = mdl.predict
+
+            def flaky(model, b):
+                s = real(model, b)
+                return np.full_like(s, np.nan) if b.t == bad_t else s
+
+            with mock.patch.object(mdl, "predict", flaky):
+                train_wf.main(["--panel", os.path.join(d, "panel"), "--out", os.path.join(d, "out"),
+                               "--store", os.path.join(d, "store"), "--variants", "B0", "--min-history", "30",
+                               "--retrain-every", "20", "--epochs", "2", "--threads", "2", "--quiet"])
+            with open(os.path.join(d, "out", "B0.csv")) as f:
+                ts = {line.split(",")[0] for line in f.read().splitlines()[1:]}
+            self.assertNotIn(str(bad_t), ts)
+            self.assertIn(str(int(p.times[p.rebalance[41]])), ts)
 
 
 class Determinism(unittest.TestCase):
