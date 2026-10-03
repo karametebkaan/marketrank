@@ -183,3 +183,36 @@ TEST_CASE("cli --cluster-persistence") {
   CHECK_THROWS_AS(parse_cli({"--mode", "replay", "--cluster-persistence", "--serve"}), std::invalid_argument);
   CHECK_THROWS_AS(parse_cli({"--mode", "replay", "--cluster-persistence", "--cp-stride", "0"}), std::invalid_argument);
 }
+
+TEST_CASE("cli --export-panel and --wf-external (M4)") {
+  const CliArgs a = parse_cli({"--mode", "replay", "--export-panel", "out/panel"});
+  CHECK(a.export_panel == "out/panel");
+  CHECK(parse_cli({}).export_panel.empty());
+  CHECK_THROWS_AS(parse_cli({"--export-panel", "x"}), std::invalid_argument);  // needs replay
+  for (std::vector<std::string> other : std::vector<std::vector<std::string>>{
+           {"--serve"}, {"--walkforward"}, {"--cluster-persistence"}, {"--compare-13f"}, {"--eval"},
+           {"--shock", "AAPL:-5"}, {"--export-slice"}}) {
+    std::vector<std::string> v{"--mode", "replay", "--export-panel", "x"};
+    v.insert(v.end(), other.begin(), other.end());
+    CAPTURE(other[0]);
+    CHECK_THROWS_AS(parse_cli(v), std::invalid_argument);
+  }
+  CHECK_THROWS_AS(parse_cli({"--mode", "replay", "--export-panel"}), std::invalid_argument);  // missing value
+
+  const CliArgs w = parse_cli({"--mode", "replay", "--walkforward", "--wf-external", "learned=a/l.csv", "--wf-external",
+                               "B0=b.csv"});
+  REQUIRE(w.wf_externals.size() == 2);
+  CHECK(w.wf_externals[0].first == "learned");
+  CHECK(w.wf_externals[0].second == "a/l.csv");
+  CHECK(w.wf_externals[1].first == "B0");
+  CHECK(w.warnings.empty());
+  CHECK_THROWS_AS(parse_cli({"--mode", "replay", "--wf-external", "x=y.csv"}), std::invalid_argument);  // needs --walkforward
+  for (const char* bad : {"x", "=y.csv", "x=", "score=y.csv", "blend=y.csv", "a,b=y.csv"}) {
+    CAPTURE(bad);
+    CHECK_THROWS_AS(parse_cli({"--mode", "replay", "--walkforward", "--wf-external", bad}), std::invalid_argument);
+  }
+  CHECK_THROWS_AS(parse_cli({"--mode", "replay", "--walkforward", "--wf-external", "x=a.csv", "--wf-external", "x=b.csv"}),
+                  std::invalid_argument);
+  CHECK(cli_usage().find("--export-panel") != std::string::npos);
+  CHECK(cli_usage().find("--wf-external") != std::string::npos);
+}

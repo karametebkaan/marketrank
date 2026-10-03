@@ -1,5 +1,6 @@
 #include "cli/args.hpp"
 
+#include "walkforward/external.hpp"
 #include "walkforward/report.hpp"
 
 #include <algorithm>
@@ -97,8 +98,13 @@ CliArgs parse_cli(const std::vector<std::string>& args) {
   bool wf_flag = false;  // any --wf-* flag given
   // --- M3c 13F comparison: a run mode of its own (checked before the flag loop so it also covers --walkforward) ---
   if (has("--compare-13f"))
-    for (const char* other : {"--eval", "--shock", "--export-slice", "--walkforward", "--cluster-persistence", "--serve"})
+    for (const char* other : {"--eval", "--shock", "--export-slice", "--walkforward", "--cluster-persistence", "--serve",
+                              "--export-panel"})
       if (has(other)) throw std::invalid_argument(std::string("--compare-13f cannot be combined with ") + other);
+  // --- M4 --export-panel: a run mode of its own ---
+  if (has("--export-panel"))
+    for (const char* other : {"--serve", "--walkforward", "--cluster-persistence", "--eval", "--shock", "--export-slice"})
+      if (has(other)) throw std::invalid_argument(std::string("--export-panel cannot be combined with ") + other);
   for (std::size_t i = 0; i < args.size(); ++i) {
     const std::string& flag = args[i];
     if (flag.rfind("--wf-", 0) == 0) wf_flag = true;
@@ -178,6 +184,21 @@ CliArgs parse_cli(const std::vector<std::string>& args) {
     // --- M3c 13F comparison ---
     else if (flag == "--compare-13f") a.compare_13f = true;
     else if (flag == "--13f-quarters") a.quarters_13f = to_quarters(flag, value());
+    // --- M4 graph learning ---
+    else if (flag == "--wf-external") {
+      const std::string v = value();
+      const auto eq = v.find('=');
+      if (eq == std::string::npos || eq + 1 == v.size())
+        throw std::invalid_argument("--wf-external expects NAME=PATH, got '" + v + "'");
+      const std::string name = v.substr(0, eq);
+      check_external_name(name);
+      for (const auto& [n, path] : a.wf_externals)
+        if (n == name) throw std::invalid_argument("--wf-external: duplicate name '" + name + "'");
+      a.wf_externals.emplace_back(name, v.substr(eq + 1));
+    } else if (flag == "--export-panel") {
+      a.export_panel = value();
+      if (a.export_panel.empty()) throw std::invalid_argument("--export-panel needs a directory");
+    }
     else if (flag == "--help" || flag == "-h") a.help = true;
     else throw std::invalid_argument("unknown flag " + flag);
   }
@@ -192,6 +213,8 @@ CliArgs parse_cli(const std::vector<std::string>& args) {
   if (a.cluster_persistence && (a.walkforward || a.serve || a.export_slice > 0 || !a.shocks.empty() || a.eval))
     throw std::invalid_argument("--cluster-persistence cannot be combined with --walkforward, --serve, --export-slice, --shock or --eval");
   if (a.cp_stride == 0) throw std::invalid_argument("--cp-stride must be >= 1");
+  if (!a.wf_externals.empty() && !a.walkforward) throw std::invalid_argument("--wf-external needs --walkforward");
+  if (!a.export_panel.empty() && a.mode != "replay") throw std::invalid_argument("--export-panel needs --mode replay");
   if (wf_flag && !a.walkforward && a.wf_rereport.empty())
     a.warnings.push_back("--wf-* flags have no effect without --walkforward");
   if (!a.wf_rereport.empty()) check_run_id(a.wf_rereport, "--wf-rereport");
@@ -266,6 +289,11 @@ std::string cli_usage() {
          "                   [--wf-largecap-run ID]   (sibling --wf-top-n 500 run in the same --wf-out: gate c5)\n"
          "                   [--wf-blend TRAIN/EMBARGO/GATE/MIN]   (blend windows in rebalance periods; default\n"
          "                                   156/1/104/52 weekly, 36/1/24/12 monthly)\n"
+         "                   [--wf-external NAME=PATH ...]   (M4: score CSV 't,ticker,score' (t = unix seconds of a\n"
+         "                                   rebalance bar) evaluated next to the signals: IC rows, sig:/sleeve: curves,\n"
+         "                                   registry rows; never blended. 'learned' with 'B0' adds the paired comparison)\n"
+         "                 [--export-panel DIR]   (replay, M4: float32 [T][N] arrays ret1, ldv, dvshock, vol20, pressure,\n"
+         "                                   elig, label_w and meta.json for the graph-learning model; exits)\n"
          "                 [--cluster-persistence [--cp-stride N (5)] [--cp-out DIR (<data>/analysis)] [--cp-fast-hl BARS (preset)]]   (replay: from-\n"
          "                                   scratch Louvain persistence of the flux communities vs lag, seeds, chance\n"
          "                                   and sectors; writes cluster_persistence*.csv and exits)\n"

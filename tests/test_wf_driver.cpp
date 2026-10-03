@@ -77,7 +77,7 @@ void check_same_results(const WalkForwardResult& a, const WalkForwardResult& b) 
   REQUIRE(a.ic_table.size() == b.ic_table.size());
   for (std::size_t k = 0; k < a.ic_table.size(); ++k) {
     const auto &x = a.ic_table[k], &y = b.ic_table[k];
-    CHECK(x.s == y.s);
+    CHECK(x.signal == y.signal);
     CHECK(x.h == y.h);
     CHECK(x.all.n == y.all.n);
     CHECK((x.all.mean == y.all.mean || (std::isnan(x.all.mean) && std::isnan(y.all.mean))));
@@ -299,7 +299,7 @@ TEST_CASE("walkforward: IC table is non-overlapping per horizon, bucketed by UTC
   const WalkForwardResult r = run_walkforward(panel, p);
   const std::size_t T = panel.T();
   for (const auto& row : r.ic_table) {
-    CAPTURE(to_string(row.s));
+    CAPTURE(row.signal);
     CAPTURE(row.h);
     const auto h = static_cast<std::size_t>(row.h);
     std::map<int, std::size_t> per_year;  // sample bars per UTC year

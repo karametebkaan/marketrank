@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <span>
 #include <stdexcept>
 
@@ -30,15 +31,50 @@ struct YearIc {
   int year;
   double ic;
 };
+
+// IC row from samples in increasing bar order: overall mean/t and the mean per UTC year (ascending).
+IcRow make_ic_row(std::string signal, int h, const std::vector<YearIc>& v) {
+  IcRow row{std::move(signal), h, {}, {}};
+  std::vector<double> all(v.size());
+  for (std::size_t j = 0; j < v.size(); ++j) all[j] = v[j].ic;
+  row.all = mean_t(all);
+  for (std::size_t j = 0; j < v.size();) {  // ascending years (t increases)
+    std::size_t e = j;
+    double sum = 0;
+    while (e < v.size() && v[e].year == v[j].year) sum += v[e++].ic;
+    row.by_year.emplace_back(v[j].year, sum / static_cast<double>(e - j));
+    j = e;
+  }
+  return row;
+}
 }  // namespace
 
-WalkForwardResult run_walkforward(const Panel& panel, const WalkForwardParams& p) {
+std::vector<std::size_t> walkforward_dates(const Panel& panel, const WalkForwardParams& p) {
+  // CorePipeline::step starts at bar 1, so a warm-up of 0 acts as 1.
+  return rebalance_dates(panel, p.rebalance, std::max<std::size_t>(p.warmup_bars, 1));
+}
+
+std::string external_tag(const ExternalSignal& e) { return e.name + ":" + e.digest; }
+
+WalkForwardResult run_walkforward(const Panel& panel, const WalkForwardParams& p,
+                                  const std::vector<ExternalSignal>& externals) {
   for (int h : p.ic_horizons)
     if (h <= 0) throw std::invalid_argument("run_walkforward: IC horizons must be positive");
   const std::size_t T = panel.T(), N = panel.N(), H = p.ic_horizons.size();
+  {
+    std::vector<std::string> tags;
+    for (const auto& e : externals) {
+      tags.push_back(external_tag(e));
+      for (const auto& [bar, v] : e.scores)
+        if (v.size() != N || bar >= T)
+          throw std::invalid_argument("run_walkforward: external signal " + e.name + " does not fit the panel");
+    }
+    if (tags != p.externals)
+      throw std::invalid_argument("run_walkforward: params.externals does not match the external signals given");
+  }
   WalkForwardResult r;
   const std::size_t warmup = std::max<std::size_t>(p.warmup_bars, 1);  // CorePipeline::step starts at bar 1
-  r.dates = rebalance_dates(panel, p.rebalance, warmup);
+  r.dates = walkforward_dates(panel, p);
   r.months.reserve(r.dates.size());
   r.eligible.reserve(r.dates.size());
 
@@ -94,28 +130,58 @@ WalkForwardResult run_walkforward(const Panel& panel, const WalkForwardParams& p
     r.months[j].label = j + 1 < r.dates.size() ? forward_oo_return(panel, r.dates[j], r.dates[j + 1] - r.dates[j])
                                                : std::vector<double>(N, kNaN);
 
-  r.ic_table.reserve(kSignals * H);
+  r.ic_table.reserve((kSignals + externals.size()) * H);
   for (std::size_t s = 0; s < kSignals; ++s)
-    for (std::size_t k = 0; k < H; ++k) {
-      const auto& v = ic[s * H + k];
-      IcRow row{static_cast<Signal>(s), p.ic_horizons[k], {}, {}};
-      std::vector<double> all(v.size());
-      for (std::size_t j = 0; j < v.size(); ++j) all[j] = v[j].ic;
-      row.all = mean_t(all);
-      for (std::size_t j = 0; j < v.size();) {  // ascending years (t increases)
-        std::size_t e = j;
-        double sum = 0;
-        while (e < v.size() && v[e].year == v[j].year) sum += v[e++].ic;
-        row.by_year.emplace_back(v[j].year, sum / static_cast<double>(e - j));
-        j = e;
+    for (std::size_t k = 0; k < H; ++k)
+      r.ic_table.push_back(make_ic_row(std::string(to_string(static_cast<Signal>(s))), p.ic_horizons[k], ic[s * H + k]));
+
+  // External signals' IC rows: their scored bars only, non-overlapping per horizon (see the header).
+  if (!externals.empty()) {
+    std::map<std::size_t, std::vector<bool>> elig_cache;  // bar -> eligible_at(bar)
+    std::map<std::pair<std::size_t, std::size_t>, std::vector<double>> fwd_cache;  // (bar, h) -> forward return
+    for (const auto& e : externals) {
+      std::vector<std::vector<YearIc>> samples(H);
+      for (std::size_t k = 0; k < H; ++k) {
+        const auto h = static_cast<std::size_t>(p.ic_horizons[k]);
+        bool have_last = false;
+        std::size_t last = 0;
+        for (const auto& [t, score] : e.scores) {
+          if (t < warmup || t + 1 + h >= T) continue;
+          if (have_last && t < last + h) continue;
+          have_last = true;
+          last = t;
+          auto el = elig_cache.find(t);
+          if (el == elig_cache.end())
+            el = elig_cache.emplace(t, eligible_at(panel, t, p.elig_window, p.min_dollar_volume, p.top_n)).first;
+          auto fw = fwd_cache.find({t, h});
+          if (fw == fwd_cache.end()) fw = fwd_cache.emplace(std::make_pair(t, h), forward_oo_return(panel, t, h)).first;
+          const double v = spearman(zscore(score, el->second), fw->second);
+          if (std::isfinite(v)) samples[k].push_back({year_of(panel.times[t]), v});
+        }
       }
-      r.ic_table.push_back(std::move(row));
+      for (std::size_t k = 0; k < H; ++k) r.ic_table.push_back(make_ic_row(e.name, p.ic_horizons[k], samples[k]));
     }
+  }
 
   r.blend = run_blend(r.months, p.blend);
 
   // Simulations, one strategy at a time so only one copy of the score history exists beyond the months.
   const std::size_t M = r.dates.size();
+  // External z-scores at rebalance j under the built-ins' mask; empty (no tilt) where the signal has no scores.
+  auto ext_z = [&](const ExternalSignal& e, std::size_t j) {
+    const auto it = e.scores.find(r.dates[j]);
+    return it == e.scores.end() ? std::vector<double>{} : zscore(it->second, r.eligible[j]);
+  };
+  for (const auto& e : externals) {
+    ExternalResult er{e.name, std::vector<double>(M, kNaN)};
+    for (std::size_t j = 0; j < M; ++j) {
+      const std::vector<double> z = ext_z(e, j);
+      if (z.empty()) continue;
+      const double v = spearman(z, r.months[j].label);
+      if (std::isfinite(v)) er.rebalance_ic[j] = v;
+    }
+    r.externals.push_back(std::move(er));
+  }
   auto decisions = [&](auto score_of) {
     std::vector<Decision> d(M);
     for (std::size_t j = 0; j < M; ++j) d[j] = Decision{r.dates[j], score_of(j), r.eligible[j]};
@@ -125,6 +191,8 @@ WalkForwardResult run_walkforward(const Panel& panel, const WalkForwardParams& p
   for (std::size_t s = 0; s < kSignals; ++s)
     r.curves.emplace_back("sig:" + std::string(to_string(static_cast<Signal>(s))),
                           simulate(panel, p.bt, decisions([&](std::size_t j) { return r.months[j].z[s]; })));
+  for (const auto& e : externals)
+    r.curves.emplace_back("sig:" + e.name, simulate(panel, p.bt, decisions([&](std::size_t j) { return ext_z(e, j); })));
   std::vector<Decision> cal(M);
   for (std::size_t j = 0; j < M; ++j) cal[j] = Decision{r.dates[j], {}, {}};
   r.curves.emplace_back("bench:buyhold", simulate(panel, p.bt, cal, BenchKind::BuyHoldBase));
@@ -144,6 +212,8 @@ WalkForwardResult run_walkforward(const Panel& panel, const WalkForwardParams& p
   for (std::size_t s = 0; s < kSignals; ++s)
     r.curves.emplace_back("sleeve:" + std::string(to_string(static_cast<Signal>(s))),
                           simulate(panel, sleeve, decisions([&](std::size_t j) { return r.months[j].z[s]; })));
+  for (const auto& e : externals)
+    r.curves.emplace_back("sleeve:" + e.name, simulate(panel, sleeve, decisions([&](std::size_t j) { return ext_z(e, j); })));
   r.curves.emplace_back("bench:ew_eligible", simulate(panel, sleeve, decisions([](std::size_t) {
                                                         return std::vector<double>{};
                                                       }),

@@ -64,6 +64,11 @@ struct CliArgs {
   // --- M3c 13F comparison (replay only) ---
   bool compare_13f = false;               // --compare-13f: observed 13F flows vs estimated flows, calibration grid
   std::vector<std::string> quarters_13f;  // --13f-quarters Q1,Q2,... (YYYYQn); empty = every quarter found
+  // --- M4 graph learning ---
+  // --wf-external NAME=PATH (repeatable, needs --walkforward): external score CSVs evaluated next to the signals.
+  std::vector<std::pair<std::string, std::filesystem::path>> wf_externals;
+  // --export-panel DIR (replay only, a run mode of its own): float32 feature/label arrays + meta.json for M4.
+  std::filesystem::path export_panel;
 };
 
 // Time range of bars to load and analyse: everything for synthetic (fixed historical dates),

@@ -38,6 +38,10 @@ std::string describe(const WalkForwardParams& p) {
   s << " tilt=" << p.bt.tilt << " k=" << p.bt.k << " max_name_tilt=" << p.bt.max_name_tilt
     << " cost_bps=" << p.bt.cost_bps << " max_turnover=" << p.bt.max_turnover << " blend=" << p.blend.train_months
     << '/' << p.blend.embargo << '/' << p.blend.gate_months << '/' << p.blend.gate_min << " gate_t=" << p.blend.gate_t;
+  if (!p.externals.empty()) {  // M4: absent without externals, so M3a hashes are unchanged
+    s << " ext=";
+    for (const auto& e : p.externals) s << e << ';';
+  }
   return s.str();
 }
 
@@ -198,9 +202,119 @@ struct Meta {
 
 std::string day(const std::string& rfc3339) { return rfc3339.substr(0, 10); }
 
+// Per-period returns of a curve between consecutive rebalance closes: out[m] = V(d_m) / V(d_{m-1}) - 1 for m >= 1
+// (NaN where either close is not on the curve); out[0] = NaN.
+std::vector<double> period_returns(const EquityCurve& c, const std::vector<TimePoint>& closes) {
+  std::map<TimePoint, double> at;
+  for (std::size_t k = 0; k < c.t.size(); ++k) at.emplace(c.t[k], c.value[k]);
+  std::vector<double> out(closes.size(), std::nan(""));
+  for (std::size_t m = 1; m < closes.size(); ++m) {
+    const auto a = at.find(closes[m - 1]), b = at.find(closes[m]);
+    if (a != at.end() && b != at.end() && a->second > 0) out[m] = b->second / a->second - 1.0;
+  }
+  return out;
+}
+
+// Paired difference x[m] - y[m] over the periods where both are finite: mean, t, n, and the UTC years (by the
+// rebalance date) whose mean difference is positive, of the years with any pair.
+struct Paired {
+  MeanT all;
+  std::size_t years_pos = 0, years = 0;
+};
+Paired paired_diff(const std::vector<double>& x, const std::vector<double>& y, const std::vector<std::string>& dates) {
+  std::vector<double> d;
+  std::map<std::string, std::pair<double, std::size_t>> by_year;
+  for (std::size_t m = 0; m < x.size() && m < y.size() && m < dates.size(); ++m)
+    if (std::isfinite(x[m]) && std::isfinite(y[m])) {
+      d.push_back(x[m] - y[m]);
+      auto& [sum, n] = by_year[dates[m].substr(0, 4)];
+      sum += x[m] - y[m];
+      ++n;
+    }
+  Paired p;
+  p.all = mean_t(d);
+  p.years = by_year.size();
+  for (const auto& [yr, sn] : by_year) p.years_pos += sn.first / static_cast<double>(sn.second) > 0 ? 1 : 0;
+  return p;
+}
+
+// report.md section for external signals (M4): their IC rows, their tilt and sleeve curves, and the decisive
+// paired comparison "learned" vs "B0" when both are present.
+void external_section(std::ostringstream& md, const Meta& mt, const std::vector<IcRow>& ic_table,
+                      const std::vector<StratRow>& strat, const std::vector<StratRow>& vs_reb,
+                      const std::vector<StratRow>& sleeves, const Curves& curves,
+                      const std::vector<ExternalResult>& externals) {
+  auto find_row = [](const std::vector<StratRow>& v, const std::string& name) -> const StratRow* {
+    for (const auto& s : v)
+      if (s.name == name) return &s;
+    return nullptr;
+  };
+  md << "\n## External signals\n\n"
+     << "Scores computed outside this binary (--wf-external), evaluated standalone: never part of the blend (the "
+        "pre-registered M3a protocol blends the built-in signals only). The IC rows sample only the bars a signal "
+        "has scores at (its rebalance dates), non-overlapping per horizon (a scored bar is taken when it is at "
+        "least h bars after the previous sample), against eligible_at; the curves z-score the scores under each "
+        "rebalance's mask and hold the base (sleeves: the equal-weight universe) at rebalances without scores. "
+        "Missing tickers or dates are not eligible for the signal.\n\n"
+     << "| signal | h | mean IC | t | n | positive years |\n|---|---:|---:|---:|---:|---:|\n";
+  for (const auto& e : externals)
+    for (const auto& row : ic_table) {
+      if (row.signal != e.name) continue;
+      std::size_t pos = 0;
+      for (const auto& [y, v] : row.by_year) pos += v > 0 ? 1 : 0;
+      md << "| " << row.signal << " | " << row.h << " | " << num(row.all.mean, 4) << " | " << num(row.all.t, 2)
+         << " | " << row.all.n << " | "
+         << (row.by_year.empty() ? std::string("n/a")
+                                 : std::to_string(pos) + " of " + std::to_string(row.by_year.size()))
+         << " |\n";
+    }
+  md << "\n| signal | rebalances with an IC | tilt ann excess vs buy-and-hold | IR | DSR_excess | "
+        "tilt ann excess vs rebalanced base | IR | sleeve ann excess vs EW eligible | IR |\n"
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|\n";
+  for (const auto& e : externals) {
+    std::size_t n_ic = 0;
+    for (double v : e.rebalance_ic) n_ic += std::isfinite(v) ? 1 : 0;
+    const StratRow* a = find_row(strat, "sig:" + e.name);
+    const StratRow* b = find_row(vs_reb, "sig:" + e.name);
+    const StratRow* c = find_row(sleeves, "sleeve:" + e.name);
+    md << "| " << e.name << " | " << n_ic << " | " << (a ? pct(a->perf.ann_excess) : "n/a") << " | "
+       << (a ? num(a->perf.ir, 2) : "n/a") << " | " << (a ? num(a->dsr_excess, 3) : "n/a") << " | "
+       << (b ? pct(b->perf.ann_excess) : "n/a") << " | " << (b ? num(b->perf.ir, 2) : "n/a") << " | "
+       << (c ? pct(c->perf.ann_excess) : "n/a") << " | " << (c ? num(c->perf.ir, 2) : "n/a") << " |\n";
+  }
+
+  const ExternalResult *learned = nullptr, *b0 = nullptr;
+  for (const auto& e : externals) {
+    if (e.name == "learned") learned = &e;
+    if (e.name == "B0") b0 = &e;
+  }
+  if (!learned || !b0) return;
+  md << "\n### learned vs B0 (the decisive M4 comparison)\n\n"
+     << "Paired per rebalance, over the rebalances where both are defined. IC difference: IC(learned) - IC(B0) "
+        "against the period's open-to-open label. Tilt and sleeve differences: the period return (rebalance close to "
+        "rebalance close) of `sig:learned` minus `sig:B0` (resp. the sleeves); the shared benchmark cancels, so this "
+        "is the paired difference of their weekly excesses. Positive years: UTC years whose mean difference is "
+        "positive.\n\n"
+     << "| comparison | mean | t | n | positive years |\n|---|---:|---:|---:|---:|\n";
+  auto line = [&](const std::string& what, const Paired& p, bool as_pct) {
+    md << "| " << what << " | " << (as_pct ? pct(p.all.mean, 4) : num(p.all.mean, 4)) << " | " << num(p.all.t, 2)
+       << " | " << p.all.n << " | " << p.years_pos << " of " << p.years << " |\n";
+  };
+  line("IC(learned) - IC(B0)", paired_diff(learned->rebalance_ic, b0->rebalance_ic, mt.dates), false);
+  std::vector<TimePoint> closes;
+  for (const auto& d : mt.dates) closes.push_back(parse_rfc3339(d));
+  for (const char* kind : {"sig:", "sleeve:"}) {
+    const EquityCurve* x = find_curve(curves, std::string(kind) + "learned");
+    const EquityCurve* y = find_curve(curves, std::string(kind) + "B0");
+    if (!x || !y) continue;
+    line(std::string(kind) == "sig:" ? "tilt period return, learned - B0" : "sleeve period return, learned - B0",
+         paired_diff(period_returns(*x, closes), period_returns(*y, closes), mt.dates), true);
+  }
+}
+
 // Registry update, results.json and report.md (equity.csv and trades.csv are written by write_report only).
 fs::path write_outputs(const Meta& mt, const std::vector<IcRow>& ic_table, const std::vector<BlendStep>& blend,
-                       const Curves& curves, const fs::path& out_dir) {
+                       const Curves& curves, const std::vector<ExternalResult>& externals, const fs::path& out_dir) {
   check_run_id(mt.run_id, "run id");
   if (!mt.largecap_run.empty()) check_run_id(mt.largecap_run, "large-cap run id");
   // Sibling large-cap run first, so a bad id writes nothing.
@@ -317,7 +431,7 @@ fs::path write_outputs(const Meta& mt, const std::vector<IcRow>& ic_table, const
     for (const auto& row : ic_table) {
       nlohmann::json y = nlohmann::json::object();
       for (const auto& [yr, v] : row.by_year) y[std::to_string(yr)] = jnum(v);
-      ic.push_back({{"signal", std::string(to_string(row.s))}, {"h", row.h}, {"mean", jnum(row.all.mean)},
+      ic.push_back({{"signal", row.signal}, {"h", row.h}, {"mean", jnum(row.all.mean)},
                     {"t", jnum(row.all.t)}, {"n", row.all.n}, {"by_year", y}});
     }
     auto& bl = j["blend"] = nlohmann::json::array();
@@ -370,6 +484,14 @@ fs::path write_outputs(const Meta& mt, const std::vector<IcRow>& ic_table, const
                  {"core_pass", core_pass},
                  {"pass", largecap ? nlohmann::json(gate.pass) : nlohmann::json("pending")},
                  {"reason", reason}};
+    if (!externals.empty()) {  // M4; absent without externals (M3a outputs unchanged)
+      auto& ex = j["external"] = nlohmann::json::array();
+      for (const auto& e : externals) {
+        auto ics = nlohmann::json::array();
+        for (double v : e.rebalance_ic) ics.push_back(jnum(v));
+        ex.push_back({{"name", e.name}, {"rebalance_ic", ics}});
+      }
+    }
     std::ofstream(dir / "results.json") << j.dump(2) << "\n";
   }
 
@@ -391,7 +513,7 @@ fs::path write_outputs(const Meta& mt, const std::vector<IcRow>& ic_table, const
           "non-overlapping samples. h = 20 is a decay diagnostic.\n\n"
           "| signal | h | mean IC | t | n | positive years |\n|---|---:|---:|---:|---:|---:|\n";
     for (const auto& row : ic_table) {
-      md << "| " << to_string(row.s) << " | " << row.h << " | " << num(row.all.mean, 4) << " | "
+      md << "| " << row.signal << " | " << row.h << " | " << num(row.all.mean, 4) << " | "
          << num(row.all.t, 2) << " | " << row.all.n << " | "
          << (row.by_year.empty() ? std::string("n/a")
                                  : std::to_string(pos_years(row)) + " of " + std::to_string(row.by_year.size()))
@@ -458,6 +580,8 @@ fs::path write_outputs(const Meta& mt, const std::vector<IcRow>& ic_table, const
            << ", turnover " << num(ew->turnover, 2) << ", costs " << pct(ew->costs, 3) << ".\n";
       }
     }
+
+    if (!externals.empty()) external_section(md, mt, ic_table, strat, vs_reb, sleeves, curves, externals);
 
     md << "\n## Blend\n\n"
        << "Gate open in " << open << " of " << M << " periods (" << pct(open_share, 1) << "); weights formed in "
@@ -535,7 +659,7 @@ fs::path write_report(const WalkForwardResult& r, const WalkForwardParams& p, co
   mt.tilt = p.bt.tilt;
   mt.bars = r.dates;
   for (std::size_t d : r.dates) mt.dates.push_back(format_rfc3339(panel.times[d]));
-  const fs::path dir = write_outputs(mt, r.ic_table, r.blend, r.curves, out_dir);
+  const fs::path dir = write_outputs(mt, r.ic_table, r.blend, r.curves, r.externals, out_dir);
 
   // equity.csv: wide, one column per curve, on the union of dates (empty cell = curve not started).
   {
@@ -599,7 +723,7 @@ fs::path rereport(const fs::path& out_dir, const std::string& run_id) {
 
   std::vector<IcRow> ic;
   for (const auto& row : j.at("ic_table")) {
-    IcRow r{parse_signal(row.at("signal").get<std::string>()), row.at("h").get<int>(), {}, {}};
+    IcRow r{row.at("signal").get<std::string>(), row.at("h").get<int>(), {}, {}};
     r.all.mean = unjnum(row.at("mean"));
     r.all.t = unjnum(row.at("t"));
     r.all.n = row.at("n").get<std::size_t>();
@@ -648,7 +772,14 @@ fs::path rereport(const fs::path& out_dir, const std::string& run_id) {
   if (j.contains("secondary")) add_costs(j.at("secondary").at("sleeves"));
   for (auto& [name, c] : curves)
     if (auto it = cost_turn.find(name); it != cost_turn.end()) c.costs = it->second.first, c.turnover = it->second.second;
-  return write_outputs(mt, ic, blend, curves, out_dir);
+  std::vector<ExternalResult> externals;
+  if (j.contains("external"))
+    for (const auto& e : j.at("external")) {
+      ExternalResult er{e.at("name").get<std::string>(), {}};
+      for (const auto& v : e.at("rebalance_ic")) er.rebalance_ic.push_back(unjnum(v));
+      externals.push_back(std::move(er));
+    }
+  return write_outputs(mt, ic, blend, curves, externals, out_dir);
 }
 
 }  // namespace mr

@@ -20,6 +20,7 @@
 
 #include "analysis/cluster_persistence.hpp"
 #include "cli/args.hpp"
+#include "cli/export_panel.hpp"  // M4 --export-panel
 #include "cli/rank_report.hpp"
 #include "core/time.hpp"
 #include "flows13f/compare.hpp"  // M3c --compare-13f
@@ -386,6 +387,17 @@ int run_walkforward_cli(const mr::CliArgs& args, const mr::Panel& panel,
       std::cerr << "warning: base holding " << b.ticker << " is not in the panel; its " << b.weight * 100
                 << "% stays in cash\n";
   }
+  // M4: external score CSVs (their digests enter the params hash).
+  std::vector<mr::ExternalSignal> externals;
+  for (const auto& [name, path] : args.wf_externals) {
+    externals.push_back(mr::load_external_signal(name, path, panel));
+    const auto& e = externals.back();
+    p.externals.push_back(mr::external_tag(e));
+    std::fprintf(stderr, "external %s: %zu scored bars from %s%s\n", name.c_str(), e.scores.size(),
+                 path.string().c_str(),
+                 e.unknown_tickers ? (" (" + std::to_string(e.unknown_tickers) + " rows with unknown tickers skipped)").c_str()
+                                   : "");
+  }
   const std::string hash = mr::params_hash(p);
   std::string run_id = args.wf_run_id;
   if (run_id.empty()) {
@@ -402,11 +414,26 @@ int run_walkforward_cli(const mr::CliArgs& args, const mr::Panel& panel,
               omp_get_max_threads(), mr::describe(p).c_str());
   std::fflush(stdout);
   const auto t0 = std::chrono::steady_clock::now();
-  const mr::WalkForwardResult r = mr::run_walkforward(panel, p);
+  const mr::WalkForwardResult r = mr::run_walkforward(panel, p, externals);
   const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
   const fs::path dir = mr::write_report(r, p, panel, out, run_id);
   std::printf("%zu rebalances, %zu curves in %.1f s -> %s\n", r.dates.size(), r.curves.size(), secs,
               (dir / "report.md").string().c_str());
+  return 0;
+}
+
+// --export-panel (M4): the walk-forward's panel, calendar, universe and labels as float32 arrays + meta.json.
+int run_export_panel(const mr::CliArgs& args, const mr::Panel& panel, const mr::Universe& universe) {
+  std::vector<std::string> sectors;
+  for (const auto& n : universe.nodes()) sectors.push_back(n.sector);
+  if (sectors.size() != panel.N()) throw std::runtime_error("--export-panel: universe and panel sizes differ");
+  const mr::PanelExportParams ep;  // fixed: the walk-forward defaults (weekly, warm-up 252, 20 / 50e6 / 0), h = 5
+  std::printf("export-panel: nodes=%zu bars=%zu threads=%d -> %s\n", panel.N(), panel.T(), omp_get_max_threads(),
+              args.export_panel.string().c_str());
+  std::fflush(stdout);
+  const auto t0 = std::chrono::steady_clock::now();
+  mr::export_panel(panel, sectors, ep, args.export_panel, true);
+  std::printf("done in %.1f s\n", std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
   return 0;
 }
 
@@ -491,6 +518,7 @@ int main(int argc, char** argv) {
     }
     if (panel.T() < 2) throw std::runtime_error("not enough cached bars; run with --mode alpaca first");
     if (args.walkforward) return run_walkforward_cli(args, panel, portfolio);
+    if (!args.export_panel.empty()) return run_export_panel(args, panel, universe);  // M4
     if (args.cluster_persistence) {
       mr::ClusterPersistenceOptions opt;
       opt.stride = args.cp_stride;
