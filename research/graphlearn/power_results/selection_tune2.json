@@ -1,0 +1,103 @@
+{
+ "best": "combo+softplus",
+ "table": [
+  {
+   "setting": "combo+softplus",
+   "admissible": true,
+   "score": 2,
+   "tie": 0.42542641683809784,
+   "complete": true
+  },
+  {
+   "setting": "emb_lr=0.01+softplus",
+   "admissible": true,
+   "score": 1,
+   "tie": 1.1777751873674216,
+   "complete": true
+  },
+  {
+   "setting": "emb_lr=0.01",
+   "admissible": true,
+   "score": 1,
+   "tie": 0.9620871688458354,
+   "complete": true
+  },
+  {
+   "setting": "finetune_epochs=5",
+   "admissible": true,
+   "score": 0,
+   "tie": 0.6142165307152392,
+   "complete": true
+  },
+  {
+   "setting": "l1=0.1",
+   "admissible": true,
+   "score": 0,
+   "tie": 0.3104250149154452,
+   "complete": true
+  },
+  {
+   "setting": "combo",
+   "admissible": true,
+   "score": 0,
+   "tie": 0.26008517642307477,
+   "complete": true
+  },
+  {
+   "setting": "start",
+   "admissible": true,
+   "score": 0,
+   "tie": -0.20244583672531957,
+   "complete": true
+  },
+  {
+   "setting": "emb_l2=0.01",
+   "admissible": true,
+   "score": 0,
+   "tie": -0.25835152250004895,
+   "complete": true
+  },
+  {
+   "setting": "emb_l2=0.0001",
+   "admissible": true,
+   "score": 0,
+   "tie": -0.2772528933213251,
+   "complete": true
+  },
+  {
+   "setting": "l1=0.001",
+   "admissible": true,
+   "score": 0,
+   "tie": -0.29263587169047883,
+   "complete": true
+  },
+  {
+   "setting": "rank=4",
+   "admissible": true,
+   "score": 0,
+   "tie": -0.42087846879397706,
+   "complete": true
+  },
+  {
+   "setting": "rank=16",
+   "admissible": true,
+   "score": 0,
+   "tie": -0.5367714241982409,
+   "complete": true
+  },
+  {
+   "setting": "prev+softplus",
+   "admissible": false,
+   "score": 3,
+   "tie": 2.0272052289125972,
+   "complete": true
+  },
+  {
+   "setting": "prev",
+   "admissible": false,
+   "score": 2,
+   "tie": 1.618067973657162,
+   "complete": true
+  }
+ ]
+}

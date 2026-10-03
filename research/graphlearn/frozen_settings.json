@@ -1,7 +1,9 @@
 {
- "status": "provisional: starting point of the synthetic tuning (POWER.md)",
+ "status": "frozen by the pre-registered rule in POWER.md (round 2 winner: combo+softplus); chosen on synthetic markets only",
+ "selected": "combo+softplus",
  "settings": {
-  "rank": 8, "topk": 20, "emb_lr": 0.001, "emb_l2": 0.001, "l1": 0.01, "finetune_epochs": 2, "ft_holdout": 13,
-  "window": 156, "patience": 10, "epochs": 50, "embargo": 1, "retrain_every": 13
+  "rank": 8, "topk": 20, "score_fn": "softplus", "emb_lr": 0.01, "emb_l2": 0.001, "l1": 0.1,
+  "finetune_epochs": 5, "ft_holdout": 13, "window": 156, "patience": 10, "epochs": 50, "embargo": 1,
+  "retrain_every": 13
  }
 }

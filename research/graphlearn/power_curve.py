@@ -11,6 +11,7 @@ through train_wf.py exactly as deployed with the variants learned, B0, B0E. Repo
 Results are appended to DIR/<stage>.jsonl (a rerun skips finished points), the table to DIR/<stage>.md.
 
 Stages:
+  sens   sensitivity: the power curve of the most powerful (but null-inadmissible) candidate, prev+softplus.
   tune2  round 2 (POWER.md amendment): the step-4 combination, softplus scores, the first-round defaults.
   tune   one-at-a-time variations around the starting setting (TUNE_SETTINGS) on the tuning markets
          (beta 0.2/0.3/0.4 and the null market, seeds 101/102 -- disjoint from the reported seeds), rolling mode.
@@ -140,6 +141,12 @@ def points(stage, settings_override=None):
                     yield "frozen", s, {"n": 300, "beta": beta, "seed": seed}, mode
                 yield "frozen", s, {"n": 300, "beta": 0.8, "seed": seed, "null": True}, mode
             yield "frozen", s, {"n": 1000, "beta": 0.4, "seed": 1, "churn": 0.3}, mode
+    elif stage == "sens":  # sensitivity (NOT the frozen setting): the most powerful tuning candidate
+        s = {**PREV, "score_fn": "softplus"}
+        for seed in POWER_SEEDS:
+            for beta in POWER_BETAS:
+                yield "prev+softplus", s, {"n": 300, "beta": beta, "seed": seed}, "rolling"
+            yield "prev+softplus", s, {"n": 300, "beta": 0.8, "seed": seed, "null": True}, "rolling"
     else:
         raise ValueError(stage)
 
@@ -199,7 +206,7 @@ def write_table(results, path):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--out", required=True)
-    ap.add_argument("--stage", choices=("tune", "tune2", "power"), required=True)
+    ap.add_argument("--stage", choices=("tune", "tune2", "power", "sens"), required=True)
     ap.add_argument("--workers", type=int, default=3)
     ap.add_argument("--threads", type=int, default=2)
     a = ap.parse_args(argv)
