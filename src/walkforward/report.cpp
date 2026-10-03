@@ -202,30 +202,37 @@ struct Meta {
 
 std::string day(const std::string& rfc3339) { return rfc3339.substr(0, 10); }
 
-// Per-period returns of a curve between consecutive rebalance closes: out[m] = V(d_m) / V(d_{m-1}) - 1 for m >= 1
-// (NaN where either close is not on the curve); out[0] = NaN.
+// Per-period returns of a curve indexed by DECISION date: out[m] = V(d_{m+1}) / V(d_m) - 1, the return of the
+// period decided at d_m (close of d_m to close of d_{m+1}), with V(d_m) = 1.0 (the starting capital) for the
+// curve's first period; NaN where a close is not on the curve or m is last.
 std::vector<double> period_returns(const EquityCurve& c, const std::vector<TimePoint>& closes) {
   std::map<TimePoint, double> at;
   for (std::size_t k = 0; k < c.t.size(); ++k) at.emplace(c.t[k], c.value[k]);
   std::vector<double> out(closes.size(), std::nan(""));
-  for (std::size_t m = 1; m < closes.size(); ++m) {
-    const auto a = at.find(closes[m - 1]), b = at.find(closes[m]);
-    if (a != at.end() && b != at.end() && a->second > 0) out[m] = b->second / a->second - 1.0;
+  for (std::size_t m = 0; m + 1 < closes.size(); ++m) {
+    const auto b = at.find(closes[m + 1]);
+    if (b == at.end()) continue;
+    // The curve's first period: funded from 1.0 in cash at the open after d_m, so it starts from 1.0.
+    const bool first = !c.t.empty() && c.t.front() > closes[m] && c.t.front() <= closes[m + 1];
+    const auto a = at.find(closes[m]);
+    const double v0 = first ? 1.0 : a != at.end() ? a->second : std::nan("");
+    if (v0 > 0) out[m] = b->second / v0 - 1.0;
   }
   return out;
 }
 
-// Paired difference x[m] - y[m] over the periods where both are finite: mean, t, n, and the UTC years (by the
-// rebalance date) whose mean difference is positive, of the years with any pair.
+// Paired difference x[m] - y[m] over the decision dates m with use[m] where both are finite: mean, t, n, and the UTC
+// years (of the decision date) whose mean difference is positive, of the years with any pair.
 struct Paired {
   MeanT all;
   std::size_t years_pos = 0, years = 0;
 };
-Paired paired_diff(const std::vector<double>& x, const std::vector<double>& y, const std::vector<std::string>& dates) {
+Paired paired_diff(const std::vector<double>& x, const std::vector<double>& y, const std::vector<bool>& use,
+                   const std::vector<std::string>& dates) {
   std::vector<double> d;
   std::map<std::string, std::pair<double, std::size_t>> by_year;
-  for (std::size_t m = 0; m < x.size() && m < y.size() && m < dates.size(); ++m)
-    if (std::isfinite(x[m]) && std::isfinite(y[m])) {
+  for (std::size_t m = 0; m < x.size() && m < y.size() && m < dates.size() && m < use.size(); ++m)
+    if (use[m] && std::isfinite(x[m]) && std::isfinite(y[m])) {
       d.push_back(x[m] - y[m]);
       auto& [sum, n] = by_year[dates[m].substr(0, 4)];
       sum += x[m] - y[m];
@@ -238,12 +245,36 @@ Paired paired_diff(const std::vector<double>& x, const std::vector<double>& y, c
   return p;
 }
 
-// report.md section for external signals (M4): their IC rows, their tilt and sleeve curves, and the decisive
-// paired comparison "learned" vs "B0" when both are present.
+// The M3a gate (c1..c4, c5 from a large-cap sibling) applied to one external's tilt over its scored span.
+struct ExtGate {
+  std::string name, first, last;  // span: first and last day of the sig:<name> curve (RFC 3339), empty if none
+  bool have = false;              // the curve has days
+  double base_mdd = std::nan("");  // buy-and-hold's max drawdown over the span
+  double dsr_excess = std::nan("");
+  GateResult gate{};
+  bool core_pass = false;
+  std::optional<bool> largecap;  // the sibling run's core_pass for this external
+  std::string reason;
+};
+
+// Buy-and-hold over [from, to], rebased to 1.0 at the close before `from` (as the external's tilt starts from it).
+EquityCurve span_of(const EquityCurve& c, TimePoint from, TimePoint to) {
+  EquityCurve out;
+  double base = 1.0;
+  for (std::size_t k = 0; k < c.t.size(); ++k) {
+    if (c.t[k] < from) base = c.value[k];
+    else if (c.t[k] <= to) out.t.push_back(c.t[k]), out.value.push_back(c.value[k]);
+  }
+  for (double& v : out.value) v /= base;
+  return out;
+}
+
+// report.md section for external signals (M4): span rule, their IC rows, their tilt and sleeve curves, the M3a gate
+// per external, and the decisive paired comparison "learned" vs "B0" when both are present.
 void external_section(std::ostringstream& md, const Meta& mt, const std::vector<IcRow>& ic_table,
                       const std::vector<StratRow>& strat, const std::vector<StratRow>& vs_reb,
                       const std::vector<StratRow>& sleeves, const Curves& curves,
-                      const std::vector<ExternalResult>& externals) {
+                      const std::vector<ExternalResult>& externals, const std::vector<ExtGate>& gates) {
   auto find_row = [](const std::vector<StratRow>& v, const std::string& name) -> const StratRow* {
     for (const auto& s : v)
       if (s.name == name) return &s;
@@ -253,9 +284,15 @@ void external_section(std::ostringstream& md, const Meta& mt, const std::vector<
      << "Scores computed outside this binary (--wf-external), evaluated standalone: never part of the blend (the "
         "pre-registered M3a protocol blends the built-in signals only). The IC rows sample only the bars a signal "
         "has scores at (its rebalance dates), non-overlapping per horizon (a scored bar is taken when it is at "
-        "least h bars after the previous sample), against eligible_at; the curves z-score the scores under each "
-        "rebalance's mask and hold the base (sleeves: the equal-weight universe) at rebalances without scores. "
-        "Missing tickers or dates are not eligible for the signal.\n\n"
+        "least h bars after the previous sample), against eligible_at. Missing tickers or dates are not eligible "
+        "for the signal.\n\n"
+     << "**Span rule.** Each external is evaluated over its scored span only: its `sig:` and `sleeve:` curves "
+        "start with the decision at its first scored rebalance d_a and end at the close of d_{b+1}, the end of the "
+        "period decided at its last scored rebalance d_b (no burn-in periods holding the base). Inside the span "
+        "the scores are z-scored under each rebalance's mask; an unscored rebalance inside the span holds the base "
+        "(sleeves: the equal-weight universe). Its registry rows, DSR_excess, years and gate criteria are computed "
+        "on that span against the benchmarks over the same days; c4 compares with buy-and-hold's drawdown over the "
+        "span.\n\n"
      << "| signal | h | mean IC | t | n | positive years |\n|---|---:|---:|---:|---:|---:|\n";
   for (const auto& e : externals)
     for (const auto& row : ic_table) {
@@ -268,19 +305,40 @@ void external_section(std::ostringstream& md, const Meta& mt, const std::vector<
                                  : std::to_string(pos) + " of " + std::to_string(row.by_year.size()))
          << " |\n";
     }
-  md << "\n| signal | rebalances with an IC | tilt ann excess vs buy-and-hold | IR | DSR_excess | "
-        "tilt ann excess vs rebalanced base | IR | sleeve ann excess vs EW eligible | IR |\n"
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|\n";
-  for (const auto& e : externals) {
+  md << "\n| signal | scored bars | of them rebalances | span | rebalances with an IC | tilt ann excess vs "
+        "buy-and-hold | IR | DSR_excess | tilt ann excess vs rebalanced base | IR | sleeve ann excess vs EW eligible "
+        "| IR |\n|---|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|\n";
+  for (std::size_t x = 0; x < externals.size(); ++x) {
+    const auto& e = externals[x];
     std::size_t n_ic = 0;
     for (double v : e.rebalance_ic) n_ic += std::isfinite(v) ? 1 : 0;
     const StratRow* a = find_row(strat, "sig:" + e.name);
     const StratRow* b = find_row(vs_reb, "sig:" + e.name);
     const StratRow* c = find_row(sleeves, "sleeve:" + e.name);
-    md << "| " << e.name << " | " << n_ic << " | " << (a ? pct(a->perf.ann_excess) : "n/a") << " | "
-       << (a ? num(a->perf.ir, 2) : "n/a") << " | " << (a ? num(a->dsr_excess, 3) : "n/a") << " | "
-       << (b ? pct(b->perf.ann_excess) : "n/a") << " | " << (b ? num(b->perf.ir, 2) : "n/a") << " | "
-       << (c ? pct(c->perf.ann_excess) : "n/a") << " | " << (c ? num(c->perf.ir, 2) : "n/a") << " |\n";
+    const ExtGate& g = gates[x];
+    md << "| " << e.name << " | " << e.scored_bars << " | " << e.scored_rebalances << " | "
+       << (g.have ? day(g.first) + " to " + day(g.last) : std::string("n/a")) << " | " << n_ic << " | "
+       << (a ? pct(a->perf.ann_excess) : "n/a") << " | " << (a ? num(a->perf.ir, 2) : "n/a") << " | "
+       << (a ? num(a->dsr_excess, 3) : "n/a") << " | " << (b ? pct(b->perf.ann_excess) : "n/a") << " | "
+       << (b ? num(b->perf.ir, 2) : "n/a") << " | " << (c ? pct(c->perf.ann_excess) : "n/a") << " | "
+       << (c ? num(c->perf.ir, 2) : "n/a") << " |\n";
+  }
+  auto mark = [](bool ok) { return ok ? "pass" : "FAIL"; };
+  md << "\n### M3a gate per external (tilt over its scored span)\n\n"
+     << "Same thresholds as the blend's gate: c1 annual excess > 0 with CI95 lower bound > 0; c2 excess positive in "
+        ">= 60% of years; c3 DSR_excess > 0.95; c4 max drawdown <= buy-and-hold's over the span + 5%; c5 from the "
+        "large-cap sibling run's gate for the same external (pending without one).\n\n"
+     << "| signal | c1 | c2 | c3 | c4 | c5 | verdict | reason |\n|---|---|---|---|---|---|---|---|\n";
+  for (const auto& g : gates) {
+    if (!g.have) {
+      md << "| " << g.name << " | n/a | n/a | n/a | n/a | n/a | FAIL | no simulated days |\n";
+      continue;
+    }
+    const std::string verdict = !g.core_pass ? "FAIL" : !g.largecap ? "pending" : g.gate.pass ? "PASS" : "FAIL";
+    md << "| " << g.name << " | " << mark(g.gate.c1) << " | " << mark(g.gate.c2) << " | " << mark(g.gate.c3) << " ("
+       << num(g.dsr_excess, 3) << ") | " << mark(g.gate.c4) << " | "
+       << (g.largecap ? std::string(mark(g.gate.c5)) : std::string("pending")) << " | " << verdict << " | "
+       << (g.reason.empty() ? std::string("-") : g.reason) << " |\n";
   }
 
   const ExternalResult *learned = nullptr, *b0 = nullptr;
@@ -289,18 +347,21 @@ void external_section(std::ostringstream& md, const Meta& mt, const std::vector<
     if (e.name == "B0") b0 = &e;
   }
   if (!learned || !b0) return;
+  std::vector<bool> both(learned->scored.size(), false);
+  for (std::size_t m = 0; m < both.size() && m < b0->scored.size(); ++m) both[m] = learned->scored[m] && b0->scored[m];
   md << "\n### learned vs B0 (the decisive M4 comparison)\n\n"
-     << "Paired per rebalance, over the rebalances where both are defined. IC difference: IC(learned) - IC(B0) "
-        "against the period's open-to-open label. Tilt and sleeve differences: the period return (rebalance close to "
-        "rebalance close) of `sig:learned` minus `sig:B0` (resp. the sleeves); the shared benchmark cancels, so this "
-        "is the paired difference of their weekly excesses. Positive years: UTC years whose mean difference is "
+     << "Paired per rebalance, using only the periods whose decision date d_m is scored by BOTH externals. IC "
+        "difference: IC(learned) - IC(B0) at d_m against the period's open-to-open label. Tilt and sleeve "
+        "differences: the return of the period decided at d_m (close of d_m to close of d_{m+1}) of `sig:learned` "
+        "minus `sig:B0` (resp. the sleeves); the shared benchmark cancels, so this is the paired difference of their "
+        "weekly excesses. Positive years: UTC years (of d_m) whose mean difference over those periods is "
         "positive.\n\n"
      << "| comparison | mean | t | n | positive years |\n|---|---:|---:|---:|---:|\n";
   auto line = [&](const std::string& what, const Paired& p, bool as_pct) {
     md << "| " << what << " | " << (as_pct ? pct(p.all.mean, 4) : num(p.all.mean, 4)) << " | " << num(p.all.t, 2)
        << " | " << p.all.n << " | " << p.years_pos << " of " << p.years << " |\n";
   };
-  line("IC(learned) - IC(B0)", paired_diff(learned->rebalance_ic, b0->rebalance_ic, mt.dates), false);
+  line("IC(learned) - IC(B0)", paired_diff(learned->rebalance_ic, b0->rebalance_ic, both, mt.dates), false);
   std::vector<TimePoint> closes;
   for (const auto& d : mt.dates) closes.push_back(parse_rfc3339(d));
   for (const char* kind : {"sig:", "sleeve:"}) {
@@ -308,7 +369,7 @@ void external_section(std::ostringstream& md, const Meta& mt, const std::vector<
     const EquityCurve* y = find_curve(curves, std::string(kind) + "B0");
     if (!x || !y) continue;
     line(std::string(kind) == "sig:" ? "tilt period return, learned - B0" : "sleeve period return, learned - B0",
-         paired_diff(period_returns(*x, closes), period_returns(*y, closes), mt.dates), true);
+         paired_diff(period_returns(*x, closes), period_returns(*y, closes), both, mt.dates), true);
   }
 }
 
@@ -319,12 +380,18 @@ fs::path write_outputs(const Meta& mt, const std::vector<IcRow>& ic_table, const
   if (!mt.largecap_run.empty()) check_run_id(mt.largecap_run, "large-cap run id");
   // Sibling large-cap run first, so a bad id writes nothing.
   std::optional<bool> largecap;
+  std::map<std::string, bool> largecap_ext;  // M4: the sibling's per-external core_pass
   if (!mt.largecap_run.empty()) {
     const fs::path sib = out_dir / mt.largecap_run / "results.json";
     std::ifstream in(sib);
     if (!in) throw std::runtime_error("--wf-largecap-run: cannot read " + sib.string());
     try {
-      largecap = nlohmann::json::parse(in).at("gate").at("core_pass").get<bool>();
+      const auto sj = nlohmann::json::parse(in);
+      largecap = sj.at("gate").at("core_pass").get<bool>();
+      if (sj.contains("external"))
+        for (const auto& e : sj.at("external"))
+          if (e.contains("gate") && e.at("gate").contains("core_pass"))
+            largecap_ext[e.at("name").get<std::string>()] = e.at("gate").at("core_pass").get<bool>();
     } catch (const std::exception& e) {
       throw std::runtime_error("--wf-largecap-run: bad " + sib.string() + ": " + e.what());
     }
@@ -390,6 +457,30 @@ fs::path write_outputs(const Meta& mt, const std::vector<IcRow>& ic_table, const
   }
   for (auto* v : {&vs_reb, &sleeves})  // deflated with the same IR trials (an approximation: other benchmarks)
     for (auto& s : *v) s.dsr_excess = dsr_excess(s.perf, trials.trial_ir_var, trials.n_ir_trials);
+
+  // M4: the M3a gate per external, on its tilt over its scored span.
+  std::vector<ExtGate> ext_gates;
+  for (const auto& e : externals) {
+    ExtGate g;
+    g.name = e.name;
+    const StratRow* row = nullptr;
+    for (const auto& s : strat)
+      if (s.name == "sig:" + e.name) row = &s;
+    if (row && !row->curve->t.empty() && row->perf.T > 0) {
+      g.have = true;
+      g.first = format_rfc3339(row->curve->t.front());
+      g.last = format_rfc3339(row->curve->t.back());
+      const EquityCurve bh_span = span_of(bh, row->curve->t.front(), row->curve->t.back());
+      g.base_mdd = performance(bh_span, bh_span).max_drawdown;
+      g.dsr_excess = row->dsr_excess;
+      if (const auto it = largecap_ext.find(e.name); largecap && it != largecap_ext.end()) g.largecap = it->second;
+      g.gate = decision_gate(row->perf, g.base_mdd, g.dsr_excess, g.largecap.value_or(false));
+      g.core_pass = g.gate.c1 && g.gate.c2 && g.gate.c3 && g.gate.c4;
+      g.reason = g.gate.reason;
+      if (const auto k = g.reason.find("c5:"); !g.largecap && k != std::string::npos) g.reason.erase(k >= 2 ? k - 2 : k);
+    }
+    ext_gates.push_back(std::move(g));
+  }
 
   const StratRow* blend_row = nullptr;
   for (const auto& s : strat)
@@ -486,10 +577,21 @@ fs::path write_outputs(const Meta& mt, const std::vector<IcRow>& ic_table, const
                  {"reason", reason}};
     if (!externals.empty()) {  // M4; absent without externals (M3a outputs unchanged)
       auto& ex = j["external"] = nlohmann::json::array();
-      for (const auto& e : externals) {
+      for (std::size_t x = 0; x < externals.size(); ++x) {
+        const auto& e = externals[x];
+        const ExtGate& g = ext_gates[x];
         auto ics = nlohmann::json::array();
         for (double v : e.rebalance_ic) ics.push_back(jnum(v));
-        ex.push_back({{"name", e.name}, {"rebalance_ic", ics}});
+        nlohmann::json gate = nullptr;
+        if (g.have)
+          gate = {{"span", {g.first, g.last}}, {"base_max_drawdown", jnum(g.base_mdd)}, {"c1", g.gate.c1},
+                  {"c2", g.gate.c2}, {"c3", g.gate.c3}, {"c4", g.gate.c4},
+                  {"c5", g.largecap ? nlohmann::json(g.gate.c5) : nlohmann::json("pending")},
+                  {"c3_dsr_excess", jnum(g.dsr_excess)}, {"core_pass", g.core_pass},
+                  {"pass", g.largecap ? nlohmann::json(g.gate.pass) : nlohmann::json("pending")},
+                  {"reason", g.reason}};
+        ex.push_back({{"name", e.name}, {"rebalance_ic", ics}, {"scored", e.scored},
+                      {"scored_bars", e.scored_bars}, {"scored_rebalances", e.scored_rebalances}, {"gate", gate}});
       }
     }
     std::ofstream(dir / "results.json") << j.dump(2) << "\n";
@@ -581,7 +683,7 @@ fs::path write_outputs(const Meta& mt, const std::vector<IcRow>& ic_table, const
       }
     }
 
-    if (!externals.empty()) external_section(md, mt, ic_table, strat, vs_reb, sleeves, curves, externals);
+    if (!externals.empty()) external_section(md, mt, ic_table, strat, vs_reb, sleeves, curves, externals, ext_gates);
 
     md << "\n## Blend\n\n"
        << "Gate open in " << open << " of " << M << " periods (" << pct(open_share, 1) << "); weights formed in "
@@ -775,8 +877,11 @@ fs::path rereport(const fs::path& out_dir, const std::string& run_id) {
   std::vector<ExternalResult> externals;
   if (j.contains("external"))
     for (const auto& e : j.at("external")) {
-      ExternalResult er{e.at("name").get<std::string>(), {}};
+      ExternalResult er{e.at("name").get<std::string>(), {}, {}, 0, 0};
       for (const auto& v : e.at("rebalance_ic")) er.rebalance_ic.push_back(unjnum(v));
+      for (const auto& v : e.at("scored")) er.scored.push_back(v.get<bool>());
+      er.scored_bars = e.at("scored_bars").get<std::size_t>();
+      er.scored_rebalances = e.at("scored_rebalances").get<std::size_t>();
       externals.push_back(std::move(er));
     }
   return write_outputs(mt, ic, blend, curves, externals, out_dir);

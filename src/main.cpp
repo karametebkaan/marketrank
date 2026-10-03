@@ -416,6 +416,11 @@ int run_walkforward_cli(const mr::CliArgs& args, const mr::Panel& panel,
   const auto t0 = std::chrono::steady_clock::now();
   const mr::WalkForwardResult r = mr::run_walkforward(panel, p, externals);
   const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+  for (const auto& e : r.externals) {
+    std::printf("external %s: %zu scored bars, %zu of them rebalance dates\n", e.name.c_str(), e.scored_bars,
+                e.scored_rebalances);
+    if (const std::string w = mr::external_coverage_warning(e); !w.empty()) std::cerr << "warning: " << w << "\n";
+  }
   const fs::path dir = mr::write_report(r, p, panel, out, run_id);
   std::printf("%zu rebalances, %zu curves in %.1f s -> %s\n", r.dates.size(), r.curves.size(), secs,
               (dir / "report.md").string().c_str());

@@ -119,15 +119,19 @@ std::vector<float> export_vol20(const Panel& p) {
   return out;
 }
 
-std::vector<float> export_pressure(const Panel& p, const CoreParams& core) {
+PressureActive export_pressure_active(const Panel& p, const CoreParams& core) {
   const std::size_t T = p.T(), N = p.N();
-  std::vector<float> out(T * N, kNaNf);
+  PressureActive out{std::vector<float>(T * N, kNaNf), std::vector<float>(T * N, 0.0f)};
   CorePipeline pipe(N, core);
   for (std::size_t t = 1; t < T; ++t) {
     const Frame f = pipe.step(p, t);
     const auto& phi = pipe.last_pressure();
     for (std::size_t i = 0; i < N; ++i)
-      if (f.active[i] && std::isfinite(phi[i])) out[p.idx(t, i)] = static_cast<float>(phi[i]);
+      if (f.active[i]) {
+        if (!std::isfinite(phi[i])) throw std::logic_error("export_pressure_active: non-finite pressure of an active node");
+        out.pressure[p.idx(t, i)] = static_cast<float>(phi[i]);
+        out.active[p.idx(t, i)] = 1.0f;
+      }
   }
   return out;
 }
@@ -155,7 +159,8 @@ std::vector<float> export_label(const Panel& p, std::size_t h) {
 }
 
 const std::vector<std::string>& export_array_names() {
-  static const std::vector<std::string> names{"ret1", "ldv", "dvshock", "vol20", "pressure", "elig", "label_w"};
+  static const std::vector<std::string> names{"ret1",     "ldv",    "dvshock", "vol20",
+                                              "pressure", "active", "elig",    "label_w"};
   return names;
 }
 
@@ -166,6 +171,7 @@ void export_panel(const Panel& p, const std::vector<std::string>& sectors, const
   fs::create_directories(dir);
   const std::size_t T = p.T(), N = p.N();
   nlohmann::json files = nlohmann::json::object();
+  std::vector<float> active;  // computed with the pressure (one pipeline pass), written next
   for (const auto& name : export_array_names()) {
     const auto t0 = std::chrono::steady_clock::now();
     std::vector<float> v;
@@ -173,7 +179,11 @@ void export_panel(const Panel& p, const std::vector<std::string>& sectors, const
     else if (name == "ldv") v = export_ldv(p);
     else if (name == "dvshock") v = export_dvshock(p);
     else if (name == "vol20") v = export_vol20(p);
-    else if (name == "pressure") v = export_pressure(p, ep.wf.core);
+    else if (name == "pressure") {
+      PressureActive pa = export_pressure_active(p, ep.wf.core);
+      v = std::move(pa.pressure);
+      active = std::move(pa.active);
+    } else if (name == "active") v = std::move(active);
     else if (name == "elig") v = export_elig(p, ep.wf);
     else v = export_label(p, ep.label_h);
     const fs::path file = dir / (name + ".f32");
@@ -201,11 +211,21 @@ void export_panel(const Panel& p, const std::vector<std::string>& sectors, const
       {"vol20", "sample sd (n-1) of ret1 over bars t-19..t (>= 10 finite values)"},
       {"pressure", "CorePipeline::last_pressure() after step(t) with the walk-forward core model (dollar pressure "
                    "phi of bar t); NaN at t = 0 and where the node is inactive at t"},
+      {"active", "1 if the pipeline's frame.active at t (a recent close and the liquidity floor of the core model), "
+                 "else 0 (0 at t = 0); equal to isfinite(pressure)"},
       {"elig", "1 if eligible_at(panel, t, window, min_dollar_volume, top_n) (the walk-forward universe), else 0"},
       {"label_w", "forward_oo_return(panel, t, h) = open[t+1+h] / open[t+1] - 1 (NaN if t+1+h >= T): the label"}};
   j["feature_names"] = {"ret1", "ldv", "dvshock", "vol20", "pressure"};
   j["label_names"] = {"label_w"};
   j["label_horizons"] = {{"label_w", ep.label_h}};
+  j["decision_mask"] =
+      "The walk-forward z-scores and trades at rebalance d over elig[d] AND active[d] (eligible_at AND "
+      "frame.active; active == isfinite(pressure)). A trainer scoring rebalances should use the same mask.";
+  j["label_note"] =
+      "label_w is a FIXED horizon: forward_oo_return(t, " + std::to_string(ep.label_h) +
+      ") = open[t+1+h]/open[t+1] - 1 at every bar. The walk-forward's period label at rebalance d_m is "
+      "forward_oo_return(d_m, d_{m+1} - d_m) (open after d_m to open after d_{m+1}), which differs from label_w "
+      "when the period is not 5 bars (holiday weeks: 4). The IC table's h = 5 row uses the fixed horizon.";
   j["causality"] =
       "Every feature and elig at bar t reads only bars <= t. label_w is forward by construction: it reads opens at "
       "t+1 and t+1+h. A model scoring rebalance date d may use features at bars <= d and labels only of bars t with "

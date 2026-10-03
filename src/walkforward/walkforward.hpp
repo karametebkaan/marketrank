@@ -58,7 +58,14 @@ struct IcRow {
 struct ExternalResult {
   std::string name;
   std::vector<double> rebalance_ic;  // size = dates.size()
+  std::vector<bool> scored;          // size = dates.size(): the signal has scores at d_m
+  std::size_t scored_bars = 0;       // bars with scores (any bar of the panel)
+  std::size_t scored_rebalances = 0; // of those, walk-forward rebalance dates (= count of `scored`)
 };
+
+// Empty when every scored bar is a rebalance date; otherwise a warning naming how many are not (an off-by-one t,
+// or scores on non-rebalance bars, which only the IC rows use).
+std::string external_coverage_warning(const ExternalResult& e);
 
 struct WalkForwardResult {
   // Signal-major (built-ins in Signal order, then externals in the order given), then horizon in ic_horizons order.
@@ -85,15 +92,18 @@ struct WalkForwardResult {
 // spearman(zscore(raw_s, eligible_at(t)), forward_oo_return(t, h)) (non-finite ICs skipped).
 //
 // External signals (M4) are evaluated standalone, never blended (the blend is the pre-registered M3a protocol over
-// the built-ins). Their curves "sig:<name>" and "sleeve:<name>" use, at each rebalance d_m,
-// zscore(score(d_m), eligible[m]) (the built-ins' mask), and an empty score vector (hold the base / the
-// equal-weight universe, no tilt) at rebalances where the signal has no scores. Their IC rows sample only the bars
+// the built-ins). Their curves "sig:<name>" and "sleeve:<name>" cover the signal's SCORED SPAN only: decisions from
+// its first scored rebalance d_a to its last scored rebalance d_b, the curve cut at the close of d_{b+1} (the end
+// of the last scored period; the panel's end if d_b is the last rebalance). Each decision is
+// zscore(score(d_m), eligible[m]) (the built-ins' mask); an unscored rebalance inside the span gets an empty
+// score vector (hold the base / the equal-weight universe, no tilt). Their IC rows sample only the bars
 // the signal has scores at (normally its rebalance dates): per horizon h, scored bars t >= warm-up with
 // t + 1 + h < T, taken greedily in order with t >= (previous sample) + h (non-overlapping, like the built-ins:
 // scores at every bar from the warm-up on give exactly the built-ins' grid), each contributing
 // spearman(zscore(score(t), eligible_at(t)), forward_oo_return(t, h)) (non-finite ICs skipped).
 // Throws std::invalid_argument on a non-positive IC horizon, an unknown base ticker, an external whose score
-// vectors are not of size N, or p.externals not matching the externals' tags.
+// vectors are not of size N, p.externals not matching the externals' tags, or an external none of whose scored
+// bars is a rebalance date (checked before the pass).
 WalkForwardResult run_walkforward(const Panel& panel, const WalkForwardParams& p,
                                   const std::vector<ExternalSignal>& externals = {});
 

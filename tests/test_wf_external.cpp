@@ -17,7 +17,9 @@
 #include "pipeline/core_pipeline.hpp"
 #include "market/synthetic_market.hpp"
 #include "test_util.hpp"
+#include "core/time.hpp"
 #include "walkforward/external.hpp"
+#include "walkforward/metrics.hpp"
 #include "walkforward/report.hpp"
 #include "walkforward/stats.hpp"
 #include "walkforward/walkforward.hpp"
@@ -174,12 +176,18 @@ TEST_CASE("wf-external: rebalance-date scores give the built-in's curves, rebala
   WalkForwardParams p = ext_params();
   const WalkForwardResult base = run_walkforward(panel, p);
   const auto raw = raw_signal(panel, p, Signal::Score);
-  // Scores on every rebalance date but the first two (missing dates hold the base: no tilt).
-  std::vector<std::size_t> bars(base.dates.begin() + 2, base.dates.end());
+  // learned: scored span = rebalances 2 .. M-5, with a hole at 10 (held at the base inside the span).
+  const std::size_t M = base.dates.size();
+  REQUIRE(M > 20);
+  auto in_learned = [&](std::size_t j) { return j >= 2 && j <= M - 5 && j != 10; };
+  std::vector<std::size_t> bars;
+  for (std::size_t j = 0; j < M; ++j)
+    if (in_learned(j)) bars.push_back(base.dates[j]);
   const ExternalSignal e = parse_external_signal("learned", to_csv(panel, raw, bars), panel);
   const ExternalSignal e0 = parse_external_signal("B0", to_csv(panel, raw, base.dates), panel);
   p.externals = {external_tag(e), external_tag(e0)};
   const WalkForwardResult r = run_walkforward(panel, p, {e, e0});
+  REQUIRE(r.externals.size() == 2);
 
   // Built-in results unchanged.
   REQUIRE(r.dates == base.dates);
@@ -201,20 +209,39 @@ TEST_CASE("wf-external: rebalance-date scores give the built-in's curves, rebala
   // B0 (scores everywhere) = the built-in score signal, exactly.
   CHECK(test::same_values(find_curve(r, "sig:B0")->value, find_curve(r, "sig:score")->value));
   CHECK(test::same_values(find_curve(r, "sleeve:B0")->value, find_curve(r, "sleeve:score")->value));
-  // learned has no scores at the first two rebalances: it holds the base there.
+  // learned is simulated over its scored span only: decisions 2 .. M-5 (the hole holds the base), cut at the close
+  // of d_{M-4}; no burn-in periods.
   {
-    std::vector<Decision> d(base.dates.size());
-    for (std::size_t j = 0; j < d.size(); ++j)
-      d[j] = Decision{base.dates[j], j < 2 ? std::vector<double>{} : base.months[j].z[0], base.eligible[j]};
-    CHECK(test::same_values(find_curve(r, "sig:learned")->value, simulate(panel, p.bt, d).value));
+    std::vector<Decision> d;
+    for (std::size_t j = 2; j <= M - 5; ++j)
+      d.push_back(Decision{base.dates[j], in_learned(j) ? base.months[j].z[0] : std::vector<double>{}, base.eligible[j]});
+    EquityCurve want = simulate(panel, p.bt, d);
+    const TimePoint end = panel.times[base.dates[M - 4]];
+    std::size_t keep = 0;
+    while (keep < want.t.size() && want.t[keep] <= end) ++keep;
+    REQUIRE(keep < want.t.size());
+    want.t.resize(keep);
+    want.value.resize(keep);
+    const EquityCurve* got = find_curve(r, "sig:learned");
+    CHECK(got->t == want.t);
+    CHECK(test::same_values(got->value, want.value));
+    CHECK(got->t.front() == panel.times[base.dates[2] + 1]);
+    CHECK(got->t.back() == end);
+    const EquityCurve* sl = find_curve(r, "sleeve:learned");
+    CHECK(sl->t.front() == panel.times[base.dates[2] + 1]);
+    CHECK(sl->t.back() == end);
   }
+  CHECK(r.externals[0].scored_rebalances == M - 7);
+  CHECK(r.externals[0].scored_bars == M - 7);
+  CHECK(external_coverage_warning(r.externals[0]).empty());
   // Rebalance ICs against the period label.
-  REQUIRE(r.externals.size() == 2);
   CHECK(r.externals[0].name == "learned");
   for (std::size_t j = 0; j < base.dates.size(); ++j) {
     const double want = spearman(base.months[j].z[0], base.months[j].label);
     CHECK(test::same_values({r.externals[1].rebalance_ic[j]}, {std::isfinite(want) ? want : NAN}));
-    CHECK(test::same_values({r.externals[0].rebalance_ic[j]}, {j < 2 || !std::isfinite(want) ? NAN : want}));
+    CHECK(test::same_values({r.externals[0].rebalance_ic[j]}, {!in_learned(j) || !std::isfinite(want) ? NAN : want}));
+    CHECK(r.externals[0].scored[j] == in_learned(j));
+    CHECK(r.externals[1].scored[j]);
   }
   // Rebalance-only IC samples are non-overlapping per horizon.
   for (int h : p.ic_horizons) {
@@ -307,4 +334,115 @@ TEST_CASE("wf-external: CSV parsing") {
   CHECK_THROWS_AS(load_external_signal("x", "/nonexistent/x.csv", panel), std::runtime_error);
   CHECK_NOTHROW(check_external_name("B0"));
   CHECK_NOTHROW(check_external_name("learned-v2.1"));
+}
+
+TEST_CASE("wf-external: scored span drives registry rows and the per-external M3a gate; paired periods need both") {
+  const Panel& panel = ext_panel();
+  WalkForwardParams p = ext_params();
+  const auto dates = walkforward_dates(panel, p);
+  const std::size_t M = dates.size();
+  REQUIRE(M > 20);
+  auto in_learned = [&](std::size_t j) { return j >= 2 && j <= M - 5 && j != 10; };
+  std::vector<std::size_t> lb;
+  for (std::size_t j = 0; j < M; ++j)
+    if (in_learned(j)) lb.push_back(dates[j]);
+  const ExternalSignal e = parse_external_signal("learned", to_csv(panel, raw_signal(panel, p, Signal::Score), lb), panel);
+  const ExternalSignal e0 = parse_external_signal("B0", to_csv(panel, raw_signal(panel, p, Signal::Pulse5), dates), panel);
+  p.externals = {external_tag(e), external_tag(e0)};
+  const WalkForwardResult r = run_walkforward(panel, p, {e, e0});
+  const auto out = test::temp_dir("wf_ext_gate");
+  const auto dir = write_report(r, p, panel, out, "g");
+  const std::string md = slurp(dir / "report.md");
+  const auto j = nlohmann::json::parse(slurp(dir / "results.json"));
+
+  const EquityCurve& curve = *find_curve(r, "sig:learned");
+  const EquityCurve& bh = *find_curve(r, "bench:buyhold");
+  const Perf perf = performance(curve, bh);
+  CHECK(perf.T == curve.t.size());
+  CHECK(perf.T < performance(*find_curve(r, "blend"), bh).T);
+  // Registry row of sig:learned: the span's T and IR.
+  {
+    std::ifstream in(out / "registry.csv");
+    bool found = false;
+    for (std::string line; std::getline(in, line);)
+      if (line.rfind("g,sig:learned,", 0) == 0) {
+        found = true;
+        CHECK(line.find("," + std::to_string(perf.T) + ",") != std::string::npos);
+      }
+    CHECK(found);
+  }
+  // Gate per external in results.json.
+  const auto& g = j.at("external")[0].at("gate");
+  CHECK(j.at("external")[0].at("name") == "learned");
+  CHECK(g.at("span")[0] == format_rfc3339(curve.t.front()));
+  CHECK(g.at("span")[1] == format_rfc3339(curve.t.back()));
+  CHECK(g.at("c5") == "pending");
+  CHECK(g.at("pass") == "pending");
+  CHECK(g.at("c1").get<bool>() == (perf.ann_excess > 0 && perf.excess_ci95.lo > 0));
+  CHECK(g.at("c2").get<bool>() == (perf.year_hit_rate >= 0.6));
+  for (const char* k : {"c3", "c4", "core_pass", "c3_dsr_excess", "base_max_drawdown", "reason"}) CHECK(g.contains(k));
+  CHECK(j.at("external")[0].at("scored_rebalances") == M - 7);
+  CHECK(j.at("external")[0].at("scored").size() == M);
+  CHECK(md.find("**Span rule.**") != std::string::npos);
+  CHECK(md.find("### M3a gate per external") != std::string::npos);
+  CHECK(md.find("| learned | " + std::string(g.at("c1").get<bool>() ? "pass" : "FAIL") + " | ") != std::string::npos);
+  CHECK(md.find("scored by BOTH externals") != std::string::npos);
+
+  // Paired periods: only decisions scored by both (learned's span minus its hole), each with a finite return.
+  {
+    std::size_t n_tilt = 0, n_ic = 0;
+    for (std::size_t m = 0; m + 1 < M; ++m)
+      if (in_learned(m)) ++n_tilt;
+    for (std::size_t m = 0; m < M; ++m)
+      if (in_learned(m) && std::isfinite(r.externals[0].rebalance_ic[m]) && std::isfinite(r.externals[1].rebalance_ic[m]))
+        ++n_ic;
+    CHECK(n_tilt == M - 7);
+    const auto row_n = [&](const std::string& label) {
+      const auto k = md.find("| " + label + " |");
+      REQUIRE(k != std::string::npos);
+      const std::string line = md.substr(k, md.find('\n', k) - k);
+      // "| label | mean | t | n | years |": the 4th cell is n.
+      std::vector<std::string> cells;
+      std::size_t a = 1;
+      for (std::size_t b; (b = line.find('|', a)) != std::string::npos; a = b + 1) cells.push_back(line.substr(a, b - a));
+      return std::stoul(cells.at(3));
+    };
+    CHECK(row_n("tilt period return, learned - B0") == n_tilt);
+    CHECK(row_n("sleeve period return, learned - B0") == n_tilt);
+    CHECK(row_n("IC(learned) - IC(B0)") == n_ic);
+  }
+  fs::remove(dir / "report.md");
+  rereport(out, "g");
+  CHECK(slurp(dir / "report.md") == md);
+}
+
+TEST_CASE("wf-external: coverage of rebalance dates - none fails, partial warns") {
+  const Panel& panel = ext_panel();
+  WalkForwardParams p = ext_params();
+  const auto dates = walkforward_dates(panel, p);
+  const auto raw = raw_signal(panel, p, Signal::Score);
+  // Off by one bar: no scored bar is a rebalance date.
+  std::vector<std::size_t> off;
+  for (std::size_t d : dates)
+    if (d + 1 < panel.T() && std::find(dates.begin(), dates.end(), d + 1) == dates.end()) off.push_back(d + 1);
+  const ExternalSignal bad = parse_external_signal("bad", to_csv(panel, raw, off), panel);
+  p.externals = {external_tag(bad)};
+  try {
+    run_walkforward(panel, p, {bad});
+    FAIL("expected a throw");
+  } catch (const std::invalid_argument& ex) {
+    CHECK(std::string(ex.what()).find("none of its") != std::string::npos);
+  }
+  // Every rebalance plus one stray bar: runs, with a warning naming 1 stray bar.
+  std::vector<std::size_t> part = dates;
+  part.push_back(off.front());
+  std::sort(part.begin(), part.end());
+  const ExternalSignal some = parse_external_signal("some", to_csv(panel, raw, part), panel);
+  p.externals = {external_tag(some)};
+  const WalkForwardResult r = run_walkforward(panel, p, {some});
+  REQUIRE(r.externals.size() == 1);
+  CHECK(r.externals[0].scored_bars == dates.size() + 1);
+  CHECK(r.externals[0].scored_rebalances == dates.size());
+  const std::string w = external_coverage_warning(r.externals[0]);
+  CHECK(w.find("1 of its " + std::to_string(dates.size() + 1) + " scored bars") != std::string::npos);
 }

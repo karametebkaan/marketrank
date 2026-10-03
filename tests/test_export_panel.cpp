@@ -61,10 +61,10 @@ TEST_CASE("export-panel: arrays and meta.json round-trip; rebalance dates are th
   const auto dir = test::temp_dir("export_panel_out");
   export_panel(panel, sectors, ep, dir);
 
-  const std::vector<std::vector<float>> want{export_ret1(panel),  export_ldv(panel),
-                                             export_dvshock(panel), export_vol20(panel),
-                                             export_pressure(panel, ep.wf.core), export_elig(panel, ep.wf),
-                                             export_label(panel, 5)};
+  const PressureActive pa = export_pressure_active(panel, ep.wf.core);
+  const std::vector<std::vector<float>> want{export_ret1(panel),    export_ldv(panel), export_dvshock(panel),
+                                             export_vol20(panel),   pa.pressure,       pa.active,
+                                             export_elig(panel, ep.wf), export_label(panel, 5)};
   REQUIRE(export_array_names().size() == want.size());
   for (std::size_t k = 0; k < want.size(); ++k) {
     CAPTURE(export_array_names()[k]);
@@ -89,12 +89,27 @@ TEST_CASE("export-panel: arrays and meta.json round-trip; rebalance dates are th
   CHECK(j.at("eligibility").at("window").get<int>() == 20);
   CHECK(j.at("eligibility").at("top_n").get<int>() == 0);
   CHECK(j.contains("causality"));
+  CHECK(j.at("decision_mask").get<std::string>().find("elig[d] AND active[d]") != std::string::npos);
+  CHECK(j.at("label_note").get<std::string>().find("FIXED horizon") != std::string::npos);
+  CHECK(j.at("files").contains("active"));
   CHECK(j.at("feature_names").size() == 5);
   const auto bars = j.at("rebalance").at("bars").get<std::vector<std::size_t>>();
   CHECK(bars == walkforward_dates(panel, ep.wf));
   WalkForwardParams wf = ep.wf;
   wf.bt.base = {{panel.tickers[0], 1.0}};
-  CHECK(bars == run_walkforward(panel, wf).dates);
+  const WalkForwardResult r = run_walkforward(panel, wf);
+  CHECK(bars == r.dates);
+  // active == isfinite(pressure), and the walk-forward's decision mask is elig AND active.
+  for (std::size_t k = 0; k < T * N; ++k) CHECK((pa.active[k] == 1.0f) == std::isfinite(pa.pressure[k]));
+  const auto elig = export_elig(panel, ep.wf);
+  std::size_t masked_out = 0;
+  for (std::size_t m = 0; m < r.dates.size(); ++m)
+    for (std::size_t i = 0; i < N; ++i) {
+      const std::size_t k = panel.idx(r.dates[m], i);
+      CHECK(r.eligible[m][i] == (elig[k] == 1.0f && pa.active[k] == 1.0f));
+      masked_out += elig[k] == 1.0f && pa.active[k] == 0.0f ? 1 : 0;
+    }
+  MESSAGE("eligible but inactive at rebalances: " << masked_out);
   CHECK(bars.size() > 30);
 
   // Defaults are the walk-forward's (weekly, warm-up 252, 20 / 50e6 / 0, market_rank core).
@@ -140,7 +155,8 @@ TEST_CASE("export-panel: features at bar t do not depend on later bars") {
   wf.top_n = N / 3;
   wf.elig_window = 3;  // one perturbed bar would move the median
   const auto base_ret = export_ret1(panel), base_ldv = export_ldv(panel), base_dvs = export_dvshock(panel),
-             base_vol = export_vol20(panel), base_phi = export_pressure(panel, wf.core), base_el = export_elig(panel, wf);
+             base_vol = export_vol20(panel), base_phi = export_pressure_active(panel, wf.core).pressure,
+             base_act = export_pressure_active(panel, wf.core).active, base_el = export_elig(panel, wf);
   for (std::size_t cut : {std::size_t{150}, std::size_t{300}}) {
     Panel q = panel;
     for (std::size_t t = cut + 1; t < q.T(); ++t)  // every bar after `cut`
@@ -152,7 +168,9 @@ TEST_CASE("export-panel: features at bar t do not depend on later bars") {
       }
     CAPTURE(cut);
     const auto ret = export_ret1(q), ldv = export_ldv(q), dvs = export_dvshock(q), vol = export_vol20(q),
-               phi = export_pressure(q, wf.core), el = export_elig(q, wf);
+               phi = export_pressure_active(q, wf.core).pressure, act = export_pressure_active(q, wf.core).active,
+               el = export_elig(q, wf);
+    CHECK(same_prefix(act, base_act, N, cut));
     CHECK(same_prefix(ret, base_ret, N, cut));
     CHECK(same_prefix(ldv, base_ldv, N, cut));
     CHECK(same_prefix(dvs, base_dvs, N, cut));

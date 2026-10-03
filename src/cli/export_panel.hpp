@@ -21,6 +21,9 @@ namespace mr {
 //  vol20    sample sd (n - 1) of ret1 over bars t-19..t (finite values only, >= 10 of them), NaN otherwise.
 //  pressure the CorePipeline's pressure phi fed to the flux at bar t (last_pressure() after step(t), p.core =
 //           CoreParams::market_rank(): dollar pressure), NaN at t = 0 and where the node is inactive at t.
+//  active   1 if the pipeline's frame.active at bar t (a recent close and the liquidity floor), else 0 (0 at t = 0);
+//           pressure is finite exactly where active is 1. The walk-forward's decision mask at rebalance d is
+//           elig AND active.
 //  elig     1 if eligible_at(panel, t, p.elig_window, p.min_dollar_volume, p.top_n), else 0.
 //  label_w  forward_oo_return(panel, t, label_h): open[t+1+h] / open[t+1] - 1, the weekly (h = 5) label.
 struct PanelExportParams {
@@ -33,7 +36,10 @@ std::vector<float> export_ret1(const Panel& p);
 std::vector<float> export_ldv(const Panel& p);
 std::vector<float> export_dvshock(const Panel& p);
 std::vector<float> export_vol20(const Panel& p);
-std::vector<float> export_pressure(const Panel& p, const CoreParams& core);  // one pipeline pass over every bar
+struct PressureActive {
+  std::vector<float> pressure, active;
+};
+PressureActive export_pressure_active(const Panel& p, const CoreParams& core);  // one pipeline pass over every bar
 std::vector<float> export_elig(const Panel& p, const WalkForwardParams& wf);
 std::vector<float> export_label(const Panel& p, std::size_t h);
 
