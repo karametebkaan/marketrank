@@ -63,8 +63,14 @@ def robust_std(v):
 
 
 def node_set(p, d, max_nodes, require_label):
-    """Eligible stocks at bar d (with a finite label when training), capped to the top max_nodes by ldv[d]."""
+    """The walk-forward's decision set at bar d -- elig AND active (active.f32 when exported, else finite
+    pressure: inactive nodes are exactly those with NaN pressure) -- with a finite label when training, capped to
+    the top max_nodes by ldv[d]. The same mask is used for training and prediction."""
     ok = p.a["elig"][d] == 1
+    if "active" in p.a:
+        ok &= p.a["active"][d] == 1
+    else:
+        ok &= np.isfinite(p.a["pressure"][d])
     if require_label:
         ok &= np.isfinite(p.a["label_w"][d])
     idx = np.flatnonzero(ok)

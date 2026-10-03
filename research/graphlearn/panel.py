@@ -51,6 +51,12 @@ def load_panel(dirpath):
             raise ValueError(f"{path}: {size // 4} floats, expected T*N = {T}*{N} = {T * N}")
         # copy-on-write memmap: pages load lazily (the real export is ~100 MB per array), writes stay in memory
         arrays[name] = np.memmap(path, dtype="<f4", mode="c", shape=(T, N))
+    # optional decision mask (walk-forward: elig AND frame.active); absent -> model.py uses isfinite(pressure)
+    act = os.path.join(dirpath, files.get("active", "active.f32"))
+    if os.path.exists(act):
+        if os.path.getsize(act) != T * N * 4:
+            raise ValueError(f"{act}: size does not match T*N")
+        arrays["active"] = np.memmap(act, dtype="<f4", mode="c", shape=(T, N))
     tickers = [str(t) for t in meta["tickers"]]
     sectors = [str(s) for s in meta["sectors"]]
     if len(tickers) != N or len(sectors) != N or len(meta["times"]) != T:

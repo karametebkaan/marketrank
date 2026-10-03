@@ -90,11 +90,32 @@ class Features(unittest.TestCase):
         self.assertTrue(g[2] < g[3] < g[0] < g[4])
         self.assertAlmostEqual(float(np.nansum(g)), 0.0, places=5)
 
+    def test_node_set_requires_active(self):
+        d = int(self.p.rebalance[20])
+        base = mdl.node_set(self.p, d, max_nodes=3000, require_label=True)
+        self.p.a["pressure"][d, base[:3]] = np.nan  # inactive at d
+        got = mdl.node_set(self.p, d, max_nodes=3000, require_label=False)
+        self.assertFalse(set(base[:3]) & set(got))
+        self.assertEqual(set(got) & set(base), set(base[3:]))
+        self.p.a["active"] = np.ones_like(self.p.a["elig"])  # an exported active mask takes precedence
+        self.p.a["active"][d, base[3]] = 0
+        got = mdl.node_set(self.p, d, max_nodes=3000, require_label=True)
+        self.assertEqual(list(got), list(base[:3]) + list(base[4:]))
+
+    def test_active_array_is_loaded(self):
+        with tempfile.TemporaryDirectory() as d:
+            arrays = {name: np.ones((3, 2), np.float32) for name in pnl.FIELDS}
+            pnl.write_panel(d, ["A", "B"], ["X", "X"], [1, 2, 3], [0], arrays)
+            self.assertNotIn("active", pnl.load_panel(d).a)
+            np.array([[1, 0]] * 3, dtype="<f4").tofile(os.path.join(d, "active.f32"))
+            np.testing.assert_array_equal(pnl.load_panel(d).a["active"][:, 1], 0)
+
     def test_node_cap_by_ldv(self):
         d = int(self.p.rebalance[20])
         nodes = mdl.node_set(self.p, d, max_nodes=10, require_label=True)
         self.assertEqual(len(nodes), 10)
-        elig = np.where((self.p.a["elig"][d] == 1) & np.isfinite(self.p.a["label_w"][d]))[0]
+        elig = np.where((self.p.a["elig"][d] == 1) & np.isfinite(self.p.a["label_w"][d])
+                        & np.isfinite(self.p.a["pressure"][d]))[0]
         ldv = self.p.a["ldv"][d]
         self.assertGreaterEqual(ldv[nodes].min(), np.sort(ldv[elig])[-10])
 
