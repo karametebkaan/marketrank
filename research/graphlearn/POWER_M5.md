@@ -77,4 +77,32 @@ Code: `intraday.py` (layout, label mask, features), `prior_model.py`, `wf_m5.py`
 
 ## Results
 
-(filled in after the grid ran; see `power_m5_results/`)
+The tuning grid ran in full (96 points; `power_m5_results/tune.md`, `tune.jsonl`, `selection_tune.json`).
+**No configuration passes the pre-registered rule.** Per the rule, there is no power stage and no real-data run.
+
+| config | detected at IC 0.02 / 0.03 / 0.05 (of 12) | nulls clean | learned params |
+|---|---|---|---|
+| unsigned | 0 / 0 / 2 | no (null_b, market 202 rolling: learned − Bprior t = −2.2) | 7,098 |
+| signed | 0 / 0 / 1 | no (null_b: t = −3.6, −2.4, −2.8) | 9,508 |
+
+Means over the 12 planted markets per level (t is day-clustered):
+
+| config | IC | t, learned − Bprior | t, learned − B0E | recovery corr(correction, planted delta) |
+|---|---|---|---|---|
+| unsigned | 0.02 | +0.04 | +0.71 | 0.02 |
+| unsigned | 0.03 | +0.00 | +1.59 | 0.04 |
+| unsigned | 0.05 | +1.04 | +4.03 | 0.10 |
+| signed | 0.02 | +0.02 | +0.81 | 0.02 |
+| signed | 0.03 | −0.02 | +1.84 | 0.04 |
+| signed | 0.05 | +0.53 | +4.31 | 0.10 |
+
+**What this says:**
+- **The prior chain carries the signal.** Bprior − B0E is t ≈ 3–6 at IC 0.05 and ≈ 9–12 on null_b. The learned model beats B0E for
+  the same reason: it starts from the prior.
+- **The correction is not learned.** About 60% of the oracle IC is reachable only through a correction (the prior-graph IC is
+  ≈ 0.4 × oracle). Yet learned − Bprior averages t ≈ 1 at IC 0.05 and ≈ 0 below, and the learned correction correlates only
+  0.10 with the planted delta. On 250 sessions × 300 names the correction is underpowered.
+- **The signed head overfits.** It is worse than the prior where the prior is the truth (null_b t down to −3.6). The unsigned
+  head shows the same tendency, more weakly.
+
+M5 stops here, as pre-registered. The 15-minute data path (`90a1423`) and the export of prior edges stay in place.

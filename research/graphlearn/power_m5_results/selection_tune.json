@@ -1,0 +1,33 @@
+{
+ "best": null,
+ "table": [
+  {
+   "config": "unsigned",
+   "detected": {
+    "0.02": 0,
+    "0.03": 0,
+    "0.05": 2
+   },
+   "n_planted_05": 12,
+   "n_nulls": 12,
+   "nulls_ok": false,
+   "complete": true,
+   "passes": false,
+   "n_params": 7098
+  },
+  {
+   "config": "signed",
+   "detected": {
+    "0.02": 0,
+    "0.03": 0,
+    "0.05": 1
+   },
+   "n_planted_05": 12,
+   "n_nulls": 12,
+   "nulls_ok": false,
+   "complete": true,
+   "passes": false,
+   "n_params": 9508
+  }
+ ]
+}
