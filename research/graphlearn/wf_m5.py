@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """M5 walk-forward trainer on the 15-minute panel: learned (prior-anchored) vs Bprior, B0, B0E.
 
-  wf_m5.py --panel DIR --out DIR2 [--variants learned,Bprior,B0E,B0] [--mode rolling|scratch] [--store DIR]
+  wf_m5.py --panel DIR --out DIR2 [--variants learned,Bprior,Bshuf,B0E,B0] [--mode rolling|scratch] [--store DIR]
            [--fresh] [--seed 0] [--threads 1]
 
 Calendar (in sessions): the first predicted session is session --min-history (60); every --retrain-every (21,
@@ -46,6 +46,8 @@ DEFAULTS = {"min_history": 60, "retrain_every": 21, "embargo": 1, "window": 0, "
             "g_hidden": 8, "msg_dim": 8, "signed": False, "direction": "out", "lr": 1e-3, "emb_lr": 1e-2, "emb_l2": 1e-3,
             "corr_l2": 1e-3, "weight_decay": 1e-4, "lambda_ic": 1.0, "dropout": 0.1, "max_nodes": 3000}
 HASHED = tuple(DEFAULTS) + ("mode", "seed", "threads")
+SHUF_SEED = 20261004  # the fixed ticker permutation of the Bshuf control (M6 pre-registration)
+BASES = ("Bprior", "Bshuf", "B0E", "B0")
 
 
 def parse_args(argv):
@@ -128,9 +130,9 @@ class ResumeRefused(RuntimeError):
 class Data:
     """Session batches of a panel, built lazily and cached (shared by all variants of a run)."""
 
-    def __init__(self, p, args):
+    def __init__(self, p, args, relabel=None):
         self.p = p
-        self.fb = itd.FeatureBuilder(p, args.max_nodes, args.direction)
+        self.fb = itd.FeatureBuilder(p, args.max_nodes, args.direction, relabel=relabel)
         self.sess = p.sessions()
         self.lmask = itd.label_mask(p.session, p.horizon)
         self.cache = {}
@@ -337,7 +339,7 @@ def ic_summary(p, all_preds):
     ics = {v: bar_ic_table(p, pr) for v, pr in all_preds.items()}
     out = {v: clustered(p, ic) for v, ic in ics.items()}
     for v in ics:
-        for base in ("Bprior", "B0E", "B0"):
+        for base in BASES:
             if base in ics and base != v:
                 common = set(ics[v]) & set(ics[base])
                 out[v]["minus_" + base] = clustered(p, {d: ics[v][d] - ics[base][d] for d in common})
@@ -359,8 +361,9 @@ def main(argv=None):
     t0 = time.time()
     p = itd.load_intraday(args.panel)
     data = Data(p, args)
+    shuf = Data(p, args, relabel=itd.shuffle_perm(p.N, SHUF_SEED)) if "Bshuf" in variants else None
     try:
-        results = [run_variant(data, v, args, log) for v in variants]
+        results = [run_variant(shuf if v == "Bshuf" else data, v, args, log) for v in variants]
     except ResumeRefused as e:
         raise SystemExit(f"refusing to resume: {e}")
     all_preds = {r["variant"]: Store(r["store"]).all_predictions() for r in results}
@@ -374,7 +377,7 @@ def main(argv=None):
     for v in variants:
         s = ic[v]
         extra = "".join(f"  -{b}: {s['minus_' + b]['mean']:+.4f} (t={s['minus_' + b]['t']:.2f})"
-                        for b in ("Bprior", "B0E", "B0") if "minus_" + b in s)
+                        for b in BASES if "minus_" + b in s)
         log(f"OOS IC {v:7s} mean={s['mean']:+.4f} t={s['t']:.2f} days={s['n_days']}{extra}")
     run = {"args": vars(args), "variants": {r["variant"]: r for r in results}, "oos_ic": ic, "git_sha": git_sha(),
            "torch": torch.__version__, "seconds": round(time.time() - t0, 2)}

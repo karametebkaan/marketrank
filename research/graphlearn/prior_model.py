@@ -7,6 +7,9 @@ Variants (identical encoder and head; they differ only in the message z_i fed to
            signed=True: the weights are A_t * tanh(b + g_sign(pair) + u'_i^T v'_j) (b starts at 2: ~+0.96), so
            an edge can carry a negative weight.
   Bprior   A_t = P_prior (row-renormalized over the edges present), fixed: MarketRank's chain as is.
+  Bshuf    Bprior on the prior with every edge's dst ticker relabeled by one fixed random permutation (the batch
+           builder does the relabeling): the same graph shape and weights on the wrong tickers. Control for "any
+           neighbour average helps".
   B0       no message (z = 0).
   B0E      per-ticker embedding (rank r) fed into the head in place of the message; no message.
 Message z_i = sum_e A_e m_{col(e)}, m = Linear(h) (msg_dim 8), over the edges e with row(e) = i (intraday.py: row = src by default).
@@ -22,7 +25,7 @@ import torch.nn.functional as F
 
 import intraday as itd
 
-VARIANTS = ("learned", "Bprior", "B0", "B0E")
+VARIANTS = ("learned", "Bprior", "Bshuf", "B0", "B0E")
 
 
 @dataclass
@@ -50,7 +53,7 @@ class PriorNet(nn.Module):
         self.enc = nn.Sequential(nn.Linear(itd.N_NODE_FEATURES, 64), nn.GELU(), nn.Dropout(dropout),
                                  nn.Linear(64, 32), nn.GELU(), nn.Dropout(dropout))
         self.msg_dim = msg_dim
-        if variant in ("learned", "Bprior"):
+        if variant in ("learned", "Bprior", "Bshuf"):
             self.msg = nn.Linear(32, msg_dim)  # the message carries a small projection of h_j
         head_in = 32 + (rank if variant == "B0E" else msg_dim)
         self.head = nn.Sequential(nn.Linear(head_in, 32), nn.GELU(), nn.Dropout(dropout), nn.Linear(32, 1))
@@ -82,7 +85,7 @@ class PriorNet(nn.Module):
         """Per-edge message weights of the batch's prior support, and the mean squared logit correction."""
         row, col = b.e_row, b.e_col
         zero = b.e_logp.new_zeros(())
-        if self.variant == "Bprior":
+        if self.variant in ("Bprior", "Bshuf"):
             return torch.exp(b.e_logp), zero
         if self.variant != "learned":
             raise ValueError("no edges for " + self.variant)

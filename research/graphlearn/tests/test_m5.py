@@ -216,6 +216,30 @@ class Bprior(unittest.TestCase):
             self.assertEqual((same[(0, 2)], same[(0, 1)]), (1.0, 0.0))
 
 
+class Bshuf(unittest.TestCase):
+    def test_relabel_moves_dst_and_keeps_weights(self):
+        with tempfile.TemporaryDirectory() as d:
+            arrays, _, _ = tiny_panel(d)
+            itd.write_intraday(d, [f"T{i}" for i in range(5)], [f"S{i % 2}" for i in range(5)],
+                               1_700_000_000 + np.arange(78) * 900, np.repeat(np.arange(3), 26), arrays,
+                               prior={0: (np.array([0, 0, 1]), np.array([1, 2, 0]), np.array([0.25, 0.75, 1.]),
+                                          np.array([1., 3., 2.]))})
+            p = itd.load_intraday(d)
+            perm = np.array([0, 3, 4, 1, 2])  # 1 -> 3, 2 -> 4, 0 -> 0
+            fb, fs = itd.FeatureBuilder(p), itd.FeatureBuilder(p, relabel=perm)
+            nodes = fb.nodes(6)
+            r, c, lp, _ = fb.edges(6, nodes)
+            rs, cs, lps, _ = fs.edges(6, nodes)
+            self.assertEqual(sorted(zip(nodes[rs].tolist(), nodes[cs].tolist())), [(0, 3), (0, 4), (1, 0)])
+            np.testing.assert_allclose(sorted(np.exp(lps)), sorted(np.exp(lp)), rtol=1e-6)
+            with self.assertRaises(ValueError):
+                itd.FeatureBuilder(p, relabel=np.array([0, 0, 1, 2, 3]))
+
+    def test_shuffle_perm_is_fixed(self):
+        np.testing.assert_array_equal(itd.shuffle_perm(50, 7), itd.shuffle_perm(50, 7))
+        self.assertEqual(sorted(itd.shuffle_perm(50, 7).tolist()), list(range(50)))
+
+
 def run_wf(panel, out, extra=()):
     return wf_m5.main(["--panel", panel, "--out", out, "--store", os.path.join(out, "store"), *SMALL, *extra])
 
@@ -272,6 +296,22 @@ class Synthetic(unittest.TestCase):
               f"Bprior-B0E t={ic['Bprior']['minus_B0E']['t']:.2f}")
         self.assertLess(abs(ic["learned"]["minus_Bprior"]["t"]), 2)  # learned must NOT beat Bprior
         self.assertGreater(ic["Bprior"]["minus_B0E"]["t"], 2)  # while the prior itself is predictive
+
+    def test_null_b_bprior_beats_bshuf(self):
+        """Where the prior is the truth, the right tickers matter: Bprior beats the relabeled chain."""
+        run = run_wf(os.path.join(self.d, "null_b"), os.path.join(self.d, "run_b_shuf"),
+                     ["--variants", "Bprior,Bshuf,B0E"])
+        ic = run["oos_ic"]
+        print(f"\nnull b: Bprior-Bshuf t={ic['Bprior']['minus_Bshuf']['t']:.2f}, "
+              f"Bshuf-B0E t={ic['Bshuf']['minus_B0E']['t']:.2f}")
+        self.assertGreater(ic["Bprior"]["minus_Bshuf"]["t"], 2)
+
+    def test_null_a_bprior_does_not_beat_bshuf(self):
+        run = run_wf(os.path.join(self.d, "null_a"), os.path.join(self.d, "run_a_shuf"),
+                     ["--variants", "Bprior,Bshuf"])
+        t = run["oos_ic"]["Bprior"]["minus_Bshuf"]["t"]
+        print(f"\nnull a: Bprior-Bshuf t={t:.2f}")
+        self.assertLess(abs(t), 2)
 
 
 class DeterminismResume(unittest.TestCase):

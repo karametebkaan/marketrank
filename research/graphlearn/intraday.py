@@ -256,10 +256,15 @@ class SessionBatch:
 class FeatureBuilder:
     """Builds SessionBatch objects (cached by the caller). Features use bars <= t only."""
 
-    def __init__(self, p, max_nodes=3000, direction="out"):
+    def __init__(self, p, max_nodes=3000, direction="out", relabel=None):
+        """relabel: optional int array [N]; every prior edge's dst column c is replaced by relabel[c] (the Bshuf control:
+        the same graph shape and weights, attached to the wrong tickers)."""
         if direction not in ("out", "in"):
             raise ValueError(direction)
         self.p, self.max_nodes, self.direction = p, max_nodes, direction
+        self.relabel = None if relabel is None else np.asarray(relabel, dtype=np.int64)
+        if self.relabel is not None and sorted(self.relabel.tolist()) != list(range(p.N)):
+            raise ValueError("relabel must be a permutation of the ticker columns")
         r = np.asarray(p.a["ret1"], dtype=np.float64)
         fin = np.isfinite(r)
         self.cs = np.vstack([np.zeros((1, p.N)), np.cumsum(np.where(fin, r, 0.0), axis=0)])
@@ -294,12 +299,14 @@ class FeatureBuilder:
     def edges(self, t, nodes):
         """Prior edges among `nodes` at bar t in local indices: (row, col, logP_renorm, feat[E,4])."""
         src, dst, P, raw = self.p.prior_at(t)
+        keep = (src < self.p.N) & (dst < self.p.N)
+        src, dst, P, raw = src[keep], dst[keep], P[keep], raw[keep]
+        if self.relabel is not None:
+            dst = self.relabel[dst]
         if self.direction == "in":
             src, dst = dst, src
         pos = np.full(self.p.N, -1, dtype=np.int64)
         pos[nodes] = np.arange(len(nodes))
-        keep = (src < self.p.N) & (dst < self.p.N)
-        src, dst, P, raw = src[keep], dst[keep], P[keep], raw[keep]
         r, c = pos[src], pos[dst]
         ok = (r >= 0) & (c >= 0) & (r != c) & np.isfinite(P) & (P > 0)
         r, c, P, raw = r[ok], c[ok], P[ok], raw[ok]
@@ -353,6 +360,11 @@ class FeatureBuilder:
             y=torch.from_numpy(cat(ys, np.float32)), ymask=torch.from_numpy(cat(ms, bool)),
             e_row=torch.from_numpy(cat(er, np.int64)), e_col=torch.from_numpy(cat(ec, np.int64)),
             e_logp=torch.from_numpy(cat(el, np.float32)), e_feat=torch.from_numpy(cat(ef, np.float32, N_PAIR_FEATURES)))
+
+
+def shuffle_perm(n, seed):
+    """The fixed ticker-column permutation of the Bshuf control (deterministic in n and seed)."""
+    return np.random.default_rng(seed).permutation(n)
 
 
 def truncate(src, dst, n_sessions):
