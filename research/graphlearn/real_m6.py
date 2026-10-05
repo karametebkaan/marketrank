@@ -31,7 +31,7 @@ import intraday as itd
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 VARIANTS = "Bprior,Bshuf,B0E,B0"
-RUNS = (("rolling", 1), ("rolling", 2), ("scratch", 1))
+RUNS = (("scratch", 1), ("rolling", 1), ("rolling", 2))  # the slow scratch run first (scheduling only)
 PRIMARY = (("rolling", 1), ("rolling", 2))
 MIN_SESSIONS, MIN_MEDIAN_NODES = 400, 800
 COST_PER_PERIOD = 4 * 5e-4  # two legs, in and out, 5 bps per side
@@ -118,7 +118,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--panel", required=True)
     ap.add_argument("--out", required=True)
-    ap.add_argument("--workers", type=int, default=3)
+    ap.add_argument("--workers", type=int, default=2)
     ap.add_argument("--threads", type=int, default=4, help="torch threads per run")
     a = ap.parse_args(argv)
     os.makedirs(a.out, exist_ok=True)

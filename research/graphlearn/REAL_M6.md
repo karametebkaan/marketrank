@@ -70,6 +70,13 @@ no setting is changed in response to the results.
   (bars whose t+1..t+6 are in the session, against t+1..t+7). The frozen protocol keeps the stricter Python mask, so
   19 of the 20 labelable bars per session are used. This is conservative and cannot leak future data.
 - **Data gate (computed after the fix):** 503 sessions, median 964 eligible names per labeled bar. Passes.
+- **2026-10-04, first real run killed for low memory (no results read).** Each run cached every session batch for
+  its whole life: 27 MB per session on the real panel (~692,000 edges), ~25 GB per variant, and Bshuf held a second
+  full cache. Three runs in parallel ran the machine out of memory, and Claude Code stopped them. Nothing had been
+  evaluated: rolling runs were partway through Bshuf, the scratch run through Bprior. Fix (`wf_m5.main`): each
+  variant's cache is freed when it finishes, and Bshuf's is built only for Bshuf; training and predictions are
+  unchanged. `real_m6.py` now runs 2 workers, scratch first (scheduling only). The code digest changed, so the runs
+  restart fresh; the killed run is kept at `data/m6_runs_killed_2026-10-04/` and not used.
 
 ## Results
 

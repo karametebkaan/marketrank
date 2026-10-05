@@ -21,6 +21,7 @@ Evaluation: per-bar Spearman IC of each variant vs label_6; paired differences p
 t-stat over sessions (day-clustered SE). Printed and written to run.json.
 """
 import argparse
+import gc
 import hashlib
 import json
 import math
@@ -361,9 +362,16 @@ def main(argv=None):
     t0 = time.time()
     p = itd.load_intraday(args.panel)
     data = Data(p, args)
-    shuf = Data(p, args, relabel=itd.shuffle_perm(p.N, SHUF_SEED)) if "Bshuf" in variants else None
+    results = []
     try:
-        results = [run_variant(shuf if v == "Bshuf" else data, v, args, log) for v in variants]
+        for v in variants:
+            # One variant's session batches at a time: on the real panel a full cache is ~25 GB, so each is freed
+            # when its variant finishes and Bshuf's (relabeled edges) is built only for Bshuf. Training is unchanged.
+            d = Data(p, args, relabel=itd.shuffle_perm(p.N, SHUF_SEED)) if v == "Bshuf" else data
+            results.append(run_variant(d, v, args, log))
+            d.cache.clear()
+            del d
+            gc.collect()
     except ResumeRefused as e:
         raise SystemExit(f"refusing to resume: {e}")
     all_preds = {r["variant"]: Store(r["store"]).all_predictions() for r in results}
