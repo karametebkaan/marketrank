@@ -312,7 +312,9 @@ std::map<std::string, std::vector<Bar>> Lake::read(Timeframe tf, const std::vect
   const fs::path dir = I.root / "bars" / tf_dir_name(tf);
   if (tickers.empty() || start > end || !has_parquet(dir)) return out;
   // Unique tickers in batches, so the materialized result of one query holds about kReadBatch series at a time.
-  constexpr std::size_t kReadBatch = 1000;
+  // Intraday series are 7-26x longer per day, so their batches are smaller: 15m x 1,000 names x 2 years is ~12M rows,
+  // which does not fit the 1 GB memory_limit as one materialized result.
+  const std::size_t kReadBatch = tf == Timeframe::Min15 ? 50 : tf == Timeframe::Hour ? 150 : 1000;
   std::vector<std::string> uniq(tickers);
   std::sort(uniq.begin(), uniq.end());
   uniq.erase(std::unique(uniq.begin(), uniq.end()), uniq.end());
