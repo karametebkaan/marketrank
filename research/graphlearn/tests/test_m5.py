@@ -64,6 +64,25 @@ class Reader(unittest.TestCase):
             off = np.fromfile(os.path.join(d, "prior", "offsets.bin"), dtype="<u8")
             self.assertEqual((len(off), int(off[1]), int(off[30]), int(off[31]), int(off[-1])), (79, 3, 3, 5, 5))
 
+    def test_reads_the_cpp_export_layout(self):
+        """The C++ --export-panel writes session as an object and the prior files under prior.dir."""
+        with tempfile.TemporaryDirectory() as d:
+            arrays, _, _ = tiny_panel(d)
+            itd.write_intraday(d, [f"T{i}" for i in range(5)], [f"S{i % 2}" for i in range(5)],
+                               1_700_000_000 + np.arange(78) * 900, np.repeat(np.arange(3), 26), arrays,
+                               prior={0: (np.array([0, 1]), np.array([1, 0]), np.array([1., 1.]), np.array([1., 1.]))})
+            with open(os.path.join(d, "meta.json")) as f:
+                meta = json.load(f)
+            os.rename(os.path.join(d, "prior", "offsets.bin"), os.path.join(d, "prior", "offsets.u64"))
+            meta["session"] = {"count": 3, "dates": ["a", "b", "c"], "index": meta["session"],
+                               "slot": [k % 26 for k in range(78)]}
+            meta["prior"] = {"dir": "prior", "edges": "edges.bin", "offsets": "offsets.u64", "count": 2}
+            with open(os.path.join(d, "meta.json"), "w") as f:
+                json.dump(meta, f)
+            p = itd.load_intraday(d)
+            np.testing.assert_array_equal(p.session, np.repeat(np.arange(3), 26))
+            self.assertEqual(len(p.prior_at(5)[0]), 2)
+
     def test_truncate(self):
         with tempfile.TemporaryDirectory() as d:
             tiny_panel(os.path.join(d, "a"))

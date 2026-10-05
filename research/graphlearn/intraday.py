@@ -52,12 +52,15 @@ def _resolve_layout(dirpath, meta):
         sess = np.fromfile(os.path.join(dirpath, "session.i32"), dtype="<i4")
     if sess is None:
         raise ValueError(f"{dirpath}/meta.json: no session index per bar ('session')")
+    if isinstance(sess, dict):  # the C++ export: {"count", "dates", "index": [T], "slot": [T], ...}
+        sess = sess["index"]
     out["session"] = np.asarray(sess, dtype=np.int64)
     if len(out["session"]) != T:
         raise ValueError("meta.json: session must have T entries")
     pr = meta.get("prior") or {}
-    e = os.path.join(dirpath, pr.get("edges", os.path.join("prior", "edges.bin")))
-    o = os.path.join(dirpath, pr.get("offsets", os.path.join("prior", "offsets.bin")))
+    pdir = os.path.join(dirpath, pr["dir"]) if "dir" in pr else dirpath  # the C++ export names its subdirectory
+    e = os.path.join(pdir, pr.get("edges", os.path.join("prior", "edges.bin")))
+    o = os.path.join(pdir, pr.get("offsets", os.path.join("prior", "offsets.bin")))
     out["edges"] = e if os.path.exists(e) else None
     out["offsets"] = o if os.path.exists(o) else None
     out["horizon"] = int((meta.get("label_horizons") or {}).get(LABEL, HORIZON))

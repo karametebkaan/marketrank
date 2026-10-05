@@ -59,6 +59,18 @@ period).
 the real run starts (a crash, a data bug), the change and its reason are recorded in this file before rerunning, and
 no setting is changed in response to the results.
 
+## Change log (after the rule was committed)
+
+- **2026-10-04, before any training, data gate not yet computed.** `real_m6.py` crashed loading the real export:
+  the C++ `--export-panel` writes `session` as an object (the per-bar list is `session.index`) and puts the prior
+  files under `prior.dir`, and the Python reader expected a bare list and no subdirectory. M5 never read a real
+  export, so this had not come up. Fixed in `intraday._resolve_layout` (reader only), with a test in the export's
+  shape. No rule, variant, protocol or data setting changed.
+- **Noted, not changed:** the export defines label_6 one bar later in each session than `intraday.label_mask`
+  (bars whose t+1..t+6 are in the session, against t+1..t+7). The frozen protocol keeps the stricter Python mask, so
+  19 of the 20 labelable bars per session are used. This is conservative and cannot leak future data.
+- **Data gate (computed after the fix):** 503 sessions, median 964 eligible names per labeled bar. Passes.
+
 ## Results
 
 (filled in after the run; see `real_m6_results/`)
