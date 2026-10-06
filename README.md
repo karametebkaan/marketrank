@@ -720,3 +720,7 @@ always the unsmoothed truth.
     suggestions are paper-traded so their real profit and loss is tracked.
 
 Shock mode (`--shock TICKER:SIZE`) replays the last bar twice, once as is and once with an extra SIZE% return, at normal volume, added to the named stocks' pressure, and reports which stocks gain or lose hotness.
+
+## License
+
+MIT, Copyright (c) 2026 Graph AI LLC. See [LICENSE](LICENSE).
