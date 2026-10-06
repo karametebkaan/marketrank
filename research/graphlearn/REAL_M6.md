@@ -80,4 +80,27 @@ no setting is changed in response to the results.
 
 ## Results
 
-(filled in after the run; see `real_m6_results/`)
+The run finished on 2026-10-05 (`real_m6_results/`: `results.md`, `results.json`, one `run_*.json` per run).
+**The pre-registered rule fails.** MarketRank's chain does not predict 6-bar returns better than the no-graph
+baseline, and it does no better than the same chain on the wrong tickers.
+
+| primary run | Bprior − B0E (t) | months positive | Bprior − Bshuf (t) | pass |
+|---|---|---|---|---|
+| rolling, seed 1 | −0.0014 (−0.5) | 39% | +0.0001 (+0.2) | no |
+| rolling, seed 2 | −0.0011 (−0.5) | 39% | +0.0006 (+0.9) | no |
+
+**What this says:**
+- **Every variant has the same small IC,** about +0.008 to +0.010 (t ≈ 2.5–3.8). It comes from the shared node
+  features (recent returns, volume shock, volatility, pressure), not from any graph. B0, with no message at all, is
+  in the same range.
+- **The chain adds nothing on top.** Bprior − B0E is slightly negative in both rolling runs and the scratch run
+  (t between −0.5 and +0.4), positive in only about 39% of months. Bprior − Bshuf is indistinguishable from zero
+  (t ≤ 0.9): the identity of who sends to whom carries no measurable 6-bar information here.
+- **The scratch run agrees** (Bprior − B0E t = +0.4, Bprior − Bshuf t = −0.1).
+- **Decile spread (reported only):** negative for every variant, including the graph-free ones (gross −0.02% to
+  −0.06% per 1.5 h, t ≈ −1.3 to −2.9), and about −0.22% to −0.26% net of costs. A positive rank IC with a negative
+  extreme-decile spread means the extremes of the score behave differently from the bulk; since it holds for B0 too,
+  it is a property of the shared features, not of the chain.
+
+M6 stops here, as pre-registered. On this test, the intraday chain as built does not earn an intraday product view;
+the daily MarketRank (ranking and Fluxscape) is unchanged.
