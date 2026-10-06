@@ -6,6 +6,29 @@ to j, and a stock's score is its stationary probability π_i: the long-run share
 follows the money spends at that stock. (PageRank is the best-known instance of the same idea, with links in
 place of dollars; here it is only an analogy.) Fluxscape is its 3D landscape view.
 
+## Quickstart
+
+Needs Linux x86-64, CMake ≥ 3.24, a C++20 compiler, and the OpenSSL and OpenMP development packages
+(Ubuntu: `sudo apt install build-essential cmake libssl-dev libomp-dev`). Other dependencies, DuckDB included,
+are downloaded by CMake.
+
+```bash
+git clone https://github.com/karametebkaan/marketrank && cd marketrank
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
+./build/marketrank --serve --mode synthetic       # UI on http://127.0.0.1:8765, no keys needed
+```
+
+For real US stocks and ETFs, add free [Alpaca](https://alpaca.markets) market-data keys to `.env`
+(`cp .env.example .env`), sync once, then serve the cached data:
+
+```bash
+./build/marketrank --mode alpaca --universe-size 10000   # download daily bars and solve
+./build/marketrank --serve --mode replay                 # UI over the cached data
+```
+
+MarketRank is research software, not investment advice. More options are under [Run](#run) and in
+`./build/marketrank --help`.
+
 ## What we are trying to find out
 
 MarketRank shows where money concentrates. The goal is to learn whether following it makes money, and to learn that honestly. It takes two steps:
