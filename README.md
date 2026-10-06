@@ -55,6 +55,10 @@ MarketRank shows where money concentrates. The goal is to learn whether followin
   volume ranks the observed destinations better ([Observed flows from 13F](#observed-flows-from-13f)).
 - **Communities:** the flux clusters behind the landscape last only about as long as the flow window that
   defines them, so the map is a reading aid for recent flows, not a stable structure.
+- **Learned and intraday connectivity:** three tests registered in advance were all negative.
+  - Learning the graph from weekly data (M4) and learning a correction to the chain from 15-minute bars (M5) did not recover a planted graph on synthetic markets at realistic signal levels, so neither was run on real data.
+  - On two years of real 15-minute data for the 1,000 most liquid names (M6), the chain as it is predicted the next 1.5 hours no better than graph-free controls, and no better than the same chain attached to the wrong stocks.
+  - Details: `research/graphlearn/POWER.md`, `POWER_M5.md`, `REAL_M6.md`.
 
 So the bottleneck is the flow data, not the solver: the next step is data that observe pairing more directly.
 
