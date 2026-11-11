@@ -1,0 +1,8 @@
+Every trading day, money leaves some stocks and moves into others. MarketRank asks where that money
+concentrates and how the concentration shifts over time. It treats the market as a Markov chain whose
+states are stocks. The chance of moving from one stock to another is the share of the first stock’s outgoing
+dollars that goes to the second, and a stock’s MarketRank score is its long run (stationary) probability in
+that chain, computed by damped power iteration on a sparse transition matrix. PageRank ranks web pages
+with the same idea, using links instead of dollars. Who sold what to buy what is not public, so the flows are estimated from daily prices and volumes with a correlation tilted gravity model, in a deterministic parallel C++ engine. On a universe of 10K US stocks and ETFs, the ranking is led by the large semiconductor and technology names, and estimated flows stay within a sector more often than chance. 
+
+The level of the score, however, does not predict next day returns: it shows where money sits, not where prices go next. A 3D landscape view, Fluxscape, turns the ranking into terrain: Louvain communities of the recent flow graph, reclustered on every bar, become territories, ordered by recursive spectral bisection along a generalized Hilbert curve, interpolated by inverse distance weighting, smoothed by a centroidal Voronoi style relaxation with portfolio holdings pinned to their exact values, and rendered as a Gouraud shaded mesh. The surface is for reading trends; the exact ranked table remains the reference. The practical question is whether MarketRank can improve real portfolio moves, and we answer it with tests fixed in this study.
